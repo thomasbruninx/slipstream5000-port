@@ -80,6 +80,9 @@ class SoftwareRenderer {
   void drawSpriteWorld(const Sprite& spr, const Palette& pal, const double world[3], double worldWidth, int transparent);
   void drawLineWorld(const double a[3], const double b[3], uint32_t color);
   void drawRectScreen(int x0, int y0, int x1, int y1, uint32_t color);
+  // Per-piece lighting (0x39427): the diffuse level and the ambient of the lighting law are multiplied by the light of the piece the
+  // polygon belongs to (TRD piece +0x20, 0..1; 0x4000 = full) while that piece is drawn. Indexed like Scene::pieceBoxes; empty = 1.
+  std::vector<float> pieceLight;
   uint32_t animTimer = 0;   // animation clock in 2.14 seconds ([0x3F078]); the viewer advances it every frame
   // Ship shadows (CONFIRMED mechanism, see docs/research-log.md): the caster's polygons are projected along the light
   // direction (0,-1,0) onto the receiving polygon's plane and filled with the receiver's shadow colour inside it.
@@ -111,6 +114,7 @@ class SoftwareRenderer {
   void drawFloorDetail(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat);
   void drawPanelLines(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat, int flatIdx);
   void addExtent(const Scene& scene, size_t piece, const float cp[3]);
+  float lightScale_ = 1.0f;  // piece light of the polygon being drawn
   const WinRect* sceneryWin_ = nullptr;
   Viewport vp_;
   float cx_ = 0, cy_ = 0;  // projection centre of the current frame

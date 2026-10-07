@@ -43,7 +43,7 @@ non-zero byte = ink in the current colour) + u16 advance (blitter 0x32B94, metri
 
 ## Pause menu
 The original's pause state `[0x592DA]` (0x58D5E..0x58F9C): the pause key sets 1, the race clocks stand still (0x20104 / 0x20111), the popup menu (0x5B84E) returns 1 continue, 2 configuration, 3 quit the race (0x591CE),
-4 exit to DOS (0x55DEE). Texts from `PAUSED.ST0` ("Continue Race / Configuration / Quit Race / Exit To Dos") and `CONFIG.ST0` ("General / Controls / Detail / Continue / Difficulty / Sound").
+4 exit to DOS (0x55DEE). Texts from `PAUSED.ST0` ("Continue Race / Configuration / Quit Race; the fourth entry reads "Exit Game" instead of the original's "Exit To Dos"") and `CONFIG.ST0` ("General / Controls / Detail / Continue / Difficulty / Sound").
 The port: `Esc` (gamepad Start) opens the menu while driving; Up/Down (W/S), Left/Right (A/D) adjust values, Enter / Space select, `Esc` goes back; Quit Race returns to the track viewer, Exit leaves the program.
 Configuration pages (the port's own layout): Sound (music / effects volume), General (mph / kph), Difficulty (0..2, live like `[0x49F04]`), Detail (scenery size thresholds 32 / 20 / 10 / 5, 0x350C7), Controls (key list).
 The menu is drawn with MENUFONT.FNT on a dimmed frame; the original's menu zone engine (ZON files, buttons) is not ported. `H` hides the HUD (and shows the debug text again).

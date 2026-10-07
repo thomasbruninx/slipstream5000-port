@@ -318,3 +318,9 @@ Read the door slot server 0x3BF86 fully (0x106 contact -> open at 0x6FB8; 0x104:
 
 ## Session: HUD and pause menu
 Decoded the HUD init (0x43B4A: TIME.FNT, SPD.FNT, POS*, NSIGHT, TSIGHT*, CON?_T?* / CON?_B?*, CONS_EXT, TURBO_?), the frame draw 0x4429D, the timer / speed / position block 0x453B8, messages 0x44654, bars 0x572F2 / 0x5733B, weapon panel 0x5C12D / 0x5BE65, sights 0x5C234, the 3D window 0x44812, the camera pane table 0x42CAB (F1..F10 scancodes -> callbacks), the `.FNT` format and the static UI palette (0x54304). Sprite headers hold the screen position of the console parts. Findings and layout in docs/hud.md. Also: human damage beyond 100 ends the race via GAME OVER.
+
+## Session: pit lane
+Traced every use of the refuel piece (0x35E53 check, 0x50E97 repair, 0x58CBD ambient, 0x37C6B / 0x39ADE draw, 0x3D8C1 / 0x3DA9A init) and the branch machinery (0x3544F state, 0x353CF flag store, 0x3BEA2 target node, 0x3BF4C next node). Found that 0x3BEA2 tests the slot's branch flag (loaded at 0x3BEC5) and redirects the first node after a split to the alternative route: the port ignored the flag there, so no AI ship ever took a branch. Fixed, and the AI now decides at the node before the split like the original. Geometry of the refuel pieces per track documented in docs/simulation.md.
+
+## Session: pit lane, second pass (Chicago) and piece lighting
+User report: no pit on Chicago. Root cause: `InitRefuel` port compared the polygon material *index* with the TRC material table; polygons carry the table *id*. After the fix every track has a refuel piece on an alternative route (the earlier "Hawaii / Norway cannot be entered" notes were artefacts of that bug). Then decoded the per-piece lighting (0x39ADA..0x39B85: piece `+0x20` -> `[0x39C56]` -> 0x39427 scales the diffuse level and the ambient) and the pit flicker (random piece light, generator 0x3667B). Manual (`Manual.PDF`, "Re-charger Pit") confirms one pit per track with blue / white flashes.

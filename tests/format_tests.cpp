@@ -47,6 +47,14 @@ int main() {
   CHECK(!s.track.polys.empty());
   double y;
   CHECK(s.floorHeight(s.startPos[0][0], s.startPos[0][2], s.startPos[0][1], 40000, &y));
+  for (int i = 1; i <= 10; ++i) {  // a refuel piece on every track, reached through a pit marked alternative route
+    Track t;
+    CHECK(loadTrack(*d, i, &t, &err));
+    CHECK(t.refuelPiece >= 0);
+    bool pit = false;
+    for (const TrackNode& n : t.nodes) pit = pit || n.pit;
+    CHECK(pit);
+  }
   for (auto& n : d->list("FNT")) { auto b = d->read(n); CHECK(b && parseFont(*b)); }
   {  // HUD fonts: TIME.FNT is 23 bytes x 7 rows per glyph, ':' advances 2; SPD.FNT digits advance 7
     auto tf = parseFont(*d->read("TIME.FNT"));

@@ -260,8 +260,10 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
   {
     for (size_t i = 0; i < t.pieces.size() && t.refuelPiece < 0; ++i)
       for (const TrackPolygon& poly : t.records[size_t(t.pieces[i].record)].polys) {
-        if (poly.list != 0 || poly.material >= t.trcMaterials.size()) continue;
-        std::string nm = t.trcMaterials[poly.material].name;
+        if (poly.list != 0) continue;
+        std::string nm;
+        for (const MaterialRef& mr : t.trcMaterials) if (mr.id == poly.material) { nm = mr.name; break; }  // polygon material = table id, not index
+        if (nm.empty()) continue;
         for (char& ch : nm) ch = char(std::toupper((unsigned char)ch));
         if (nm.rfind("REFUEL 3", 0) == 0) { t.refuelPiece = int(i); break; }
       }

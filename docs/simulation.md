@@ -194,6 +194,21 @@ hits while flying: speed/2 (>= 0x1174C), bounce 22.5 deg off the surface (`0x3BD
 Port: `ShipState::wreck*`, `stepShipDynamics`, `shipHitResponse`, `updateWrecks`. Simplifications: the per-rotation collision
 revert is replaced by the normal track sweep, and a 12 s safety timeout recovers wrecks that never leave their piece.
 
+### Pit lane / refuel (CONFIRMED by 0x35E53, 0x3544F, 0x3BEA2, 0x3D568, 0x50E97, 0x39AE6; checked headless with `SLIP_DAMAGE=60 SLIP_PIT_LOG=1`)
+* There is a pit on **every track** (the manual: "blue and white lighting flashes above or below the entrances of tunnels"). The refuel zone is one TRD piece, the one whose record has a polygon with the
+  material "REFUEL 3" (`InitRefuel` 0x3D568 -> `[0x3D55C]`); a ship is in the pit when its slot piece is that piece (`TrackSlotCheckRefuel` 0x35E53). It always lies on an alternative route (`TrackNode::pit`
+  marks the split that leads to it). **Bug fixed in this phase:** polygon materials are table *ids*, not indices; the port looked the name up by index and therefore found no refuel piece on Chicago, Tokyo,
+  Amazon, London and New York (and a wrong one elsewhere). Now all ten tracks have one (Chicago piece 4, Hawaii 4, Tokyo 61, Norway 29, Cave 7, Can 9, Amazon 47, London 54, Egypt 31, New York 154).
+* Inside, every frame (0x50E97..0x50EF1) both damage counters fall by 25 points/s and the booster fuel refills at 1/s; the player also hears the PITSLP loop.
+* **AI decision** (0x3544F + 0x51390): the state is evaluated one node *before* the split: 1 = the previous node has an alternative, 2 = the next node (by the branch flag) is an ordinary split, 3 = it is a pit
+  entrance. State 3: the flag becomes "either damage counter > 50". State 2: AI ships only, rank rules as before.
+* **Following the branch**: `TrackSlotGetTarget` (0x3BEA2) uses the slot's branch flag: when it is set and the previous node of the ship's piece node has an alternative, the target node is that alternative
+  (0x3BEE5). Before the fix the flag had no effect, so no AI ship ever took a branch. With 60 % damage on every ship all ten take the pit route on all ten tracks; a pass at full speed repairs about 17 points.
+* **Piece lighting** (0x39427): while a piece is drawn the diffuse level (0x3333) and the ambient (0x0CCC) of the lighting law are multiplied by the piece light (TRD entry `+0x20`, 0..0x4000; many tunnel
+  pieces are 0x800..0x1000, a few are 0). Textured polygons are not lit in the original, so only flat polygons change. `SoftwareRenderer::pieceLight`.
+* **Pit flicker** (0x39AE6..0x39AF8, `[0x3D560] = -1` set by InitRefuel): for the refuel piece the light is replaced by a fresh random 14-bit value every time it is drawn (generator 0x3667B:
+  `x = (x + 1) >> 1`, xor 0xB400 when a bit fell out, seed 0x5A4A). The port draws it once per frame (`SLIP_NOPITFLICKER=1` turns it off).
+
 ### Door collision (door slot server 0x3BF86, TrackInitDoors 0x3C813; `doors.cpp`, tested in `tests/physics_tests.cpp`)
 * **Collider** (INFERRED mapping): the door slot gets a box = the panel rectangle (half extents |v0-v1|/2 and |v0-v3|/2, from the shape bounds that 0x26003 returns) with a thickness of +-0x7A0 along the panel normal (`ecx = -0x7A0`, `edi = 0x7A0` at 0x3C92D, `0x135CA`); collider class 2.
 * **Contact, message 0x106** (0x3BFDB): if the other slot is a ship (slot flag +0xA0 & 4) the door is set to state 0 (opening) with speed 0x6FB8 (28600 u/s, twice the normal speed). The ship's own 0x106 handler runs the generic contact branch (flag tests for bonus / weapon fail): it is pushed away along the relative velocity by `max(1.5*|rel|, 0x37DC)`, loses 37.5 % speed when it was the rammer and takes (0, 4.0) damage - the same as a ship-ship contact with a standing ship. The port feeds the doors to the contact solver as static boxes that carry the panel velocity.

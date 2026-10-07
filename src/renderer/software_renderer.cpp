@@ -130,6 +130,7 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
       float nvz = nx * fwd_[0] + ny * fwd_[1] + nz * fwd_[2];
       if (nvx * v0.x + nvy * v0.y + nvz * v0.z > 0) continue;  // facing away from the camera
     }
+    lightScale_ = (p.piece >= 0 && size_t(p.piece) < pieceLight.size()) ? pieceLight[size_t(p.piece)] : 1.0f;
     float ndl = std::fabs(nx * L[0] + ny * L[1] + nz * L[2]) / 1.0f;
     float light = std::clamp(0.35f + 0.65f * ndl, 0.0f, 1.0f);
     const SurfaceMaterial* mat = (p.material >= 0 && size_t(p.material) < scene.materials.size()) ? &scene.materials[size_t(p.material)] : nullptr;
@@ -398,7 +399,7 @@ bool SoftwareRenderer::polyRect(const Scene& scene, const MeshPoly& p, const flo
 int SoftwareRenderer::flatIndex(const SurfaceMaterial* mat, int upLight) const {
   // CONFIRMED lighting law (0x1CCE9, 0x1C4B6, 0x1958F, track setup 0x595DD..0x595ED): light direction (0,-1,0) in
   // world space, diffuse level 0x3333 and ambient 0x0CCC (level 1.0 / ambient 0.25 normalised to a sum of 1.0), no fog.
-  const int kLevel = 0x3333, kAmbient = 0x0CCC;
+  const int kLevel = int(0x3333 * lightScale_), kAmbient = int(0x0CCC * lightScale_);  // scaled by the piece light (0x39427)
   int s;
   if (mat->fixedLight) s = mat->fixedLight;
   else if (!mat->ambientCoef && !mat->diffuseCoef && !mat->specularCoef) s = kLevel + kAmbient;

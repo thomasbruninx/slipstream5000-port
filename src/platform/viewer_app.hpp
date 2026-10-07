@@ -127,6 +127,8 @@ class ViewerApp {
   bool hudOn_ = true, quit_ = false;
   double finalLapTimer_ = 0, gameOverTimer_ = 0, lapPopupTimer_ = 0, shakeTimer_ = 0, prevDamage_ = 0, lastLapShown_ = -1;
   unsigned shakeRng_ = 1;
+  uint16_t lightLfsr_ = 0x5a4a;  // generator of 0x3667B (initial [0x36693]) driving the flickering pit lights
+  void updatePieceLights();
   int hudShakeX_ = 0, hudShakeY_ = 0;
   void drawHud();
   void applySettings();

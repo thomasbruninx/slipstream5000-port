@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace slip {
 
@@ -83,6 +85,8 @@ int targetNode(const Scene& scene, const ShipState& s, AiState& a) {
     }
   }
   int cur = a.node;
+  if (a.branch && t.nodes[size_t(cur)].prev >= 0 && t.nodes[size_t(t.nodes[size_t(cur)].prev)].alt >= 0)
+    cur = t.nodes[size_t(t.nodes[size_t(cur)].prev)].alt;  // 0x3BEE5: with the branch flag set the first node after a split is the alternative route's
   if (estv(np(t, cur, 0) - s.x, np(t, cur, 1) - s.y, np(t, cur, 2) - s.z) < 0x800) cur = nextNode(t, cur, a.branch);
   return cur;
 }
@@ -388,18 +392,23 @@ ShipInput aiControl(RaceContext& ctx, size_t index, double dt) {
   {
     const int pn = pieceNodeAt(scene, s);
     if (pn >= 0) {
+      // TrackSlotCheckBranch 0x3544F: 1 = the previous node has an alternative (we are just past a split), 2 / 3 = the NEXT node
+      // (by the branch flag, 0x3BF4C) is a split / a pit entrance, 0 = nothing to decide
       const TrackNode& n = t.nodes[size_t(pn)];
-      const bool prevSplit = n.prev >= 0 && t.nodes[size_t(n.prev)].alt >= 0;
-      if (!prevSplit && n.alt >= 0) {
-        if (n.pit) {  // pit entrance: damaged ships (> 50 on either counter) take it
-          ai.branch = s.damageA > 50 || s.damageB > 50;
-        } else if (!ai.human) {  // ordinary split: AI ships only, never first or among the last two, not while someone is alongside
-          if (nb.along >= 0 || ai.rank == 1 || ai.rank >= ctx.race->shipCount - 1) ai.branch = false;
-          else {
-            unsigned thresh = 0xa00;
-            if (nb.behind >= 0 && nb.dBehind >= 0x77240) thresh = 0x6000;
-            ai.branch = nextRandom(ai) < thresh;
-          }
+      int state = 0;
+      if (n.prev >= 0 && t.nodes[size_t(n.prev)].alt >= 0) state = 1;
+      else {
+        const int nx = nextNode(t, pn, ai.branch);
+        if (nx >= 0 && t.nodes[size_t(nx)].alt >= 0) state = t.nodes[size_t(nx)].pit ? 3 : 2;
+      }
+      if (state == 3) {  // pit entrance ahead: damaged ships (> 50 on either counter) take it
+        ai.branch = s.damageA > 50 || s.damageB > 50;
+      } else if (state == 2 && !ai.human) {  // ordinary split: AI ships only, never first or among the last two, not while someone is alongside
+        if (nb.along >= 0 || ai.rank == 1 || ai.rank >= ctx.race->shipCount - 1) ai.branch = false;
+        else {
+          unsigned thresh = 0xa00;
+          if (nb.behind >= 0 && nb.dBehind >= 0x77240) thresh = 0x6000;
+          ai.branch = nextRandom(ai) < thresh;
         }
       }
     }

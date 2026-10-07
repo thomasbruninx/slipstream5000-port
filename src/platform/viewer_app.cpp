@@ -162,6 +162,19 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
     cc.controls[size_t(player_.ship)].cycle = cyclePending_;
   }
   cyclePending_ = false;
+  if (std::getenv("SLIP_PIT_LOG")) {  // test hook: who is in the refuel piece
+    static int lastIn[10] = {0};
+    for (int i = 0; i < 10; ++i) {
+      bool in = false;
+      if (scene_->track_data.refuelPiece >= 0) {
+        const ShipState& sh = *cc.ships[size_t(i)];
+        const float q[3] = {float(sh.x - scene_->origin[0]), float(sh.y - scene_->origin[1]), float(sh.z - scene_->origin[2])};
+        in = scene_->pieceContains(size_t(scene_->track_data.refuelPiece), q, 512.0f);
+      }
+      if (in != bool(lastIn[i])) std::fprintf(stderr, "pit ship %d %s  t=%.1f damage %.1f/%.1f branch %d\n", i, in ? "enters" : "leaves", ai_[size_t(i)].raceTime, cc.ships[size_t(i)]->damageA, cc.ships[size_t(i)]->damageB, ai_[size_t(i)].branch);
+      lastIn[i] = in;
+    }
+  }
   combat_.step(cc, step);
 }
 
@@ -310,6 +323,10 @@ void ViewerApp::toggleDrive() {
       grid_[size_t(i)].speedFactor = aiTables_.fromExecutable ? aiTables_.tierFactor[aiTables_.difficulty][trk][tier] / 16384.0 : 1.0;
     }
     player_.speedFactor = 1.0;
+    if (const char* dm = std::getenv("SLIP_DAMAGE")) {  // test hook: start with this much damage on every ship
+      for (int i = 0; i < 10; ++i) { grid_[size_t(i)].damageA = grid_[size_t(i)].damageB = std::atof(dm); }
+      player_.damageA = player_.damageB = std::atof(dm);
+    }
     if (const char* place = std::getenv("SLIP_PLACE")) {  // test hook: start at x,y,z,yaw (radians)
       double v[4];
       if (std::sscanf(place, "%lf,%lf,%lf,%lf", &v[0], &v[1], &v[2], &v[3]) == 4) {
@@ -551,6 +568,7 @@ void ViewerApp::render() {
     shakeRng_ = shakeRng_ * 1103515245u + 12345u; shakeY = int((shakeRng_ >> 16) & 7) - 3;
   }
   hudShakeX_ = shakeX; hudShakeY_ = shakeY;
+  updatePieceLights();
   if (hudActive()) {
     int x0, y0, x1, y1; float pcx, pcy;
     Hud::viewport(renderer_.width(), renderer_.height(), HudLayout::cx + shakeX, HudLayout::cy + shakeY, &x0, &y0, &x1, &y1, &pcx, &pcy);
@@ -646,6 +664,27 @@ void ViewerApp::drawCombatOverlay() {
     }
   }
   drawHud();
+}
+
+// Piece light (0x39AE6..0x39AF8): the light of the piece, and for the refuel piece a fresh random value (14 bit) for every draw: the blue / white
+// flashes of the pit. The generator is 0x3667B: x = (x + 1) >> 1, xor 0xB400 when a bit fell out.
+void ViewerApp::updatePieceLights() {
+  renderer_.pieceLight.clear();
+  if (mode_ != AppMode::Track || !scene_) return;
+  const Track& t = scene_->track_data;
+  renderer_.pieceLight.resize(t.pieces.size(), 1.0f);
+  for (size_t i = 0; i < t.pieces.size(); ++i) {
+    float light = float(t.pieces[i].light) / 16384.0f;
+    if (int(i) == t.refuelPiece && std::getenv("SLIP_NOPITFLICKER") == nullptr) {
+      uint16_t x = uint16_t(lightLfsr_ + 1);
+      const bool carry = x & 1;
+      x >>= 1;
+      if (carry) x ^= 0xb400;
+      lightLfsr_ = x;
+      light = float(x & 0x3fff) / 16384.0f;
+    }
+    renderer_.pieceLight[i] = std::clamp(light, 0.0f, 1.0f);
+  }
 }
 
 void ViewerApp::openPause() {
