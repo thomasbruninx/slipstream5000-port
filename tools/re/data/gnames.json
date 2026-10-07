@@ -1,0 +1,238 @@
+{
+ "12d68": {
+  "name": "g_Fps",
+  "note": "frames/s = 1000/ms"
+ },
+ "12d6c": {
+  "name": "g_FrameDeltaMs",
+  "note": "ms since previous FrameClockUpdate (<=1000)"
+ },
+ "12d70": {
+  "name": "g_FrameDeltaSecs214",
+  "note": "delta seconds in 2.14 fixed"
+ },
+ "12d74": {
+  "name": "g_ClockRateHz",
+  "note": "tick rate (<=70)"
+ },
+ "12e54": {
+  "name": "g_ClockMsHi",
+  "note": "integer ms of 16.16 clock"
+ },
+ "12e58": {
+  "name": "g_ClockMsLo",
+  "note": "fraction"
+ },
+ "1eb3c": {
+  "name": "g_ArchivePrimary",
+  "note": "archive object (handle,res id,count) for EXE-adjacent .RES"
+ },
+ "1eb40": {
+  "name": "g_ArchiveSecondary",
+  "note": "archive object for CD .RES (SourcePath)"
+ },
+ "1eb44": {
+  "name": "g_ArchiveTable",
+  "note": "3 entries x 12 bytes {dos handle, res id word, count}"
+ },
+ "1fbba": {
+  "name": "g_CursorX",
+  "note": ""
+ },
+ "1fbbe": {
+  "name": "g_CursorY",
+  "note": ""
+ },
+ "1fc0c": {
+  "name": "g_KeyTable",
+  "note": "pointer to 256-byte key-state table in DOS memory (bit0 new press,bit1 held)"
+ },
+ "209d8": {
+  "name": "g_LastError",
+  "note": "Last error code consumed by ErrorExit"
+ },
+ "21190": {
+  "name": "g_FpuPresent",
+  "note": "Non-zero when coprocessor initialised (FpuInit)"
+ },
+ "21194": {
+  "name": "g_AtanTable",
+  "note": "u16[4097] from MATHS.BIN hdr+4"
+ },
+ "21198": {
+  "name": "g_SinTable",
+  "note": "u16[8193] quarter-wave from MATHS.BIN hdr+0"
+ },
+ "2119c": {
+  "name": "g_AsinTable",
+  "note": "u16[8193] from MATHS.BIN hdr+2"
+ },
+ "24254": {
+  "name": "g_RandState",
+  "note": "3 words lagged-additive PRNG state"
+ },
+ "2433c": {
+  "name": "g_ResHandleTable",
+  "note": "16-byte entries; +8 block ptr,+0xC name offset"
+ },
+ "24348": {
+  "name": "g_ResTypeCount",
+  "note": "number of registered resource type tags (max 0x20)"
+ },
+ "244cc": {
+  "name": "g_ResNamePool",
+  "note": "name pool base"
+ },
+ "244d4": {
+  "name": "g_ResNamePoolUsed",
+  "note": "bytes used"
+ },
+ "26628": {
+  "name": "g_SlotsBase",
+  "note": "array of 0xAE-byte slots"
+ },
+ "26632": {
+  "name": "g_SlotCount",
+  "note": "word"
+ },
+ "26634": {
+  "name": "g_SlotListHead",
+  "note": "linked list head (slot ptr)"
+ },
+ "26638": {
+  "name": "g_SlotListTail",
+  "note": ""
+ },
+ "2663c": {
+  "name": "g_SlotIterDepth",
+  "note": "Non-zero while slot lists are being iterated (frees deferred)"
+ },
+ "33d36": {
+  "name": "g_TrkHandle",
+  "note": "res handle of .TRK"
+ },
+ "33d38": {
+  "name": "g_TrdHandle",
+  "note": "res handle of .TRD"
+ },
+ "33d3a": {
+  "name": "g_TrcHandle",
+  "note": "res handle of .TRC"
+ },
+ "33d3c": {
+  "name": "g_TrkData",
+  "note": "pointer to loaded TRK"
+ },
+ "33d40": {
+  "name": "g_TrdData",
+  "note": "pointer to loaded TRD"
+ },
+ "33d44": {
+  "name": "g_TrcData",
+  "note": "pointer to loaded TRC"
+ },
+ "33f08": {
+  "name": "g_TrackGrid",
+  "note": "pointer to 0xF00-byte spatial lookup (12x4x20 dwords?) filled by 0x3a940"
+ },
+ "430f8": {
+  "name": "g_CamNames",
+  "note": "10 ptrs '<TRACK>.CAM'"
+ },
+ "45846": {
+  "name": "g_SpeechSampleNames",
+  "note": "ptr table of EM*/EF* .SMP"
+ },
+ "502cc": {
+  "name": "g_CarClassParamPtrs",
+  "note": "dword table; [i]-> 28-byte block at 0x502f8+0x1C*(i-1); index = ship id 1..10"
+ },
+ "543d9": {
+  "name": "g_ReplayMode",
+  "note": "0 normal (recording), 1 playback"
+ },
+ "543dd": {
+  "name": "g_Human1Slot",
+  "note": "roster slot id of player 1 ship"
+ },
+ "543df": {
+  "name": "g_Human2Slot",
+  "note": ""
+ },
+ "543e1": {
+  "name": "g_Human3Slot",
+  "note": ""
+ },
+ "543f0": {
+  "name": "g_GameMode",
+  "note": "0x11 single race?,0x12 championship?,0x13 other (dispatch in 0x559d8)"
+ },
+ "543f4": {
+  "name": "g_PlayerMode",
+  "note": "0=1P,1=2P (split/link)"
+ },
+ "543f8": {
+  "name": "g_Car1",
+  "note": "selected car/driver index player 1"
+ },
+ "543fa": {
+  "name": "g_Car2",
+  "note": "selected car player 2"
+ },
+ "543fc": {
+  "name": "g_TrackIndex",
+  "note": "0..9 track number passed to RunRace"
+ },
+ "54420": {
+  "name": "g_Controls1",
+  "note": "6 bytes: steer(w),pitch(w),buttons(w) for player 1"
+ },
+ "5442c": {
+  "name": "g_Controls2",
+  "note": "player 2"
+ },
+ "54444": {
+  "name": "g_Roster",
+  "note": "u16 count + 0x4E-byte driver records"
+ },
+ "54d78": {
+  "name": "g_ArtNames",
+  "note": "10 ptrs 'RACERn.ART'"
+ },
+ "54e25": {
+  "name": "g_TrackDisplayNames",
+  "note": "10 ptrs (Chicago..New York)"
+ },
+ "54e98": {
+  "name": "g_DriverNames",
+  "note": "10 ptrs"
+ },
+ "57930": {
+  "name": "g_IntroAnnNames",
+  "note": "10 ptrs '*INT.ANN'"
+ },
+ "5801a": {
+  "name": "g_InGameMusic",
+  "note": "4 ptrs INGAME2/3/4/6.HMP"
+ },
+ "580d8": {
+  "name": "g_TrackAnnNames",
+  "note": "10 ptrs '<TRACK>.ANN'"
+ },
+ "592d0": {
+  "name": "g_RacePtrRoster",
+  "note": "pointer to roster copy used by race"
+ },
+ "592da": {
+  "name": "g_RacePauseState",
+  "note": "0 running,1 paused,2 other menu"
+ },
+ "59790": {
+  "name": "g_TrackFileNames",
+  "note": "30 ptrs: 10 .PAL, 10 .MAT, 10 .TRK"
+ },
+ "5bf42": {
+  "name": "g_WeaponShapeNames",
+  "note": "7 ptrs '*.SHP' (AIRMINE,AMBLER,BOMBER,FRAG,HYPER,SCRAMBLE,SEEKER)"
+ }
+}

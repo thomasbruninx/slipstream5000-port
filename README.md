@@ -1,0 +1,20 @@
+# Slipstream 5000 — clean reimplementation (work in progress)
+
+A modern C++20/SDL3 reimplementation of the 1995 DOS game *Slipstream 5000*, built by reverse-engineering the original files from a legally owned copy. **The repository contains no original game assets or code**; the program reads your own installation.
+
+Current state: a native macOS data viewer / drive demo (see `docs/project-status.md`). It is **not** yet a playable reproduction of the game.
+
+## Build and run (macOS, Apple Silicon)
+```
+brew install cmake ninja sdl3
+./scripts/package_macos.sh          # builds dist/Slipstream.app  (or: cmake -S . -B build -G Ninja && cmake --build build)
+build/bin/slipstream --data /path/to/Slipstream5000   # folder containing SLIPSTRM.RES (or SLIPCD.RES)
+```
+The folder is remembered for later launches (`~/Library/Application Support/Slipstream/data_dir.txt`); it is also searched at `$SLIPSTREAM_DATA`, `.`, and `~/Downloads/slip5000`.
+
+Controls — track viewer: `WASD` move, `Q/E` down/up, mouse look, `Shift` fast, `[` `]` previous/next track, `1`–`0` choose ship, `Space` drive/fly, `Tab` toggle backface culling, `F1/F2/F3` track/shape/sprite viewer, `Esc` quit. Drive: `W/S` throttle/brake, `A/D` steer (gamepad: left stick + triggers, `A`/south button toggles driving, bumpers change item, Start quits).
+
+Headless: `slipstream --track 3 --screenshot out.ppm`, `--bench 120`, `--models RACER0`, `--sprites MAINMENU`, `--drive --sim 4 --screenshot ...`.
+
+## Layout
+`src/original_formats` parsers · `src/game` runtime scene + (placeholder) ship sim · `src/renderer` software renderer · `src/platform` SDL3 app · `tools/re` reverse-engineering workbench (research only) · `tools/inspect` · `tests` · `docs` (findings; start with `project-status.md`).

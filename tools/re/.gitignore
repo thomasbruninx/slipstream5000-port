@@ -1,0 +1,4 @@
+work/*
+!work/.gitkeep
+__pycache__/
+*.pyc

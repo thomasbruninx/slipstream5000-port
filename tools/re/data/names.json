@@ -1,0 +1,1312 @@
+{
+ "10010": {
+  "conf": "high",
+  "evidence": "Called from CRT startup (0x6ae69); takes (argc in EAX, argv in EDX); compares argv[1] to '5000'; prints Windows-refusal message; calls config, sound, res, video init then game",
+  "name": "main"
+ },
+ "101a4": {
+  "conf": "high",
+  "evidence": "References 'config.ini','SoundPort','SoundIRQ','SoundDMA','SoundCard','MusicCard','MusicPort','SourcePath'; uses file layer open/read/close",
+  "name": "ReadConfigIni"
+ },
+ "103e3": {
+  "conf": "medium",
+  "evidence": "Opens 'slipstrm.par' (0x801d4) with line reader, tokenizes with 0x285bc and compares keywords driversinrace/collidecubes/allowedtrack/notitles/testweap/soundfiles/ignoremouse/mainmenu/track/champstart/driver/framerate/noaimove/rollingdemo/speed; NO direct caller found (dead/debug-only or indirect). Function proper starts at 0x103e4 after a NOP pad",
+  "name": "ParFileParse"
+ },
+ "10aa4": {
+  "conf": "medium",
+  "evidence": "Called by main right after config load; returns error code printed via HMI error-string table ('Couldn't initialise sound driver: %s'); calls HMI SOS/driver code",
+  "name": "SoundInit"
+ },
+ "10f44": {
+  "conf": "medium",
+  "evidence": "String 'ERROR: Couldn't play song: %s.'; called with HMP resource data (INTRO.HMP/WIN.HMP)",
+  "name": "HmiPlaySong"
+ },
+ "11064": {
+  "conf": "medium",
+  "evidence": "String 'ERROR: Couldn't stop song: %s.'",
+  "name": "HmiStopSong"
+ },
+ "11586": {
+  "conf": "medium",
+  "evidence": "Allocates 0xD8*(n+2)+0x160*0x51 bytes, registers server 0x11638 via SlotsAddServer(id=1) and exit routine 0x11675",
+  "name": "ArticInstall"
+ },
+ "116c3": {
+  "conf": "medium",
+  "evidence": "ResOpen of RACERn.ART, copies bbox/tables then calls ArticSlotInit; called per racer from 0x593a6/0x4a306",
+  "name": "ArtSlotCreate"
+ },
+ "11808": {
+  "conf": "high",
+  "evidence": "String 'ArticSlotInit - one of the body shapes is missing'",
+  "name": "ArticSlotInit"
+ },
+ "11b0f": {
+  "conf": "high",
+  "evidence": "Error string 'ArticSlotGetExtent - this slot is not an artic slot' lives in this function",
+  "name": "ArticSlotGetExtent"
+ },
+ "121f6": {
+  "conf": "high",
+  "evidence": "Error string 'ArtBodyAlloc - make it resize the slots buffer!' lives in this function",
+  "name": "ArtBodyAlloc"
+ },
+ "1247f": {
+  "conf": "high",
+  "evidence": "String 'ArticSlotDraw - this shape has no sort data...'",
+  "name": "ArticSlotDraw"
+ },
+ "125f4": {
+  "conf": "high",
+  "evidence": "Error string 'ArticShapeDrawSortNode - child problem' lives in this function",
+  "name": "ArticShapeDrawSortNode"
+ },
+ "12960": {
+  "conf": "low",
+  "evidence": "Called right after ArticInstall in RaceLoadTrack",
+  "name": "ArtInstallB"
+ },
+ "12d80": {
+  "conf": "high",
+  "evidence": "Caps tick rate at 70Hz (0x46), computes 0x3E80000/rate as 16.16 ms/tick, registers tick ISR 0x12e3a via TimerAddCallback and RegisterExit",
+  "name": "FrameClockInstall"
+ },
+ "12e3a": {
+  "conf": "high",
+  "evidence": "Timer ISR: adds 16.16 ms-per-tick (0x12d60:0x12d64) into 64-bit ms clock at 0x12e54:0x12e58",
+  "name": "FrameClockTick"
+ },
+ "12e5c": {
+  "conf": "medium",
+  "evidence": "Sets skip counter [0x12d5c]=2 and clears per-frame accumulators; called after every screen/menu transition",
+  "name": "FrameClockReset"
+ },
+ "12e7b": {
+  "conf": "high",
+  "evidence": "Computes elapsed ms since last call (clamped 1000, floor = 1 tick), stores [0x12d6c], derives secs-2.14 and fps via 0x12f2c; called once per main-loop iteration",
+  "name": "FrameClockUpdate"
+ },
+ "12ef7": {
+  "conf": "medium",
+  "evidence": "Returns integer ms clock [0x12e54]",
+  "name": "FrameClockGetMs"
+ },
+ "12f03": {
+  "conf": "medium",
+  "evidence": "Called before each slot callback and each timer countdown in DoGame3D; returns elapsed time units in AX/BX",
+  "name": "GetFrameDelta"
+ },
+ "12f15": {
+  "conf": "high",
+  "evidence": "Returns EBX = frame delta in seconds as 2.14 fixed ([0x12d70]); used with IMUL/SHRD-14 in physics",
+  "name": "GetFrameDeltaSecs"
+ },
+ "12f1c": {
+  "conf": "medium",
+  "evidence": "Overrides frame delta with AX ms (used by demo/replay code at 0x5a2c0)",
+  "name": "SetFrameDelta"
+ },
+ "12f2c": {
+  "conf": "high",
+  "evidence": "From delta ms in AX computes secs-2.14 = (ms/4<<16)/1000 and fps = 1000/ms",
+  "name": "FrameDeltaDerive"
+ },
+ "132f0": {
+  "conf": "medium",
+  "evidence": "Called in RaceLoadTrack with AX=0x40 (max colliders); uses ResAlloc and SlotsAddServer",
+  "name": "CollideInstall"
+ },
+ "13416": {
+  "conf": "medium",
+  "evidence": "TrackInstall passes 5 callbacks (TrackSlotCheckStatic,TrackSlotsCheckLOS,0x35642,0x38c97,0x38e84)",
+  "name": "CollideSetTrackCallbacks"
+ },
+ "135ca": {
+  "conf": "high",
+  "evidence": "Error string 'CollideSlotSetMainCube - not a collide slot' lives in this function",
+  "name": "CollideSlotSetMainCube"
+ },
+ "1363e": {
+  "conf": "medium",
+  "evidence": "Second function with identical 'CollideSlotSetMainCube - not a collide slot' string; likely the get/extent variant",
+  "name": "CollideSlotSetMainCube_B"
+ },
+ "137a2": {
+  "conf": "medium",
+  "evidence": "Per-frame in DoGame3D; calls Collide helpers 0x143ec,0x1441b,0x1446b,0x144f0,0x15a46,0x16523,0x1656b",
+  "name": "CollideStep"
+ },
+ "15b28": {
+  "conf": "high",
+  "evidence": "Error string 'CollideSlotReadMainCubePoints - not a collision slot' lives in this function",
+  "name": "CollideSlotReadMainCubePoints"
+ },
+ "15e30": {
+  "conf": "high",
+  "evidence": "Error string 'GetFreeFacePoint - out of Face points!' lives in this function",
+  "name": "GetFreeFacePoint"
+ },
+ "16880": {
+  "conf": "high",
+  "evidence": "Error string 'ComInstall: Can't allocate DOS memory.' lives in this function",
+  "name": "ComInstall"
+ },
+ "16ad2": {
+  "conf": "high",
+  "evidence": "Error string 'ComConnectSer: Can't install protected/real mode handlers.' lives in this function",
+  "name": "ComConnectSer"
+ },
+ "16c4f": {
+  "conf": "medium",
+  "evidence": "Strings CONNECT / ATD? / RING / ATAOK (Hayes modem commands)",
+  "name": "ModemDialOrAnswer"
+ },
+ "16fb6": {
+  "conf": "medium",
+  "evidence": "String 'Error entering real mode IPX handler. Are you using 4GW/PRO???'; uses DPMI INT31 0301h real-mode call",
+  "name": "IpxInstall"
+ },
+ "171c4": {
+  "conf": "low",
+  "evidence": "String '+++ATH0+++OK'",
+  "name": "ModemHangup"
+ },
+ "172c9": {
+  "conf": "high",
+  "evidence": "Error string 'ComSend: Output buffer full.' lives in this function",
+  "name": "ComSend"
+ },
+ "17a26": {
+  "conf": "medium",
+  "evidence": "String 'IPX: Unable to get local target.'",
+  "name": "IpxGetLocalTarget"
+ },
+ "188ec": {
+  "conf": "high",
+  "evidence": "String 'ResAlloc failed during Draw3DInstall'; RaceLoadTrack calls with EAX=0x190",
+  "name": "Draw3DInstall"
+ },
+ "18d0f": {
+  "conf": "high",
+  "evidence": "Strings 'Draw3DSetMaterials - material data wrong version'/'out of memory'",
+  "name": "Draw3DSetMaterials"
+ },
+ "1a024": {
+  "conf": "high",
+  "evidence": "Error string 'Draw3DGetMaterialNumber - No Materials are set' lives in this function",
+  "name": "Draw3DGetMaterialNumber"
+ },
+ "1a0f5": {
+  "conf": "high",
+  "evidence": "Error string 'Draw3DGetMaterialName - No Materials are set' lives in this function",
+  "name": "Draw3DGetMaterialName"
+ },
+ "1ad75": {
+  "conf": "medium",
+  "evidence": "Contains 'ResAlloc failed during Draw3DInstall' (second ResAlloc site)",
+  "name": "Draw3DInstallBuffers"
+ },
+ "1dd93": {
+  "conf": "high",
+  "evidence": "Error string 'PointsReInstall - Out of point space' lives in this function",
+  "name": "PointsReInstall"
+ },
+ "1e136": {
+  "conf": "high",
+  "evidence": "Error string 'InstallSpecularTables - out of memory' lives in this function",
+  "name": "InstallSpecularTables"
+ },
+ "1ecf8": {
+  "conf": "medium",
+  "evidence": "Called by ResFind (0x24865) with normalised name in EDX; scans open archives for name; used by LoadFile",
+  "name": "ResFileFindEntry"
+ },
+ "1ee1e": {
+  "conf": "high",
+  "evidence": "INT21 AH=56h",
+  "name": "DosRename"
+ },
+ "1ee38": {
+  "conf": "high",
+  "evidence": "INT21 AH=41h",
+  "name": "DosDelete"
+ },
+ "1ee4e": {
+  "conf": "high",
+  "evidence": "INT21 AH=3Dh",
+  "name": "DosOpen"
+ },
+ "1ee6c": {
+  "conf": "high",
+  "evidence": "INT21 AH=3Ch",
+  "name": "DosCreate"
+ },
+ "1ee7b": {
+  "conf": "high",
+  "evidence": "INT21 AH=3Eh",
+  "name": "DosClose"
+ },
+ "1ee98": {
+  "conf": "high",
+  "evidence": "INT21 AX=4202h seek end, returns position in EAX",
+  "name": "DosFileSize"
+ },
+ "1eeb5": {
+  "conf": "high",
+  "evidence": "Optional seek (AX=4200h) then INT21 AH=40h",
+  "name": "DosWriteAt"
+ },
+ "1eed9": {
+  "conf": "high",
+  "evidence": "INT21 AH=3Fh then scans for CR, terminates string, seeks back (AX=4201h) \u2013 text line reader used by config parser",
+  "name": "DosReadLine"
+ },
+ "1ef2a": {
+  "conf": "high",
+  "evidence": "Optional seek (AX=4200h) then INT21 AH=3Fh; CF set if short read; EAX=-1 means no seek",
+  "name": "DosReadAt"
+ },
+ "1ef74": {
+  "conf": "high",
+  "evidence": "Error string 'FileOpenResEXE: Path error.'; walks DOS env block (int21/62) to get exe path, rewrites .EXE to .RES and opens it",
+  "name": "FileOpenResEXE"
+ },
+ "1f00c": {
+  "conf": "medium",
+  "evidence": "Thin wrapper over FileOpenResEXE returning handle ptr or 0; called by main",
+  "name": "FileOpenResEXE_wrap"
+ },
+ "1f01a": {
+  "conf": "high",
+  "evidence": "Opens archive (INT21/3D), seeks to EOF-4 (4202h), reads directory offset, reads entry count (masks bit31, limit 5000), allocs count*0x1C, reads entries, XORs names with 'SOFTWAREREFINERY' when bit31 set",
+  "name": "ResFileOpen"
+ },
+ "1f190": {
+  "conf": "high",
+  "evidence": "Wrapper around ResFileOpen taking explicit path (main passes 'SLIPCD.RES')",
+  "name": "FileOpenRes"
+ },
+ "1f1e7": {
+  "conf": "high",
+  "evidence": "Uppercases name to 8.3 12-char padded form, linear-searches 28-byte directory entries comparing 12 chars + flags==2, allocs size bytes and reads from offset",
+  "name": "ResFileLoadByName"
+ },
+ "1fc14": {
+  "conf": "high",
+  "evidence": "Strings 'InputInstall: Can't allocate DOS memory.' / 'Unable to add interrupt to timer chain at 18Hz.'",
+  "name": "InputInstall"
+ },
+ "1fe84": {
+  "conf": "medium",
+  "evidence": "Stores EAX at [dosbuf+0x100]; when non-zero keyboard reads use INT16h instead of hooked table",
+  "name": "InputSetBiosKeyboardMode"
+ },
+ "1fe93": {
+  "conf": "high",
+  "evidence": "Timer callback registered at 24Hz (fallback 18Hz) by InputInstall; polls mouse (0x20068), cursor redraw, joystick (0x2090b)",
+  "name": "InputPollIsr"
+ },
+ "1ff22": {
+  "conf": "low",
+  "evidence": "Sets menu keyboard-navigation tables ([0x1fbd0..0x1fbe4]) from a table pointer in EAX",
+  "name": "InputSetKeyNavMap"
+ },
+ "1ff6d": {
+  "conf": "low",
+  "evidence": "Clears [0x1fbcc]",
+  "name": "InputClearKeyNavMap"
+ },
+ "1ff78": {
+  "conf": "medium",
+  "evidence": "Polls scancodes 0x48,0x50,0x4B,0x4D (cursor keys) via KeyHit and moves the virtual cursor between zones",
+  "name": "InputKeyNavStep"
+ },
+ "20068": {
+  "conf": "high",
+  "evidence": "INT33h AX=0Bh (read motion counters), accumulates and clamps cursor",
+  "name": "InputMouseUpdate"
+ },
+ "200b0": {
+  "conf": "medium",
+  "evidence": "Returns and clears accumulated motion (xchg with 0)",
+  "name": "InputGetMouseDelta"
+ },
+ "200c3": {
+  "conf": "high",
+  "evidence": "Clamps CX/DX to bounds [0x1fbc0..0x1fbc6]",
+  "name": "InputClampCursor"
+ },
+ "20104": {
+  "conf": "medium",
+  "evidence": "Sets [0x1fbb5]=1 and calls 0x32d48",
+  "name": "CursorShow"
+ },
+ "20111": {
+  "conf": "medium",
+  "evidence": "Clears [0x1fbb5] and calls 0x32d6b; also used as a generic 'redraw' between screens",
+  "name": "CursorHide"
+ },
+ "2011e": {
+  "conf": "high",
+  "evidence": "Returns ECX,EDX = [0x1fbba],[0x1fbbe]",
+  "name": "InputGetCursorPos"
+ },
+ "2015c": {
+  "conf": "high",
+  "evidence": "Stores AX,BX,CX,DX at [0x1fbc0..c6] and clamps current position",
+  "name": "InputSetCursorBounds"
+ },
+ "201a2": {
+  "conf": "high",
+  "evidence": "INT33h AX=0 (reset); CF clear if driver present; skipped when 'ignoremouse' flag set",
+  "name": "MouseDetect"
+ },
+ "2029b": {
+  "conf": "high",
+  "evidence": "Scans 256-entry key table for bit0 (new press); or INT16h in BIOS mode; returns EBX scancode or -1",
+  "name": "KeyGetScancode"
+ },
+ "2035a": {
+  "conf": "high",
+  "evidence": "Translates scancode to ASCII via tables at 0x203f5 (unshifted) / 0x20475 (shifted; shift = scancodes 0x2A/0x36)",
+  "name": "KeyGetAscii"
+ },
+ "204f5": {
+  "conf": "high",
+  "evidence": "BTR bit0 of [keytable+EBX]: tests-and-clears 'newly pressed' for scancode EBX (CF=1 if was set). 46 callers",
+  "name": "KeyHit"
+ },
+ "20514": {
+  "conf": "high",
+  "evidence": "BT bit1 of [keytable+EBX]: key currently held",
+  "name": "KeyHeld"
+ },
+ "2053a": {
+  "conf": "medium",
+  "evidence": "Returns [0x1fbe8],[0x1fbe9] (per-stick present flags)",
+  "name": "JoystickGetPresent"
+ },
+ "20546": {
+  "conf": "high",
+  "evidence": "AX=step (0 centre,1 default,2 extents,3 finish) for stick ESI; maintains 6 words/stick at [0x1fbea..0x1fbfe]",
+  "name": "JoystickCalibrate"
+ },
+ "20729": {
+  "conf": "medium",
+  "evidence": "Copies 6 words to caller buffer (for SLIPSTRM.CFG save)",
+  "name": "JoystickGetCalibration"
+ },
+ "20773": {
+  "conf": "medium",
+  "evidence": "Copies 6 words from caller buffer (CFG load)",
+  "name": "JoystickSetCalibration"
+ },
+ "207bd": {
+  "conf": "medium",
+  "evidence": "Reads stick, subtracts centre, scales by range",
+  "name": "JoystickReadScaled"
+ },
+ "2089a": {
+  "conf": "medium",
+  "evidence": "Polls game port (0x201) returning CX,DX raw axes; CF on timeout",
+  "name": "JoystickReadRaw"
+ },
+ "20a87": {
+  "conf": "low",
+  "evidence": "First call in main; contains 'Sorry, this program requires DOS version 3.0 or higher'",
+  "name": "DosVersionCheck"
+ },
+ "20b68": {
+  "conf": "medium",
+  "evidence": "Called before every program exit path; restores interrupt vectors (INT21/25 in body)",
+  "name": "ShutdownAll"
+ },
+ "20bed": {
+  "conf": "high",
+  "evidence": "Returns global [0x209d8] (error code set by file/Res/slot code: 2 file missing,3 read,4 create,5 write,6 no mem,7 no slots,8 res table full)",
+  "name": "GetLastError"
+ },
+ "20bfc": {
+  "conf": "medium",
+  "evidence": "INT2F AX=1600h (Windows enhanced-mode check); main prints refusal message if non-zero",
+  "name": "IsWindowsRunning"
+ },
+ "20c54": {
+  "conf": "high",
+  "evidence": "Error 'RegisterExit list full'; subsystems register their uninstall routines (e.g. SlotsInstall passes 0x267e6)",
+  "name": "RegisterExit"
+ },
+ "20cbd": {
+  "conf": "high",
+  "evidence": "Shared target of ~all 'xxx - message' jumps: copies ESI string into buffer, calls shutdown (0x20b68), prints with INT21/09 ('$'-terminated), exits INT21/4C00",
+  "name": "FatalError"
+ },
+ "20dd8": {
+  "conf": "high",
+  "evidence": "Error string 'KeyRecInstall - out of memory / KeyStroke data specified too large' lives in this function",
+  "name": "KeyRecInstall"
+ },
+ "211ce": {
+  "conf": "high",
+  "evidence": "Loads MATHS.BIN via ResFind/ResOpen, sets table ptrs [0x21198]=sin,[0x2119c]=asin,[0x21194]=atan, inits FPU",
+  "name": "MathsInstall"
+ },
+ "21255": {
+  "conf": "high",
+  "evidence": "FNINIT/FNSTCW/FLDCW with round-to-zero, 64-bit precision when FPU present (0x20bf3)",
+  "name": "FpuInit"
+ },
+ "21f67": {
+  "conf": "medium",
+  "evidence": "14 callers; called with EAX,EBX,ECX deltas, result via ISqrt (0x23452)",
+  "name": "Distance3D"
+ },
+ "2317d": {
+  "conf": "medium",
+  "evidence": "Computes angle from two matrix elements at [edi+2] and [edi+8] using ratio + atan table (0x2420c); quadrant fix by sign",
+  "name": "Atan2Matrix"
+ },
+ "23270": {
+  "conf": "high",
+  "evidence": "AX=angle (0x10000=360deg) -> EAX 2.14; folds quadrants and indexes quarter-wave table via 0x24226",
+  "name": "Sin"
+ },
+ "2329d": {
+  "conf": "high",
+  "evidence": "AX+0x4000 then same as Sin",
+  "name": "Cos"
+ },
+ "232ce": {
+  "conf": "high",
+  "evidence": "EAX 2.14 -> angle using asin table (0x2423e) and sqrt for |x|>0x2D42",
+  "name": "ASin"
+ },
+ "23318": {
+  "conf": "medium",
+  "evidence": "Mirrors ASin (0x232ce) returning 0x4000-asin(x); no direct callers found (unreferenced or indirect)",
+  "name": "ACos"
+ },
+ "233bd": {
+  "conf": "high",
+  "evidence": "Integer sqrt of 64-bit EDX:EAX style input: software bit-loop, or FILD/FSQRT/FRNDINT/FISTP when FPU flag [0x21190] set",
+  "name": "ISqrt"
+ },
+ "2420c": {
+  "conf": "high",
+  "evidence": "Reads u16 from table [0x21194] at (AX>>1)&~1",
+  "name": "AtanTableLookup"
+ },
+ "24226": {
+  "conf": "high",
+  "evidence": "Reads u16 from table [0x21198] at byte offset AX&~1",
+  "name": "SinTableLookup"
+ },
+ "2423e": {
+  "conf": "high",
+  "evidence": "Reads u16 from table [0x2119c] at AX&~1",
+  "name": "AsinTableLookup"
+ },
+ "2425a": {
+  "conf": "high",
+  "evidence": "Reads BIOS tick byte at 0x46C and advances the generator 4*(tick+1) times; called at game start",
+  "name": "RandomSeedFromBiosTicks"
+ },
+ "24273": {
+  "conf": "high",
+  "evidence": "Stores EAX,BX into generator state; DoGame3D saves/restores for replays",
+  "name": "RandomSetSeed"
+ },
+ "24280": {
+  "conf": "high",
+  "evidence": "Reads generator state",
+  "name": "RandomGetSeed"
+ },
+ "2428d": {
+  "conf": "high",
+  "evidence": "Lagged-additive 3-word generator on [0x24254..0x24258]",
+  "name": "RandomNext"
+ },
+ "242c0": {
+  "conf": "high",
+  "evidence": "AX=max -> uniform 0..AX via (rand16*(AX+1))>>16",
+  "name": "Random"
+ },
+ "244d8": {
+  "conf": "high",
+  "evidence": "Initialises handle table/name table/pool; callees contain 'ResInstall - ...' error strings; called from 0x417b4(eax=0xfa0,edx=0x3a98)",
+  "name": "ResInstall"
+ },
+ "2457f": {
+  "conf": "medium",
+  "evidence": "Returns EAX/EBX from free-memory counters; game prints 'Free Memory: %ld of %ld' with it",
+  "name": "ResGetFreeMem"
+ },
+ "24591": {
+  "conf": "high",
+  "evidence": "Allocates an anonymous resource block of EAX bytes and returns handle in SI; callers carry 'ResAlloc failed during Draw3DInstall'",
+  "name": "ResAlloc"
+ },
+ "2463e": {
+  "conf": "medium",
+  "evidence": "Releases a handle (SI): frees block header and handle-table slot",
+  "name": "ResFree"
+ },
+ "246ec": {
+  "conf": "high",
+  "evidence": "Error 'ResAddType - insufficient space for this new type'; registers (type tag, callback) up to 0x20 types",
+  "name": "ResAddType"
+ },
+ "24820": {
+  "conf": "high",
+  "evidence": "Normalises ESI name to 12 chars (0x24865), looks up in name table (0x257f1), adds via AddResName if missing; returns handle in SI, CF on error",
+  "name": "ResFind"
+ },
+ "248a5": {
+  "conf": "high",
+  "evidence": "Contains 'ResOpen failed - could not purge sufficient memory'; returns EAX=data ptr (block+0x20), increments refcount at +0x1E, loads via LoadFile if not resident",
+  "name": "ResOpen"
+ },
+ "24978": {
+  "conf": "high",
+  "evidence": "Decrements word refcount at block+0x1E; frees/unlocks at zero",
+  "name": "ResClose"
+ },
+ "249a0": {
+  "conf": "high",
+  "evidence": "Error string 'ResModify - failed because LoadFile was unable to purge...'",
+  "name": "ResModify"
+ },
+ "24a6b": {
+  "conf": "high",
+  "evidence": "Error strings 'ResCopy - ...'; allocs new block and copies contents",
+  "name": "ResCopy"
+ },
+ "24b4e": {
+  "conf": "medium",
+  "evidence": "ResFind then pre-load (0x24b69). Used for all by-name asset loads (e.g. 'SMALL.FNT')",
+  "name": "ResFindAndOpen"
+ },
+ "24b98": {
+  "conf": "medium",
+  "evidence": "Calls ResFindIDs with EDX=-1; used with patterns like 'GAMEF*.SPR' to fetch an id array",
+  "name": "ResFindIDsAll"
+ },
+ "24bd3": {
+  "conf": "high",
+  "evidence": "Error strings 'ResResize called with zero resource ID', 'ResResize - failed...'",
+  "name": "ResResize"
+ },
+ "2529b": {
+  "conf": "high",
+  "evidence": "Error string 'ResIntCreateIndex - Insufficient Memory'",
+  "name": "ResIntCreateIndex"
+ },
+ "25340": {
+  "conf": "medium",
+  "evidence": "Contains 'ResInstall - failed to allocate linear memory' and 'ResInstall - DOS memory damaged' (0x256ca)",
+  "name": "ResPoolInstall"
+ },
+ "25507": {
+  "conf": "high",
+  "evidence": "Error string 'DOSExtendGetLargest - DOS4GW Int031h function 0500h failed' lives in this function; INT31 AX=0500h",
+  "name": "DOSExtendGetLargest"
+ },
+ "2560c": {
+  "conf": "high",
+  "evidence": "Error string 'DOSExtendGetFreeAll - DOS4GW Int031h function 0502h failed' lives in this function",
+  "name": "DOSExtendGetFreeAll"
+ },
+ "256ca": {
+  "conf": "medium",
+  "evidence": "Strings 'ResInstall - DOS memory damaged'/'DOSExtendFreeAll - DOS memory damaged'; INT31 AX=0100h",
+  "name": "DOSExtendFreeAll"
+ },
+ "25795": {
+  "conf": "high",
+  "evidence": "Error string 'ResNamesInstall - out of memory'; allocates name pool (0x9c40 bytes)",
+  "name": "ResNamesInstall"
+ },
+ "25885": {
+  "conf": "high",
+  "evidence": "Error string 'AddResName - out of space'; interns name into 0x20-byte-header name pool",
+  "name": "AddResName"
+ },
+ "25954": {
+  "conf": "high",
+  "evidence": "Error strings 'LoadFile - this resource is NOT an external resource' / 'attempted to load a file which is missing'",
+  "name": "LoadFile"
+ },
+ "25ac8": {
+  "conf": "high",
+  "evidence": "Error string 'ResFindIDs - could not find * character in search string'; wildcard enumeration of names into an ID array",
+  "name": "ResFindIDs"
+ },
+ "25c66": {
+  "conf": "high",
+  "evidence": "Registers resource type 'shp ' (0x73687020) with ShapeLoad as its loader via ResAddType; RegisterExit(0x25cc5); called from RaceLoadTrack",
+  "name": "ShapesInstall"
+ },
+ "25cf1": {
+  "conf": "high",
+  "evidence": "String 'ShapeLoad - Wrong ShapeVersion'",
+  "name": "ShapeLoad"
+ },
+ "25d80": {
+  "conf": "high",
+  "evidence": "Strings 'ShapeDraw - this shape has no sort data...' / 'ShapesInstall MUST be called befor using ShapeDraw'",
+  "name": "ShapeDraw"
+ },
+ "26748": {
+  "conf": "high",
+  "evidence": "Error 'SlotsInstall: Memory error.'; allocates count*0xAE bytes, registers 0x267e6 as exit routine",
+  "name": "SlotsInstall"
+ },
+ "267e6": {
+  "conf": "medium",
+  "evidence": "Registered via RegisterExit by SlotsInstall; frees block",
+  "name": "SlotsUninstall"
+ },
+ "26817": {
+  "conf": "high",
+  "evidence": "Error 'SlotsAddServer: No room.'; table of 10 (word id, dword fn) entries",
+  "name": "SlotsAddServer"
+ },
+ "268b2": {
+  "conf": "medium",
+  "evidence": "Frees all in-use slots, rebuilds list head",
+  "name": "SlotsReset"
+ },
+ "26925": {
+  "conf": "high",
+  "evidence": "Loops 0xAE-byte slots; if callback at +0x38 non-null calls it with AX=0x104, ECX=frame delta; called each frame in DoGame3D",
+  "name": "SlotsUpdateAll"
+ },
+ "26967": {
+  "conf": "high",
+  "evidence": "Walks linked list (next at +4) calling callback at +0x38 with AX=0x105; called each frame in DoGame3D",
+  "name": "SlotsDrawAll"
+ },
+ "269a5": {
+  "conf": "high",
+  "evidence": "SI=slot (or -1 for all) calls callback +0x38 with caller-supplied AX message code",
+  "name": "SlotSendMessage"
+ },
+ "26a97": {
+  "conf": "high",
+  "evidence": "pos += ((speed(+0x2C) * dt)>>14 * dirvec(+0x5A/5C/5E))>>14 using IMUL/SHRD by 14 = 2.14 fixed point",
+  "name": "SlotMoveStep"
+ },
+ "26af4": {
+  "conf": "medium",
+  "evidence": "Same math as SlotMoveStep but returns EAX,EBX,ECX without storing",
+  "name": "SlotGetPredictedPos"
+ },
+ "26c25": {
+  "conf": "high",
+  "evidence": "Finds free slot (word at +0 ==0), initialises fields, links in list at [0x26634]/[0x26638]; CF on 'no slots'",
+  "name": "SlotAlloc"
+ },
+ "26cc5": {
+  "conf": "high",
+  "evidence": "Alloc + stores pos(eax,ebx,ecx), callbacks(edi,ebp,edx), copies 9-word matrix to +0x48 and velocity dir to +0x5A.., sends msg 0x101",
+  "name": "SlotCreate"
+ },
+ "26d98": {
+  "conf": "high",
+  "evidence": "Error 'SlotFree: Deferred list full.'; defers frees when iteration in progress",
+  "name": "SlotFree"
+ },
+ "28685": {
+  "conf": "high",
+  "evidence": "Error string 'StrTabGet: String not found.' lives in this function",
+  "name": "StrTabGet"
+ },
+ "2878a": {
+  "conf": "high",
+  "evidence": "String 'TimerInstall: Can't allocate DOS memory.'",
+  "name": "TimerInstall"
+ },
+ "2894c": {
+  "conf": "high",
+  "evidence": "AX=Hz (<= max), EBX=callback; allocates one of 5 12-byte slots; stores PIT divisor 0x1234DC/Hz",
+  "name": "TimerAddCallback"
+ },
+ "28997": {
+  "conf": "low",
+  "evidence": "Same as TimerAddCallback with EAX/EDX swapped; called from 0x10cdc",
+  "name": "TimerAddCallbackSwapped"
+ },
+ "289a5": {
+  "conf": "high",
+  "evidence": "Clears slot whose callback equals EBX",
+  "name": "TimerRemoveCallback"
+ },
+ "289cf": {
+  "conf": "high",
+  "evidence": "Returns word [0x28716] = max supported Hz",
+  "name": "TimerGetMaxRate"
+ },
+ "29ba8": {
+  "conf": "high",
+  "evidence": "Error string 'EventStart: Too many events.' lives in this function",
+  "name": "EventStart"
+ },
+ "29f00": {
+  "conf": "high",
+  "evidence": "Error string 'TextEvalControl: Buffer overflow.' lives in this function",
+  "name": "TextEvalControl"
+ },
+ "2a297": {
+  "conf": "high",
+  "evidence": "Error string 'TextDoCharacter: Text line buffer full.' lives in this function",
+  "name": "TextDoCharacter"
+ },
+ "2a439": {
+  "conf": "high",
+  "evidence": "Error string 'TextFlushBuffer: Format mode not implemented yet!' lives in this function",
+  "name": "TextFlushBuffer"
+ },
+ "2a70c": {
+  "conf": "low",
+  "evidence": "RaceLoadTrack calls with AX=0x32; contains 'Not enough memory for tree buffer.'",
+  "name": "TextTreeInstall"
+ },
+ "2c72c": {
+  "conf": "medium",
+  "evidence": "Restores text mode (INT10 with saved mode [0x2a918]); registered with RegisterExit",
+  "name": "VideoUninstall"
+ },
+ "2c786": {
+  "conf": "low",
+  "evidence": "Called by VideoInstall to build 200-entry row pointer table at 0x2a930",
+  "name": "VideoSetupScanlineTable"
+ },
+ "2ca33": {
+  "conf": "medium",
+  "evidence": "Returns AX,BX,CX,DX from [0x2b2ac..b2] (clip rect)",
+  "name": "VideoGetClip"
+ },
+ "32c5c": {
+  "conf": "high",
+  "evidence": "ESI -> {u16 first,u16 count,RGB triples} == PAL layout; loads EBX=first, ECX=count then calls 0x32c74; called with PAL data in RaceLoadTrack and with static palettes elsewhere",
+  "name": "VideoSetPalette"
+ },
+ "32c74": {
+  "conf": "medium",
+  "evidence": "Callee of VideoSetPalette (EBX first, ECX count, ESI rgb)",
+  "name": "VideoSetPaletteRange"
+ },
+ "3311e": {
+  "conf": "medium",
+  "evidence": "Strings FORM/BMHD/CMAP/BODY; called only from GrabScreenLBM",
+  "name": "WriteIffLbm"
+ },
+ "33316": {
+  "conf": "high",
+  "evidence": "String 'TextMapTabInstall - out of memory'",
+  "name": "TextMapTabInstall"
+ },
+ "3384d": {
+  "conf": "medium",
+  "evidence": "VideoInstall calls it to decide VESA availability (mode 0x57)",
+  "name": "VesaDetect"
+ },
+ "33901": {
+  "conf": "medium",
+  "evidence": "VideoInstall mode 0x57 path; INT10 AX=4F02h family",
+  "name": "VesaSetMode"
+ },
+ "33f0e": {
+  "conf": "high",
+  "evidence": "Calls TrackInstallSlots/TrackInstallSlotDraw/TrackInstallMem, SlotsAddServer(1,0x33fb3), allocs 0xF00-byte grid [0x33f08], registers collision callbacks (TrackSlotCheckStatic, TrackSlotsCheckLOS) and exit routine; caller RaceLoadTrack",
+  "name": "TrackInstall"
+ },
+ "33fc9": {
+  "conf": "medium",
+  "evidence": "Registered via RegisterExit by TrackInstall",
+  "name": "TrackUninstall"
+ },
+ "3401c": {
+  "conf": "low",
+  "evidence": "Called right after TrackInstall in RaceLoadTrack; CF -> out-of-memory exit",
+  "name": "TrackInstallB"
+ },
+ "34200": {
+  "conf": "low",
+  "evidence": "References 'water' string; called by 0x34187",
+  "name": "TrackDrawSetup"
+ },
+ "344db": {
+  "conf": "high",
+  "evidence": "Error strings 'TrackLoad - wrong data version'/'this data is unlinked'; takes EDX=name, replaces last char with D then C to load .TRD/.TRC",
+  "name": "TrackLoad"
+ },
+ "3476e": {
+  "conf": "medium",
+  "evidence": "Releases handles stored at 0x33d36/38/3a (TRK/TRD/TRC)",
+  "name": "TrackUnload"
+ },
+ "347d3": {
+  "conf": "high",
+  "evidence": "Error 'TrackLoad - missing a shape:- '; resolves shape names in TRK/TRD via ResFind (0x24b4e)",
+  "name": "TrackLinkShapes"
+ },
+ "34880": {
+  "conf": "low",
+  "evidence": "Called right after TrackLoad: calls 0x38973,0x36e06,0x38998 (slot/branch table reset)",
+  "name": "TrackReset"
+ },
+ "348d0": {
+  "conf": "high",
+  "evidence": "Error strings 'TrackSlotAdd - ...'",
+  "name": "TrackSlotAdd"
+ },
+ "34b97": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotCheckStatic - this is NOT a Track slot' lives in this function",
+  "name": "TrackSlotCheckStatic"
+ },
+ "34be0": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotCompGetCurrent - not a track slot' lives in this function",
+  "name": "TrackSlotCompGetCurrent"
+ },
+ "34caa": {
+  "conf": "low",
+  "evidence": "Final step of RaceLoadTrack; stores 4 dwords and calls 0x19571/0x19560",
+  "name": "TrackSetCameraRange"
+ },
+ "350bc": {
+  "conf": "low",
+  "evidence": "Called from DoGame3D start",
+  "name": "TrackCamerasInit"
+ },
+ "3526c": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotGetLight - not a track slot' lives in this function",
+  "name": "TrackSlotGetLight"
+ },
+ "35372": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotGetName - not a track slot' lives in this function; returns ptr to name at TRC record+0x1A (compared to 'CROW'/'GRID' in DoGame3D)",
+  "name": "TrackSlotGetName"
+ },
+ "353cf": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotSetBranch - not a track slot' lives in this function",
+  "name": "TrackSlotSetBranch"
+ },
+ "3544f": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotCheckBranch - not a track slot' lives in this function",
+  "name": "TrackSlotCheckBranch"
+ },
+ "354ea": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotFindDoor - not a track slot' lives in this function",
+  "name": "TrackSlotFindDoor"
+ },
+ "35e53": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotCheckRefuel - not a track slot' lives in this function",
+  "name": "TrackSlotCheckRefuel"
+ },
+ "35ea8": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotsCheckLOS - not a track slot' lives in this function",
+  "name": "TrackSlotsCheckLOS"
+ },
+ "388ae": {
+  "conf": "medium",
+  "evidence": "Contains 'TrackInstall - InstallSlots out of memory'",
+  "name": "TrackInstallSlots"
+ },
+ "389fb": {
+  "conf": "high",
+  "evidence": "Error string 'SlotDrawAlloc - out of SlotDraw records' lives in this function",
+  "name": "SlotDrawAlloc"
+ },
+ "3af50": {
+  "conf": "low",
+  "evidence": "Called with camera tables at 0x55680/0x556a8 when 1-player",
+  "name": "RaceCameraSetup"
+ },
+ "3b6d0": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotGetNeighbours - not a track slot' lives in this function",
+  "name": "TrackSlotGetNeighbours"
+ },
+ "3baf8": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSetLapDist - fwd node not linked!' lives in this function",
+  "name": "TrackSetLapDist"
+ },
+ "3bd0d": {
+  "conf": "high",
+  "evidence": "Error string 'TrackSlotNodeGetLapDist - not a track slot' lives in this function",
+  "name": "TrackSlotNodeGetLapDist"
+ },
+ "3c324": {
+  "conf": "high",
+  "evidence": "Error string 'FindDoors - no link!' lives in this function",
+  "name": "FindDoors"
+ },
+ "3c75c": {
+  "conf": "medium",
+  "evidence": "Contains 'TrackDraw - TrackInitDoors SLOTCREATE failed'; called once from DoGame3D before the main loop",
+  "name": "TrackInitDoors"
+ },
+ "3c813": {
+  "conf": "medium",
+  "evidence": "Contains 'TrackDraw - TrackInitDoors TRACKSLOTADD failed' and ' cannot find DOORS material'",
+  "name": "TrackInitDoors_Slots"
+ },
+ "3c944": {
+  "conf": "high",
+  "evidence": "Error string 'CreateDoorSlot - TrackSlotAdd failed' lives in this function",
+  "name": "CreateDoorSlot"
+ },
+ "3ce7e": {
+  "conf": "medium",
+  "evidence": "Contains 'TrackInstall - InstallSlotDraw out of memory'",
+  "name": "TrackInstallSlotDraw"
+ },
+ "3d446": {
+  "conf": "medium",
+  "evidence": "Contains 'TrackInstall - Out of Memory'",
+  "name": "TrackInstallMem"
+ },
+ "3d568": {
+  "conf": "high",
+  "evidence": "Contains 'InitRefuel - refuel polygon MUST have 12 points'; called from TrackLoad as last step; walks TRD groups -> TRC polygon lists",
+  "name": "InitRefuel"
+ },
+ "3e26c": {
+  "conf": "high",
+  "evidence": "Error string 'CreateRays - track not linked here' lives in this function",
+  "name": "CreateRays"
+ },
+ "417b4": {
+  "conf": "medium",
+  "evidence": "Called from main with (0xFA0=4000 handles, 0x3A98 pool paragraphs?, 0) -> calls ResInstall",
+  "name": "ResInstallWrapper"
+ },
+ "4181c": {
+  "conf": "high",
+  "evidence": "Strings 'VideoInstall: Invalid mode.' / 'Video Error: Memory problem.'; main calls it with mode 0",
+  "name": "VideoInstall"
+ },
+ "4256a": {
+  "conf": "low",
+  "evidence": "Strings BESTDRV/CARS.MAT/BESTBACK.SPR/BESTDARK.SPR/BEST3DBK.SPR/BESTF*.SPR",
+  "name": "GarageLoadCarViews"
+ },
+ "43b4a": {
+  "conf": "medium",
+  "evidence": "Called with track id; wildcard sprite patterns cancld*/hawcld*/loncld*/eghill*/norhill*/Amacld*/NYcl** (0x43268..0x43aa8 are the per-track variants)",
+  "name": "RaceLoadSkyAndScenery"
+ },
+ "44022": {
+  "conf": "low",
+  "evidence": "Called at end of each frame in DoGame3D; nonzero return exits loop",
+  "name": "RaceCheckFinished"
+ },
+ "4429d": {
+  "conf": "low",
+  "evidence": "Per-frame; 139 instructions of sprite/text drawing (Video* calls 0x2ccd0..)",
+  "name": "RaceDrawOverlays"
+ },
+ "44654": {
+  "conf": "low",
+  "evidence": "Called with EAX=1/2 and SI/DI player slot ids",
+  "name": "HudDrawPlayerPanel"
+ },
+ "46a94": {
+  "conf": "high",
+  "evidence": "Error string 'DoViewCar: Error.' lives in this function",
+  "name": "DoViewCar"
+ },
+ "472fb": {
+  "conf": "medium",
+  "evidence": "String 'CONFIG  ' (menu id) + CNFFONT.FNT/GARAGEA/B/CNFBLOCK.SPR",
+  "name": "ConfigMenu"
+ },
+ "475d2": {
+  "conf": "medium",
+  "evidence": "String 'DETAIL  '",
+  "name": "DetailMenu"
+ },
+ "4796a": {
+  "conf": "medium",
+  "evidence": "String 'GENERAL '; 'mph | km/h' at 0x47a67",
+  "name": "GeneralMenu"
+ },
+ "47cca": {
+  "conf": "medium",
+  "evidence": "String 'SOUND   '",
+  "name": "SoundMenu"
+ },
+ "47fee": {
+  "conf": "medium",
+  "evidence": "String 'DIFF    '",
+  "name": "DifficultyMenu"
+ },
+ "4827e": {
+  "conf": "medium",
+  "evidence": "String 'CONTROLS'; JOYCAL.SPR calibration screens at 0x4858a/0x487fe",
+  "name": "ControlsMenu"
+ },
+ "4989c": {
+  "conf": "medium",
+  "evidence": "Opens 'SLIPSTRM.CFG' (VA 0x49240) via DosOpen/ReadAt, restores options/joystick calibration (0x20773); owns the INT21/09+exit at 0x4ABC2 that prints the 'configuration file \u2026 is invalid' message; called from main after sound setup",
+  "name": "ConfigFileLoad"
+ },
+ "499e4": {
+  "conf": "medium",
+  "evidence": "References 'SLIPSTRM.CFG' and calls the create+write helper 0x1ED4C (also used by DoSaveGame/GrabScreenLBM)",
+  "name": "ConfigFileSave"
+ },
+ "4a098": {
+  "conf": "high",
+  "evidence": "Error string 'DebugLogString: Unable to open or create log file.' lives in this function",
+  "name": "DebugLogString"
+ },
+ "4a86c": {
+  "conf": "high",
+  "evidence": "Called as 'jb 0x4a86c' after every failed asset load; reads last-error [0x209d8] via 0x20bed: 2..5 -> 'missing or damaged' msg, 6 -> out-of-memory msg (0x4aad5), else 'internal error'; ShutdownAll then INT21/4C01",
+  "name": "ErrorExit"
+ },
+ "4aad5": {
+  "conf": "high",
+  "evidence": "Prints 'ERROR: Slipstream ran out of memory.' then INT21/4C01",
+  "name": "ErrorExitOutOfMemory"
+ },
+ "4b86d": {
+  "conf": "high",
+  "evidence": "Error string 'FxAddEngine: Too many engines this frame!' lives in this function",
+  "name": "FxAddEngine"
+ },
+ "4cd6b": {
+  "conf": "medium",
+  "evidence": "Return value (index) drives jump table 0x5591b in GameMain",
+  "name": "MainMenu"
+ },
+ "4cf09": {
+  "conf": "medium",
+  "evidence": "Strings MAINMENU.SPR/MENUFONT.FNT/MAINBT_?.SPR/'Cheating will get you everywhere.'",
+  "name": "MainMenuDraw"
+ },
+ "4f36c": {
+  "conf": "low",
+  "evidence": "Per-frame; calls GetFrameDelta then 0x275f7",
+  "name": "RaceBangUpdate"
+ },
+ "4f639": {
+  "conf": "high",
+  "evidence": "Error string 'RaceBangSlotControl - slot-slot collision should not happen!' lives in this function",
+  "name": "RaceBangSlotControl"
+ },
+ "4fb76": {
+  "conf": "medium",
+  "evidence": "Contains 'RaceBangInstall - could not find some sprites' and Expl*/SmkBlk*/SmkGry*/Fire* sprite patterns",
+  "name": "RaceBangInstallSprites"
+ },
+ "4fd0d": {
+  "conf": "high",
+  "evidence": "Error string 'RaceBangInstall - could not find some of the required materials' lives in this function",
+  "name": "RaceBangInstall"
+ },
+ "5043c": {
+  "conf": "low",
+  "evidence": "2-instruction stub called each frame",
+  "name": "RaceReset"
+ },
+ "50446": {
+  "conf": "low",
+  "evidence": "Per-frame in DoGame3D with ESI=roster; 17 instructions",
+  "name": "RaceUpdate"
+ },
+ "5047c": {
+  "conf": "high",
+  "evidence": "Error string 'RaceSlotControl: Unknown bonus type.' lives in this function; message dispatcher on AX (0x101,0x104,0x105..0x108,0x200..0x202)",
+  "name": "RaceSlotControl"
+ },
+ "512c4": {
+  "conf": "low",
+  "evidence": "Returns CX,DX,AX from control block 0x54432 (word triple)",
+  "name": "RaceReadControlsP3"
+ },
+ "512d9": {
+  "conf": "medium",
+  "evidence": "Returns CX,DX,AX from control block 0x54420 (player 1) or 0x5442c (player 2); uses AI controller 0x5135e when [0x543f4]==0 and demo flag [0x50254]!=0",
+  "name": "RaceReadControls"
+ },
+ "5135e": {
+  "conf": "medium",
+  "evidence": "Produces control values for computer-driven ships (drone): uses TrackSlotFindDoor/CheckBranch, RNG, ART 'DRONE'; called when no human control",
+  "name": "RaceAIControl"
+ },
+ "51b0a": {
+  "conf": "medium",
+  "evidence": "Physics step called from RaceSlotControl(0x104): reads (steer,pitch,buttons) in (CX,DX,AX); per-class params [0x502cc+id*4]; integrates speed (32.16 at data+0xC/+0x10) with IMUL/SHRD-14; applies drag; calls collision 0x13474/0x134e6",
+  "name": "RaceSlotMove"
+ },
+ "51ec4": {
+  "conf": "low",
+  "evidence": "Computes hover/bank offsets from speed and pitch (SAR 3/5 scalings, +0x2c00 base) then 0x21bf4/0x271c3",
+  "name": "RaceSlotHover"
+ },
+ "52035": {
+  "conf": "high",
+  "evidence": "Error string 'RaceSlotDamage: Missing reference point.' lives in this function",
+  "name": "RaceSlotDamage"
+ },
+ "53536": {
+  "conf": "high",
+  "evidence": "Error string 'DoSaveGame: Error.' lives in this function; uses SLIPSTRM.SAV",
+  "name": "DoSaveGame"
+ },
+ "55750": {
+  "conf": "high",
+  "evidence": "Loads SMALL.FNT/SHADE.FNT/SMALLEST.FNT via ResFindAndOpen, stores handles at 0x54382/84/86",
+  "name": "FontsInstall"
+ },
+ "557b6": {
+  "conf": "medium",
+  "evidence": "Target of obfuscation trampoline 0x5bb6e; saves ESP in [0x55df6], runs logos then menu/mode dispatch loop at 0x557d1",
+  "name": "GameMain"
+ },
+ "55f50": {
+  "conf": "high",
+  "evidence": "Strings 'GRAB0000.LBM','Error grabbing screen.'; writes IFF FORM/ILBM using strings at 0x3311e",
+  "name": "GrabScreenLBM"
+ },
+ "565fe": {
+  "conf": "medium",
+  "evidence": "Shows GREMLOGO.SPR and embeds 'Version ID: 24/04/95@14:36:40/CD'; called first from GameMain",
+  "name": "IntroLogos"
+ },
+ "56766": {
+  "conf": "medium",
+  "evidence": "Strings REFINERY.SMP, SOFTLOGO.SPR, SHADE1.FNT, GLOBE.SHP/SPDTEST.MAT and credits text",
+  "name": "CreditsScreen"
+ },
+ "57a79": {
+  "conf": "medium",
+  "evidence": "Strings RACER0.ART, 'Unable to get lap distance for wait command.'; runs intro script (InitScript/CheckScriptMem/FreeScript) with free camera over the track",
+  "name": "PlayTrackIntro"
+ },
+ "5816e": {
+  "conf": "high",
+  "evidence": "Error string 'InitScript: Unrecognised command.' lives in this function",
+  "name": "InitScript"
+ },
+ "58261": {
+  "conf": "high",
+  "evidence": "Error string 'CheckScriptMem: Unrecognised command.' lives in this function",
+  "name": "CheckScriptMem"
+ },
+ "5837a": {
+  "conf": "high",
+  "evidence": "Error string 'FreeScript: Unrecognised command.' lives in this function",
+  "name": "FreeScript"
+ },
+ "5842c": {
+  "conf": "low",
+  "evidence": "Looks up roster entry by match (called with EAX=index, EBX=roster) and returns ptr in EAX; CF if absent",
+  "name": "RaceFindDriver"
+ },
+ "586f2": {
+  "conf": "high",
+  "evidence": "Error string 'DoGame3D: Error.' at 0x592a2 in function tail; sets up race (TrackLoad via 0x594b3), main loop 0x58b17..0x591b2",
+  "name": "DoGame3D"
+ },
+ "593a6": {
+  "conf": "medium",
+  "evidence": "Called per roster entry from DoGame3D start; calls ArtSlot (0x116c3), SlotCreate (0x26cc5), TrackSlotAdd (0x348d0)",
+  "name": "RaceInitRacer"
+ },
+ "594b3": {
+  "conf": "high",
+  "evidence": "Sequence: SlotsInstall(100), ArticInstall(20), Draw3DInstall(400), ShapesInstall, PAL (g_TrackFileNames[i-1]) -> VideoSetPalette, MAT ([+10]) + CARS.MAT -> Draw3DSetMaterials, CollideInstall(0x40), TrackInstall, TrackLoad(TRK [+20]), per-track hook [0x595f8+i*4]; EAX = 1-based track index",
+  "name": "RaceLoadTrack"
+ },
+ "59808": {
+  "conf": "medium",
+  "evidence": "Called at DoGame3D teardown (0x59262) and from PlayTrackIntro; calls TrackUnload(0x3476E), ArtSlot release (0x11675) and SlotsUninstall (0x267E6)",
+  "name": "RaceUnload"
+ },
+ "59869": {
+  "conf": "medium",
+  "evidence": "Calls KeyHit(0x204f5) and 0x59904 (pause menu) each frame",
+  "name": "RaceHandleKeys"
+ },
+ "59904": {
+  "conf": "medium",
+  "evidence": "Called from RaceHandleKeys; strings SELECT.SMP and separator strings (menu panel)",
+  "name": "PauseMenu"
+ },
+ "5a4ec": {
+  "conf": "low",
+  "evidence": "Per-frame after SlotsDrawAll; strings; calls TrackSlotGetName/FindDoor, 0x4422d etc.",
+  "name": "RaceDrawHud"
+ },
+ "5a7f8": {
+  "conf": "high",
+  "evidence": "Sets [0x543d9]=0 (record mode) and calls DoGame3D; callers are the menu/mode dispatch (0x557d1,0x5596e,0x559d8)",
+  "name": "RunRace"
+ },
+ "5a80c": {
+  "conf": "high",
+  "evidence": "Sets [0x543d9]=1 (playback mode) and calls DoGame3D",
+  "name": "RunRaceReplay"
+ },
+ "5b8bf": {
+  "conf": "high",
+  "evidence": "Error string 'SpriteGreyscale: Pixel not in palette range.' lives in this function",
+  "name": "SpriteGreyscale"
+ },
+ "5b9ed": {
+  "conf": "high",
+  "evidence": "Error string 'MakeFadePalette: Range error.' lives in this function",
+  "name": "MakeFadePalette"
+ },
+ "5bb6e": {
+  "conf": "medium",
+  "evidence": "Obfuscated jump-maze (opaque jmp chains, self-modifying xor at 0x5bc55) ending in jmp 0x557b6; called from main after fonts init",
+  "name": "ProtectionTrampoline"
+ },
+ "5bcdc": {
+  "conf": "medium",
+  "evidence": "DoGame3D calls it when [0x543d9]==0 then copies roster and saves RNG seed (0x24280)",
+  "name": "ReplayRecordStart"
+ },
+ "5bceb": {
+  "conf": "medium",
+  "evidence": "Per-frame in DoGame3D loop (0x58e59) when recording: stores control block at 0x54420",
+  "name": "ReplayRecordFrame"
+ },
+ "5bcfa": {
+  "conf": "medium",
+  "evidence": "Per-frame in DoGame3D loop (0x58e65) when playing back: fills control block, CF set at end of recording",
+  "name": "ReplayPlaybackFrame"
+ },
+ "5bd27": {
+  "conf": "medium",
+  "evidence": "DoGame3D calls it when [0x543d9]!=0, restores roster and RNG seed (0x24273)",
+  "name": "ReplayPlaybackStart"
+ },
+ "5c34d": {
+  "conf": "high",
+  "evidence": "Error string 'WeapFSmoker: Missing reference point.' lives in this function",
+  "name": "WeapFSmoker"
+ },
+ "63978": {
+  "conf": "high",
+  "evidence": "Entry point from LE header (EIP obj1+0x53978); followed by 'WATCOM C/C++32 Run-Time system' banner string; calls main at 0x6ae69",
+  "name": "_cstart_"
+ }
+}

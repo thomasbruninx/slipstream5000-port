@@ -1,0 +1,2 @@
+# `.PAL` — CONFIRMED
+`u16 first (=0), u16 count (=248), count × {r,g,b}` — 6-bit VGA components (0..63); size `4+3*count` = 748. Palette indices 248..255 are **not** in the file (engine-defined, UNKNOWN; the viewer uses placeholder colours). The same block (`first,count,RGB`) is appended to some `.SPR` files. Per-track palettes have identical first ~160 entries? (UNVERIFIED) — ship colour ramps (grey 0–47, red 48–63, blue 64–79, yellow 80–95, …) are referenced by `CARS.MAT`.
