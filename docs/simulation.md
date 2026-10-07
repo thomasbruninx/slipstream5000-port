@@ -145,21 +145,54 @@ matrix as the emulator). The wall-hit "second hit within 0x190 ms" branch is imp
 debris, no controls; the original hands it to the debris mover `0x3E9F5`, which follows the track centre line - not
 ported) and half its speed is kept.
 
-### AI ships (STRONGLY INFERRED from `RaceAIControl` 0x5135E / 0x51688; behaviour checked by running whole races headless)
-The path is a chain of **nodes** in the TRD (list offset at header +8, count, 0x32 bytes each: +0 next, +2 previous,
-+4 alternative (refuel) route, +8 straightness (0x8000 = no turn), +0xC position, +0x18 width); every piece entry points
-to its node (`+0x1E`). Per frame (port: `ship_ai.cpp`): the target node is the node of the piece the ship is in, or the
-next one when closer than 0x800 (estimated length `0x21F87` = max + (mid+min)/4); the look-ahead threshold is
-`0x5F50 + speed*0x1E8/0x2CB/4 + 2.5*width`; when the node is closer the node window advances; the aim point lies on the
-segment to the previous node at `(dist - threshold)` from the node (`0x517E7`); the direction is rotated into the
-ship's *bank-free* frame (matrix with the roll terms zeroed, re-orthonormalised) and `steer = clamp(right*0x4000,
-+-0x800)*8`, `pitch = clamp(up*0x4000, +-0x800)*8` (raw axes, no keyboard ramp); throttle when the target speed >= speed.
-Target speed = `min` of: `minSpeed[track] + speedRange[track]*(0x4000 - curvature)>>14` (tables at 0x5027A/0x502A2, read
-from the user's exe; curvature = sum of `0x8000 - straightness` over the next 0x5F500 units; only when the node is within
-the ship's `f6` = 244000) and 214500 (AI cap `0x345E4`). Damaged ships (A or B > 50) take the alternative route.
-Headless races: 9 AI ships complete laps on all ten tracks at 214-230k u/s with few contacts. Not ported: lateral
-avoidance of other slots (record `+0x42/+0x46`, neighbours `0x3B6D0`), doors (`TrackSlotFindDoor`), random branch choice,
-rubber-band caps, pit logic.
+### AI ships (STRONGLY INFERRED from `RaceAIControl` 0x5135E / 0x51688 / 0x3B6D0 / 0x515D2 / 0x515F2 / 0x3544F; checked by running whole races headless)
+**Path.** A chain of **nodes** in the TRD (list offset at header +8, count, 0x32 bytes each: +0 next, +2 previous,
++4 alternative route, +6 merge marker, +8 straightness (0x8000 = no turn), +0xC position, +0x18 width); every piece entry
+points to its node (`+0x1E`). `InitRefuel` (0x3D568) gives a node the *pit* flag (`+0x28 = 0xFFFF`) when its alternative
+route reaches the node of the piece that holds a `REFUEL 3` polygon before a merge node (only tracks with such a piece
+have a pit route: Hawaii, Norway, Cave, Can, Amazon).
+**Aim** (per frame, `ship_ai.cpp`): target node = node of the piece the ship is in, or the next one closer than 0x800
+(length estimate `0x21F87` = max + (mid+min)/4); threshold `0x5F50 + speed*0x1E8/0x2CB/4 + 2.5*width`; the node window
+advances when closer; the aim point lies on the segment to the previous node at `dist - threshold`; the direction is
+rotated into the ship's bank-free frame and `steer = clamp(right*0x4000, +-0x800)*8`, `pitch` likewise (raw axes).
+**Target speed** = `min(minSpeed[track] + speedRange[track]*(0x4000 - curvature)>>14, 214500)` (tables 0x5027A/0x502A2 read
+from the exe; curvature = sum of `0x8000 - straightness` over the next 0x5F500 units, only when the node is within `f6`
+= 244000 of the ship); AI ships are capped at 0x345E4 = 214500 (`record +0xD`); throttle when target >= speed.
+**Neighbours** (`TrackSlotGetNeighbours`): for every other ship, same target node -> `ahead` if (its distance to the node +
+extent) <= (mine - my extent), `behind` if >= (mine + my extent), else `alongside`; different node -> ahead/behind by the
+sign of the dot product with my heading; nearest of each class by the length estimate.
+**Avoidance** (after 3 s of start delay, `slot +0x4A = 0xBB8`): ahead ship within 0x17D40 and mine faster (`0x515D2`) and room
+(`0x515F2`: lateral position (right, up) of the other in its node frame; `rest = width - (E_o - lat)` with extents + 0x1310;
+needs `E_me <= rest`) -> lateral offset `(width + E_o - lat)/2` pointing away from it, applied to the aim point in the node
+frame (right `(f.z,0,-f.x)`, up `f x right`), clamped to `width - extent - 0x988`; otherwise offsets are cleared (unless
+someone is alongside) and the target speed is limited to the ahead ship's speed (+0x138D beyond 0x9880, -0x1BEE closer
+than 0x5F50) when it is within 0xBEA0.
+**Branches** (`TrackSlotCheckBranch`): at a split node (previous node has no alternative): pit node -> damaged ships (either
+counter > 50) take the alternative route; ordinary split -> AI ships only, never rank 1 or the last two, never while
+someone is alongside, with probability 0xA00/0x10000 (0x6000 when the ship behind is further than 0x77240).
+**Doors:** a ship on a door's piece forces it to state 0 (opening) at speed 0x53CA (`0x35564`); the speed resets to 0x37DC
+at the next flip.
+**Per-ship speed factor** (`RaceSlotMove 0x51BF1..`): AI controlled ships multiply thrust and speed cap by
+`tier[difficulty][track][tier]/0x4000` (tables 0x5409C, 4 sets x 10 tracks x 4 tiers, values 0.52..1.31); the tier comes
+from the start position (`{0,0,1,1,1,2,2,3,3,3}` for positions 1..10, 0x586DB); the difficulty set ([0x47234], menu) is
+UNKNOWN: the port uses the second set (`AiTables::difficulty`). Timers: boost `+0x3E` adds 0.5, slow `+0x40` subtracts 0.25.
+**Trailing boost** (human ships only, `0x51C70`): last place and the ship ahead more than 0x595B0 away -> boost for 6 s
+(`applyTrailingBoost`; the lap-dependent extra condition via `[0x5440E]`/`slot +0x1C` is not ported). The position table
+`0x50252` (mode `[0x54404]`) and `[0x5040C]` (mode `[0x5441C]`) are mode specific and not ported.
+Headless races: nine AI ships on all ten tracks run the line at 210-230k u/s with a few contacts; stuck situations found on
+the way (a seam where the move fails the piece check) are handled by the 15-step bisection of `0x38C97`.
+
+### Debris routine (wrecks), CONFIRMED by reading `0x3E8F2` / `0x3E9F5`
+A second wall hit within 0x190 ms (see above) calls `0x3E8F2(speed*0.75/2, 1000 ms, 0xE000)`: slot speed = max(that, 0x1174C);
+timer = 1 s + min(5 s, distance to the next node / 0x77240 s); random spin signs; flight direction = towards the next node
+(the heading keeps steering towards it at 2/s); the original handler is saved and `0x3E9F5` installed. Per frame (flying):
+tumble yaw 0xE000 units/s (0.875 turn/s) and pitch twice that, each rotation reverted if it collides; when the timer ends
+the wreck is "landed" and moves at 0xE000 u/s towards the target with its orientation settling onto the direction. It
+recovers (orientation re-aligned to the track direction by `0x2260A`, handler restored, ship speed = 0.75 * speed at the
+crash, slide 0) when it leaves the piece it crashed in, touches a wall again (0x107 while landed) or another ship (0x106). Wall
+hits while flying: speed/2 (>= 0x1174C), bounce 22.5 deg off the surface (`0x3BD82` with angle 0x1000), grazing hits (|h.n| <= 0x100) are ignored.
+Port: `ShipState::wreck*`, `stepShipDynamics`, `shipHitResponse`, `updateWrecks`. Simplifications: the per-rotation collision
+revert is replaced by the normal track sweep, and a 12 s safety timeout recovers wrecks that never leave their piece.
 
 ### Not done
 * Ship-vs-ship collision (`0x14620`, OBB solver), damage and the explosion branch of the wall-hit handler.

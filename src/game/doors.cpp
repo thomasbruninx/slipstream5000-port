@@ -79,9 +79,8 @@ void Doors::build(const Scene& scene) {
 }
 
 void Doors::step(double dt) {
-  const double speed = 0x37dc;  // units/s, reset on every direction change
   for (Door& d : list) {
-    double remaining = speed * dt;
+    double remaining = d.speed * dt;
     for (int guard = 0; guard < 4 && remaining > 0; ++guard) {
       const double* target = d.state == 0 ? d.open : d.closed;
       const double sg = d.state == 0 ? 1.0 : -1.0;
@@ -95,6 +94,7 @@ void Doors::step(double dt) {
       for (int i = 0; i < 3; ++i) d.pos[i] = target[i];
       remaining -= std::max(left, 0.0);
       d.state = d.state == 0 ? -1 : 0;  // reached the end: flip (xor [edi+4], -1)
+      d.speed = 0x37dc;
       if (left <= 0 && remaining <= 0) break;
     }
   }

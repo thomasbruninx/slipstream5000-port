@@ -24,11 +24,29 @@ struct ShipState {
   double boxLo[3] = {0, 0, 0}, boxHi[3] = {0, 0, 0};  // collision box in model space (ART extents); empty = no track collision
   bool hasBox = false;
   double pairCooldown = 0;      // ship-ship message cadence
+  double speedFactor = 1.0;     // RaceSlotMove edx/0x4000: AI tier factor (0x5409C tables); multiplies thrust and the speed cap
+  double boostTime = 0, slowTime = 0;  // slot data +0x3E (+0.5 factor) / +0x40 (-0.25 factor, wins), seconds
+  double extent = 0;            // ArticSlotGetExtent: radius of the collision box
   double damageA = 0, damageB = 0;  // [rec+0x2A] engine, [rec+0x2E] steering damage, 0..100 (16.16 in the original)
   double invuln = 0;            // seconds of damage immunity after damage (3 s)
   double recentHit = 0;         // ship data +0x12 (0x190 ms): a second wall hit while set wrecks the ship
+  // Wreck = debris handler 0x3E9F5 (installed by 0x3E8F2 after a second wall hit): the ship tumbles along the track towards the
+  // next node for a while, then recovers (re-aligned to the track) once it left the wreck piece, hit something, or timed out.
   bool wrecked = false;
-  double wreckTime = 0;
+  double wreckTime = 0;          // seconds since the wreck
+  double wreckTimer = 1.0;       // [+0x10E] ms: flight time (1 s + distance to the aim node), then "landed"
+  bool wreckLanded = false;      // mode bit 1
+  bool wreckRecover = false;     // set by contacts / the AI layer, handled in updateWrecks()
+  int wreckNode = -1;            // node of the piece the wreck started in ([+0xF4])
+  double wreckSpeed = 71500;     // slot speed ([+0xF8], at least 0x1174C)
+  double wreckHead[3] = {0, 0, 1};  // flight direction
+  double wreckAim[3] = {0, 0, 0};   // aim point (next node), refreshed by updateWrecks()
+  bool wreckAimValid = false;
+  int wreckSpinYaw = 1, wreckSpinPitch = 1;  // random spin directions ([+0x108]/[+0x10A] sign bits)
+  double savedSpeed = 0;         // ship data speed kept for the recovery
+  // sound events raised by the simulation, drained by the front end (Fx ids of the original: wall hit 0x50A64 picks
+  // SCRAPE2 above 0x22E98 u/s else SCRAPE1, ship contact EXPLOSN, wreck EXPLOSN)
+  int sfxWallLight = 0, sfxWallHard = 0, sfxContact = 0, sfxWreck = 0;
   int hits = 0;                 // number of wall/floor hits so far (diagnostics)
   double steerAxis = 0;         // ramped steering axis -1..1 (keyboard behaviour of the original)
   double roll = 0;              // bank in turns (derived)
@@ -53,7 +71,8 @@ struct ShipSimConfig {
 };
 
 // Fills the collision box from a ship mesh (x made symmetric like TrackSlotAdd 0x349d1).
-void setShipBoxFromMesh(ShipState& s, const Mesh& mesh);
+// `unscale` = 1/display scale: the collision box is the ART extents (TrackSlotAdd limits the radius to 0x2250-0xC8).
+void setShipBoxFromMesh(ShipState& s, const Mesh& mesh, double unscale = 1.0);
 
 // Wall-hit message handler of the original (0x107): speed *= 0.75 and a bounce of speed along
 // cos(67.5deg)*tangent-of-heading + sin(67.5deg)*normal added to the slide velocity.

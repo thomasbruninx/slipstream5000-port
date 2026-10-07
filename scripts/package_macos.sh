@@ -9,12 +9,10 @@ APP=dist/Slipstream.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp build/bin/slipstream "$APP/Contents/MacOS/Slipstream"
-SDL=$(otool -L build/bin/slipstream | awk '/libSDL3/ {print $1; exit}')
-SDLREAL=$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$SDL")
-cp "$SDLREAL" "$APP/Contents/Frameworks/libSDL3.0.dylib"
-install_name_tool -id @rpath/libSDL3.0.dylib "$APP/Contents/Frameworks/libSDL3.0.dylib"
-install_name_tool -change "$SDL" @rpath/libSDL3.0.dylib "$APP/Contents/MacOS/Slipstream"
-install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/Slipstream"
+# SDL3, FluidSynth and everything they link against (libsndfile, portaudio, ...) go into Contents/Frameworks
+python3 scripts/bundle_dylibs.py "$APP/Contents/MacOS/Slipstream" "$APP/Contents/Frameworks"
+# the default SoundFont for the MIDI music (override with --soundfont)
+cp resources/GeneralUser-GS.sf2 "$APP/Contents/Resources/GeneralUser-GS.sf2"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -20,6 +20,11 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
   data_ = GameData::open(dir, error);
   if (!data_) return false;
   rememberGameDirectory(dir);
+  {
+    std::string warn;
+    audio_.init(*data_, opt.audio, &warn);
+    if (!warn.empty()) std::fputs(warn.c_str(), stderr);
+  }
   params_ = loadShipParams(*data_);
   aiTables_ = loadAiTables(*data_);
   renderer_.resize(opt.width, opt.height);
@@ -67,8 +72,32 @@ bool ViewerApp::loadTrack(int idx, std::string* err) {
   driving_ = false;
   player_ = grid_[size_t(std::clamp(opt_.ship, 0, 9))];
   placeCameraAtStart();
+  playTrackMusic();
   status_ = std::string("Track ") + trackBaseNames()[size_t(idx - 1)] + " (" + trackDisplayNames()[size_t(idx - 1)] + ")";
   return true;
+}
+
+void ViewerApp::playTrackMusic() {
+  if (opt_.noMusic || !audio_.musicReady()) return;
+  if (opt_.music.empty() && !audio_.currentMusic().empty()) return;  // keep the running song across track changes
+  std::string name = opt_.music;
+  if (name.empty()) {  // PlayTrackIntro 0x57A79 / DoGame3D 0x586F2 pick one of INGAME2/3/4 at random (6 only under low memory)
+    static const char* kSongs[] = {"INGAME2.HMP", "INGAME3.HMP", "INGAME4.HMP"};
+    name = kSongs[(unsigned(std::rand()) >> 4) % 3];
+  }
+  audio_.playMusic(name, true);
+}
+
+void ViewerApp::drainSounds(const double listener[3]) {
+  for (int i = 0; i < 10; ++i) {
+    ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
+    const bool own = driving_ && i == player_.ship;
+    const double pos[3] = {s.x, s.y, s.z};
+    for (; s.sfxWallLight > 0; --s.sfxWallLight) audio_.playFxAt(Fx::Scrape1, pos, listener, own);
+    for (; s.sfxWallHard > 0; --s.sfxWallHard) audio_.playFxAt(Fx::Scrape2, pos, listener, own);
+    for (; s.sfxContact > 0; --s.sfxContact) audio_.playFxAt(Fx::Explosion, pos, listener, own);
+    for (; s.sfxWreck > 0; --s.sfxWreck) audio_.playFxAt(Fx::Crash, pos, listener, own);
+  }
 }
 
 void ViewerApp::placeCameraAtStart() {
@@ -157,10 +186,19 @@ void ViewerApp::toggleDrive() {
   if (driving_) {
     player_ = grid_[size_t(std::clamp(opt_.ship, 0, 9))];
     player_.speed = 0;
-    setShipBoxFromMesh(player_, scene_->shipMeshes[size_t(std::clamp(opt_.ship, 0, 9))]);
-    for (int i = 0; i < 10; ++i) { setShipBoxFromMesh(grid_[size_t(i)], scene_->shipMeshes[size_t(i)]); grid_[size_t(i)].speed = 0; ai_[size_t(i)] = AiState{}; }
+    setShipBoxFromMesh(player_, scene_->shipMeshes[size_t(std::clamp(opt_.ship, 0, 9))], 1.0 / scene_->shipScale);
+    for (int i = 0; i < 10; ++i) { setShipBoxFromMesh(grid_[size_t(i)], scene_->shipMeshes[size_t(i)], 1.0 / scene_->shipScale); grid_[size_t(i)].speed = 0; ai_[size_t(i)] = AiState{}; ai_[size_t(i)].startRank = i + 1;
+      const int tier = aiTierForStartRank(i + 1), trk = std::clamp(scene_->trackIndex, 1, 10);
+      grid_[size_t(i)].speedFactor = aiTables_.fromExecutable ? aiTables_.tierFactor[aiTables_.difficulty][trk][tier] / 16384.0 : 1.0;
+    }
+    player_.speedFactor = 1.0;
+    race_ = buildRaceInfo(*scene_, 10);
     simAccum_ = 0;
+    audio_.engineStop(engineVoice_);
+    engineVoice_ = audio_.engineStart();
   } else {
+    audio_.engineStop(engineVoice_);
+    engineVoice_ = 0;
     placeCameraAtStart();
   }
 }
@@ -175,20 +213,37 @@ void ViewerApp::update(double dt, const InputState& in) {
       const double step = 1.0 / 120.0;
       int guard = 0;
       while (simAccum_ >= step && guard++ < 16) {
+        // ships indexed by ship number; ai_[i].human marks the player
+        RaceContext ctx;
+        ctx.scene = scene_.get(); ctx.tables = &aiTables_; ctx.race = &race_; ctx.doors = &doors_;
+        for (int i = 0; i < 10; ++i) {
+          ctx.ships.push_back(i == player_.ship ? &player_ : &grid_[size_t(i)]);
+          ctx.state.push_back(&ai_[size_t(i)]);
+          ctx.params.push_back(&params_[size_t(i)]);
+          ai_[size_t(i)].human = i == player_.ship;
+        }
         std::vector<ShipState*> all;
         std::vector<std::array<double, 3>> start;
         all.push_back(&player_);
         for (int i = 0; i < 10; ++i)
           if (i != player_.ship) all.push_back(&grid_[size_t(i)]);
         for (ShipState* s : all) start.push_back({s->x, s->y, s->z});
+        updateRace(ctx);
+        updateWrecks(ctx);
+        applyTrailingBoost(ctx, size_t(player_.ship));
         stepShip(player_, ShipInput{in.throttle, in.brake, in.steer, in.pitch}, step, params_[size_t(player_.ship)], *scene_, simCfg_);
         for (size_t k = 1; k < all.size(); ++k) {
           const int id = all[k]->ship;
-          ShipInput ci = aiEnabled_ && !simCfg_.assist ? aiControl(*all[k], ai_[size_t(id)], *scene_, aiTables_, params_[size_t(id)]) : ShipInput{};
+          ShipInput ci = aiEnabled_ && !simCfg_.assist ? aiControl(ctx, size_t(id), step) : ShipInput{};
           stepShip(*all[k], ci, step, params_[size_t(id)], *scene_, simCfg_);
         }
         if (!simCfg_.assist) resolveShipPairs(all, start, step, *scene_, simCfg_);
         simAccum_ -= step;
+      }
+      {
+        const double listener[3] = {player_.x, player_.y, player_.z};
+        drainSounds(listener);
+        audio_.engineSet(engineVoice_, player_.wrecked ? 0.0 : player_.speed);
       }
       // chase camera
       double behind = 110000, above = 28000;
@@ -492,6 +547,10 @@ std::vector<std::string> ViewerApp::hudLines() const {
                   painter_ ? "painter/BSP" : "z-buffer", showAllScenery_ ? "all" : "original cull",
                   renderer_.cullBackfaces ? "on" : "off");
     l.push_back(buf);
+    {
+      std::snprintf(buf, sizeof buf, "audio: %s | soundfont %s | music %s %s (M) | effects %s (N)", audio_.deviceOpen() ? "device" : "silent", audio_.soundfontPath().empty() ? "-" : audio_.soundfontPath().c_str(), audio_.currentMusic().empty() ? "-" : audio_.currentMusic().c_str(), audio_.musicOn() ? "on" : "off", audio_.sfxOn() ? "on" : "off");
+      l.push_back(buf);
+    }
     if (driving_) {
       std::snprintf(buf, sizeof buf, "DRIVE ship %d  speed %.0f u/s  pos %.0f %.0f %.0f  hits %d", player_.ship, player_.speed, player_.x, player_.y, player_.z, player_.hits);
       l.push_back(buf);

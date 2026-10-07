@@ -9,76 +9,332 @@ AiTables loadAiTables(const GameData& data) {
   AiTables t;
   auto exe = data.read("SLIPSTRM.EXE");
   constexpr size_t kBase = 0x4D854 - 0x10000;  // file offset = VA + kBase
-  if (!exe || exe->size() < kBase + 0x502d0) return t;
+  if (!exe || exe->size() < kBase + 0x54500) return t;
   auto rd = [&](size_t va) { const size_t o = kBase + va; return int32_t((*exe)[o] | ((*exe)[o + 1] << 8) | ((*exe)[o + 2] << 16) | (uint32_t((*exe)[o + 3]) << 24)); };
   if (rd(0x5027a + 4) != 214500 || rd(0x502a2 + 4) != 178750) return t;  // sanity: track 1 entries
   for (int i = 1; i <= 10; ++i) { t.minSpeed[i] = rd(0x5027a + 4 * size_t(i)); t.speedRange[i] = rd(0x502a2 + 4 * size_t(i)); }
+  // [0x5409C + 4*difficulty] -> table of 10 row pointers -> 4 dwords (object-relative offsets: + 0x10000)
+  for (int d = 0; d < 4; ++d) {
+    const size_t tab = size_t(rd(0x5409c + 4 * size_t(d))) + 0x10000;
+    if (tab < 0x50000 || tab > 0x56000) return t;
+    for (int trk = 1; trk <= 10; ++trk) {
+      const size_t row = size_t(rd(tab + 4 * size_t(trk - 1))) + 0x10000;
+      if (row < 0x50000 || row > 0x56000) return t;
+      for (int k = 0; k < 4; ++k) t.tierFactor[d][trk][k] = rd(row + 4 * size_t(k));
+    }
+  }
   t.fromExecutable = true;
   return t;
 }
 
+int aiTierForStartRank(int rank) {
+  static const int kTier[11] = {0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3};  // 0x586DB, indexed by start position 1..10
+  return kTier[std::clamp(rank, 1, 10)];
+}
+
 namespace {
+
 // 0x21F87: the game's cheap length estimate, max + (mid + min) / 4
 double est(const double* v) {
   double a[3] = {std::fabs(v[0]), std::fabs(v[1]), std::fabs(v[2])};
   std::sort(a, a + 3);
   return a[2] + (a[1] + a[0]) * 0.25;
 }
-double nodePos(const Track& t, int n, int k) { const Vec3i& p = t.nodes[size_t(n)].pos; return k == 0 ? p.x : k == 1 ? p.y : p.z; }
+double estv(double x, double y, double z) { const double v[3] = {x, y, z}; return est(v); }
+double np(const Track& t, int n, int k) { const Vec3i& p = t.nodes[size_t(n)].pos; return k == 0 ? p.x : k == 1 ? p.y : p.z; }
 int nextNode(const Track& t, int n, bool branch) {  // 0x3BF4C
   const TrackNode& nd = t.nodes[size_t(n)];
   return branch && nd.alt >= 0 ? nd.alt : nd.next;
 }
+double shipSpeed(const ShipState& s) {  // slot +0x2C = |velocity| (RaceSlotHover)
+  double v[3];
+  const double fy = std::clamp(s.m[7], -0.25, 0.25);
+  const double factor = -fy / 8.0 + (0x200 - std::fabs(s.m[1]) * 0x4000 / 32.0) / 16384.0 + (0x1000 - 40.0 * s.damageA) / 16384.0 + 0x2c00 / 16384.0;
+  for (int i = 0; i < 3; ++i) v[i] = s.m[6 + i] * s.speed * factor + s.slide[i];
+  return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+unsigned nextRandom(AiState& a) { a.rng = a.rng * 1103515245u + 12345u; return (a.rng >> 8) & 0xffffu; }  // RandomNext, 16 bit
+
+int pieceNodeAt(const Scene& scene, const ShipState& s) {  // [piece+0x1E] of the piece containing the ship (0x36E57)
+  const Track& t = scene.track_data;
+  const float p[3] = {float(s.x - scene.origin[0]), float(s.y - scene.origin[1]), float(s.z - scene.origin[2])};
+  for (size_t i = 0; i < scene.pieceBoxes.size() && i < t.pieces.size(); ++i)
+    if (scene.pieceBoxes[i].graph && scene.pieceContains(i, p, 512.0f) && t.pieces[i].node >= 0) return t.pieces[i].node;
+  return -1;
+}
+int pieceIndexAt(const Scene& scene, const ShipState& s) {
+  const float p[3] = {float(s.x - scene.origin[0]), float(s.y - scene.origin[1]), float(s.z - scene.origin[2])};
+  for (size_t i = 0; i < scene.pieceBoxes.size(); ++i)
+    if (scene.pieceBoxes[i].graph && scene.pieceContains(i, p, 512.0f)) return int(i);
+  return -1;
+}
+
+// 0x3BEA2: target node = the piece's node, or the next one once closer than 0x800
+int targetNode(const Scene& scene, const ShipState& s, AiState& a) {
+  const Track& t = scene.track_data;
+  const int pn = pieceNodeAt(scene, s);
+  if (pn >= 0) a.node = pn;
+  if (a.node < 0) {
+    double best = 1e30;
+    for (size_t i = 0; i < t.nodes.size(); ++i) {
+      const double d = estv(np(t, int(i), 0) - s.x, np(t, int(i), 1) - s.y, np(t, int(i), 2) - s.z);
+      if (d < best) { best = d; a.node = int(i); }
+    }
+  }
+  int cur = a.node;
+  if (estv(np(t, cur, 0) - s.x, np(t, cur, 1) - s.y, np(t, cur, 2) - s.z) < 0x800) cur = nextNode(t, cur, a.branch);
+  return cur;
+}
+
+struct Frame { double f[3], r[3], u[3]; };
+Frame nodeFrame(const Track& t, int prev, int cur) {  // 0x51823 / 0x3BA2B: forward = prev -> cur, right = (f.z, 0, -f.x), up = f x r
+  Frame fr{};
+  double f[3] = {np(t, cur, 0) - np(t, prev, 0), np(t, cur, 1) - np(t, prev, 1), np(t, cur, 2) - np(t, prev, 2)};
+  const double l = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+  if (l > 1e-6) for (double& x : f) x /= l; else { f[0] = 0; f[1] = 0; f[2] = 1; }
+  for (int i = 0; i < 3; ++i) fr.f[i] = f[i];
+  fr.r[0] = f[2]; fr.r[1] = 0; fr.r[2] = -f[0];
+  const double rl = std::sqrt(fr.r[0] * fr.r[0] + fr.r[2] * fr.r[2]);
+  if (rl > 1e-6) { fr.r[0] /= rl; fr.r[2] /= rl; } else { fr.r[0] = 1; fr.r[2] = 0; }
+  fr.u[0] = f[1] * fr.r[2] - f[2] * fr.r[1];
+  fr.u[1] = f[2] * fr.r[0] - f[0] * fr.r[2];
+  fr.u[2] = f[0] * fr.r[1] - f[1] * fr.r[0];
+  return fr;
+}
+
+struct Neighbours { int ahead = -1, along = -1, behind = -1; double dAhead = 1e30, dAlong = 1e30, dBehind = 1e30; };
+// TrackSlotGetNeighbours 0x3B6D0 for ship `me`
+Neighbours findNeighbours(RaceContext& ctx, size_t me) {
+  const Scene& scene = *ctx.scene;
+  const Track& t = scene.track_data;
+  Neighbours nb;
+  ShipState& S = *ctx.ships[me];
+  const int myNode = targetNode(scene, S, *ctx.state[me]);
+  const double myPos[3] = {S.x, S.y, S.z};
+  const double d0 = estv(np(t, myNode, 0) - S.x, np(t, myNode, 1) - S.y, np(t, myNode, 2) - S.z);
+  const double aheadLimit = d0 - S.extent, behindLimit = d0 + S.extent;  // [0x3B99C], [0x3B9A0]
+  for (size_t o = 0; o < ctx.ships.size(); ++o) {
+    if (o == me) continue;
+    const ShipState& O = *ctx.ships[o];
+    if (!O.hasBox) continue;
+    const double dist = estv(O.x - myPos[0], O.y - myPos[1], O.z - myPos[2]);
+    const int oNode = targetNode(scene, O, *ctx.state[o]);
+    if (oNode == myNode) {
+      const double dO = estv(O.x - np(t, oNode, 0), O.y - np(t, oNode, 1), O.z - np(t, oNode, 2)) + O.extent;
+      if (dO <= aheadLimit) { if (dist <= nb.dAhead) { nb.ahead = int(o); nb.dAhead = dist; } }
+      else if (dO >= behindLimit) { if (dist <= nb.dBehind) { nb.behind = int(o); nb.dBehind = dist; } }
+      else if (dist <= nb.dAlong) { nb.along = int(o); nb.dAlong = dist; }
+    } else {
+      const double dot = (O.x - S.x) * S.m[6] + (O.y - S.y) * S.m[7] + (O.z - S.z) * S.m[8];  // along my heading (0x3B8F3)
+      if (dot >= 0) { if (dist <= nb.dAhead) { nb.ahead = int(o); nb.dAhead = dist; } }
+      else if (dist <= nb.dBehind) { nb.behind = int(o); nb.dBehind = dist; }
+    }
+  }
+  return nb;
+}
+
+// 0x3BA0C: lateral position (right, up) of ship o relative to its own node line
+void lateralOf(RaceContext& ctx, size_t o, double* lx, double* ly) {
+  const Track& t = ctx.scene->track_data;
+  const ShipState& O = *ctx.ships[o];
+  const int cur = targetNode(*ctx.scene, O, *ctx.state[o]);
+  const int prev = t.nodes[size_t(cur)].prev >= 0 ? t.nodes[size_t(cur)].prev : cur;
+  const Frame fr = nodeFrame(t, prev, cur);
+  const double d[3] = {O.x - np(t, cur, 0), O.y - np(t, cur, 1), O.z - np(t, cur, 2)};
+  *lx = fr.r[0] * d[0] + fr.r[1] * d[1] + fr.r[2] * d[2];
+  *ly = fr.u[0] * d[0] + fr.u[1] * d[1] + fr.u[2] * d[2];
+}
 }  // namespace
 
-ShipInput aiControl(const ShipState& s, AiState& ai, const Scene& scene, const AiTables& tables, const ShipParams& params) {
+RaceInfo buildRaceInfo(const Scene& scene, int shipCount) {
+  RaceInfo r;
+  r.shipCount = shipCount;
+  const Track& t = scene.track_data;
+  r.lapDist.assign(t.nodes.size(), -1);
+  if (t.nodes.empty()) return r;
+  auto edge = [&](int a, int b) { return estv(np(t, b, 0) - np(t, a, 0), np(t, b, 1) - np(t, a, 1), np(t, b, 2) - np(t, a, 2)); };
+  int n = 0;
+  r.lapDist[0] = 0;
+  for (int guard = 0; guard < 10000; ++guard) {
+    const int nx = t.nodes[size_t(n)].next;
+    if (nx < 0) break;
+    if (nx == 0) { r.lapLength = r.lapDist[size_t(n)] + edge(n, 0); break; }
+    if (r.lapDist[size_t(nx)] >= 0) break;
+    r.lapDist[size_t(nx)] = r.lapDist[size_t(n)] + edge(n, nx);
+    n = nx;
+  }
+  for (size_t i = 0; i < t.nodes.size(); ++i) {  // alternative routes continue from their split node
+    if (t.nodes[i].alt < 0 || r.lapDist[i] < 0) continue;
+    int w = t.nodes[i].alt, from = int(i);
+    for (int guard = 0; guard < 1000 && w >= 0 && r.lapDist[size_t(w)] < 0; ++guard) {
+      r.lapDist[size_t(w)] = r.lapDist[size_t(from)] + edge(from, w);
+      from = w;
+      w = t.nodes[size_t(w)].next;
+    }
+  }
+  for (double& d : r.lapDist) if (d < 0) d = 0;
+  return r;
+}
+
+void updateRace(RaceContext& ctx) {
+  const Track& t = ctx.scene->track_data;
+  if (t.nodes.empty()) return;
+  std::vector<double> total(ctx.ships.size(), 0);
+  for (size_t i = 0; i < ctx.ships.size(); ++i) {
+    ShipState& s = *ctx.ships[i];
+    AiState& a = *ctx.state[i];
+    const int prevNode = a.node;
+    const int n = targetNode(*ctx.scene, s, a);
+    if (prevNode >= 0) {
+      const double before = ctx.race->lapDist[size_t(prevNode)], after = ctx.race->lapDist[size_t(a.node)];
+      if (before > 0.7 * ctx.race->lapLength && after < 0.3 * ctx.race->lapLength) ++a.lap;
+      else if (before < 0.3 * ctx.race->lapLength && after > 0.7 * ctx.race->lapLength && a.lap > 0) --a.lap;
+    }
+    a.progress = ctx.race->lapDist[size_t(n)] - estv(np(t, n, 0) - s.x, np(t, n, 1) - s.y, np(t, n, 2) - s.z);
+    total[i] = a.lap * ctx.race->lapLength + a.progress;
+  }
+  for (size_t i = 0; i < ctx.ships.size(); ++i) {
+    int rank = 1;
+    for (size_t j = 0; j < ctx.ships.size(); ++j) if (total[j] > total[i]) ++rank;
+    ctx.state[i]->rank = rank;
+  }
+}
+
+void updateWrecks(RaceContext& ctx) {
+  const Track& t = ctx.scene->track_data;
+  if (t.nodes.empty()) return;
+  for (size_t i = 0; i < ctx.ships.size(); ++i) {
+    ShipState& s = *ctx.ships[i];
+    if (!s.wrecked) continue;
+    AiState& a = *ctx.state[i];
+    const int pn = pieceNodeAt(*ctx.scene, s);
+    const int cur = targetNode(*ctx.scene, s, a);
+    const int nx = nextNode(t, cur, a.branch) >= 0 ? nextNode(t, cur, a.branch) : cur;
+    for (int k = 0; k < 3; ++k) s.wreckAim[k] = np(t, nx, k);  // 0x3B54E: the node ahead
+    s.wreckAimValid = true;
+    if (s.wreckNode < 0) {
+      s.wreckNode = pn;
+      const double dist = estv(s.wreckAim[0] - s.x, s.wreckAim[1] - s.y, s.wreckAim[2] - s.z);
+      s.wreckTimer += std::min(5.0, std::floor(dist / 0x77240 * 1000.0) / 1000.0);  // 0x3E9C9..0x3E9E3
+      double d[3] = {s.wreckAim[0] - s.x, s.wreckAim[1] - s.y, s.wreckAim[2] - s.z};
+      const double l = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      if (l > 1) for (int k = 0; k < 3; ++k) s.wreckHead[k] = d[k] / l;
+    }
+    const bool leftPiece = s.wreckLanded && pn >= 0 && pn != s.wreckNode;
+    if (s.wreckRecover || leftPiece || s.wreckTime > 12.0) {
+      const int prev = t.nodes[size_t(cur)].prev >= 0 ? t.nodes[size_t(cur)].prev : cur;
+      const Frame fr = nodeFrame(t, prev, cur);  // 0x3ED15..0x3ED1F: orientation from the track direction
+      for (int k = 0; k < 3; ++k) { s.m[k] = fr.r[k]; s.m[3 + k] = fr.u[k]; s.m[6 + k] = fr.f[k]; }
+      s.wrecked = false;
+      s.wreckRecover = false;
+      s.wreckNode = -1;
+      s.speed = s.savedSpeed;
+      s.slide[0] = s.slide[1] = s.slide[2] = 0;
+      s.recentHit = 0;
+      s.steerAxis = s.pitchAxis = 0;
+    }
+  }
+}
+
+void applyTrailingBoost(RaceContext& ctx, size_t humanIndex) {
+  AiState& a = *ctx.state[humanIndex];
+  if (a.rank != ctx.race->shipCount) return;  // last place
+  const Neighbours nb = findNeighbours(ctx, humanIndex);
+  if (nb.ahead >= 0 && nb.dAhead > 0x595b0) ctx.ships[humanIndex]->boostTime = 6.0;  // [slot+0x3E] = 0x1770 ms
+}
+
+ShipInput aiControl(RaceContext& ctx, size_t index, double dt) {
   ShipInput out;
   out.direct = true;
+  const Scene& scene = *ctx.scene;
   const Track& t = scene.track_data;
+  ShipState& s = *ctx.ships[index];
+  AiState& ai = *ctx.state[index];
+  const ShipParams& params = *ctx.params[index];
   if (t.nodes.empty() || s.wrecked) return out;
   const double sp[3] = {s.x, s.y, s.z};
-  const bool branch = s.damageA > 50 || s.damageB > 50;  // damaged ships take the refuel branch (0x5139A)
 
-  // current node: the node of the piece the ship is in (0x3BEA2); closer than 0x800 -> the next one
+  // doors: a ship standing on a door's piece opens it faster (TrackSlotFindDoor + 0x35564: state 0, speed 0x53CA)
+  if (ctx.doors) {
+    const int pi = pieceIndexAt(scene, s);
+    for (Door& d : ctx.doors->list)
+      if (d.piece == pi) { d.state = 0; d.speed = 0x53ca; }
+  }
+
+  // branch decision at split nodes (TrackSlotCheckBranch 0x3544F + 0x5135E..0x51437)
+  const Neighbours nb = findNeighbours(ctx, index);
   {
-    const float p[3] = {float(sp[0] - scene.origin[0]), float(sp[1] - scene.origin[1]), float(sp[2] - scene.origin[2])};
-    for (size_t i = 0; i < scene.pieceBoxes.size() && i < t.pieces.size(); ++i)
-      if (scene.pieceBoxes[i].graph && scene.pieceContains(i, p, 512.0f) && t.pieces[i].node >= 0) { ai.node = t.pieces[i].node; break; }
-    if (ai.node < 0) {  // not in any piece yet: nearest node
-      double best = 1e30;
-      for (size_t i = 0; i < t.nodes.size(); ++i) {
-        const double d[3] = {nodePos(t, int(i), 0) - sp[0], nodePos(t, int(i), 1) - sp[1], nodePos(t, int(i), 2) - sp[2]};
-        if (est(d) < best) { best = est(d); ai.node = int(i); }
+    const int pn = pieceNodeAt(scene, s);
+    if (pn >= 0) {
+      const TrackNode& n = t.nodes[size_t(pn)];
+      const bool prevSplit = n.prev >= 0 && t.nodes[size_t(n.prev)].alt >= 0;
+      if (!prevSplit && n.alt >= 0) {
+        if (n.pit) {  // pit entrance: damaged ships (> 50 on either counter) take it
+          ai.branch = s.damageA > 50 || s.damageB > 50;
+        } else if (!ai.human) {  // ordinary split: AI ships only, never first or among the last two, not while someone is alongside
+          if (nb.along >= 0 || ai.rank == 1 || ai.rank >= ctx.race->shipCount - 1) ai.branch = false;
+          else {
+            unsigned thresh = 0xa00;
+            if (nb.behind >= 0 && nb.dBehind >= 0x77240) thresh = 0x6000;
+            ai.branch = nextRandom(ai) < thresh;
+          }
+        }
       }
     }
   }
-  int cur = ai.node;
-  {
-    const double d[3] = {nodePos(t, cur, 0) - sp[0], nodePos(t, cur, 1) - sp[1], nodePos(t, cur, 2) - sp[2]};
-    if (est(d) < 0x800) cur = nextNode(t, cur, branch);
-  }
+
+  const int cur0 = targetNode(scene, s, ai);
+  const bool branch = ai.branch;
+  int cur = cur0;
   int prev = t.nodes[size_t(cur)].prev >= 0 ? t.nodes[size_t(cur)].prev : cur;
   int next = nextNode(t, cur, branch);
   if (next < 0) next = cur;
 
-  // flat speed (slot +0x2C = |velocity|)
-  double vel[3];
-  {
-    const double fy = std::clamp(s.m[7], -0.25, 0.25);
-    const double factor = -fy / 8.0 + (0x200 - std::fabs(s.m[1]) * 0x4000 / 32.0) / 16384.0 + (0x1000 - 40.0 * s.damageA) / 16384.0 + 0x2c00 / 16384.0;
-    for (int i = 0; i < 3; ++i) vel[i] = s.m[6 + i] * s.speed * factor + s.slide[i];
-  }
-  const double speed = std::sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+  const double speed = shipSpeed(s);
   const double width = std::max<double>(t.nodes[size_t(cur)].width, 0x3190);  // 0x3BADE
+  const double dist = estv(np(t, cur, 0) - sp[0], np(t, cur, 1) - sp[1], np(t, cur, 2) - sp[2]);  // [0x51344]
 
-  double toCur[3] = {nodePos(t, cur, 0) - sp[0], nodePos(t, cur, 1) - sp[1], nodePos(t, cur, 2) - sp[2]};
-  double dist = est(toCur);  // [0x51344]
-  // look-ahead threshold (0x51705..0x51728)
+  // ---- avoidance (0x51488..0x5153C) ----
+  int followSlot = -1;
+  double followDist = 1e30;
+  ai.startDelay = std::max(0.0, ai.startDelay - dt);
+  if (ai.startDelay > 0) {
+    // no avoidance for the first 3 s, offsets kept
+  } else if (nb.ahead >= 0 && nb.dAhead <= 0x17d40) {
+    const ShipState& O = *ctx.ships[size_t(nb.ahead)];
+    const bool faster = speed > shipSpeed(O);  // 0x515D2: carry clear when my speed is higher
+    bool room = false;
+    double ox = 0, oy = 0;
+    if (faster) {  // 0x515F2
+      double lx, ly;
+      lateralOf(ctx, size_t(nb.ahead), &lx, &ly);
+      const double lat = std::sqrt(lx * lx + ly * ly);
+      const double eo = O.extent + 0x1310, em = s.extent + 0x1310;
+      const double rest = width - (eo - lat);
+      if (rest >= 0 && em <= rest) {
+        const double mag = (eo - lat) + std::floor(rest / 2);
+        const double l = std::sqrt(lx * lx + ly * ly);
+        if (l > 1e-6) { ox = -lx / l * mag; oy = -ly / l * mag; } else { ox = mag; oy = 0; }
+        room = true;
+      }
+    }
+    if (room) {
+      ai.offX = ox; ai.offY = oy;
+    } else {
+      if (nb.along < 0) { ai.offX = 0; ai.offY = 0; }
+      followSlot = nb.ahead; followDist = nb.dAhead;
+    }
+  } else {
+    if (nb.along < 0) { ai.offX = 0; ai.offY = 0; }
+    if (nb.ahead >= 0) { followSlot = nb.ahead; followDist = nb.dAhead; }
+  }
+
+  // ---- aim point (0x51688..0x51911) ----
   const double T = std::floor(speed * 0x1e8 / 0x2cb) / 4.0 + width * 2 + std::floor(width / 2) + 0x5f50;
   int pn = prev, cn = cur;
   if (dist <= T) { pn = cur; cn = next; }  // shift the node window (0x51750..0x51778)
-  double c[3] = {nodePos(t, cn, 0), nodePos(t, cn, 1), nodePos(t, cn, 2)};
-  double back[3] = {nodePos(t, pn, 0) - c[0], nodePos(t, pn, 1) - c[1], nodePos(t, pn, 2) - c[2]};
+  double c[3] = {np(t, cn, 0), np(t, cn, 1), np(t, cn, 2)};
+  double back[3] = {np(t, pn, 0) - c[0], np(t, pn, 1) - c[1], np(t, pn, 2) - c[2]};
   const double bl = std::sqrt(back[0] * back[0] + back[1] * back[1] + back[2] * back[2]);
   double target[3] = {c[0], c[1], c[2]};
   if (bl > 1e-6) {
@@ -86,11 +342,20 @@ ShipInput aiControl(const ShipState& s, AiState& ai, const Scene& scene, const A
     if (ebp < 0) ebp += est(back);
     for (int i = 0; i < 3; ++i) target[i] = c[i] + back[i] / bl * ebp;  // 0x517E7..0x51811
   }
+  // lateral offset, clamped to the room left in the corridor (0x51694..0x516F9)
+  double offX = ai.offX, offY = ai.offY;
+  if (offX != 0 || offY != 0) {
+    const double limit = width - s.extent - 0x988;
+    const double l = std::sqrt(offX * offX + offY * offY);
+    if (l > limit && l > 0) { const double k = std::max(0.0, limit) / l; offX *= k; offY *= k; }
+    const Frame fr = nodeFrame(t, pn, cn);
+    for (int i = 0; i < 3; ++i) target[i] += fr.r[i] * offX + fr.u[i] * offY;
+  }
   double dv[3] = {target[0] - sp[0], target[1] - sp[1], target[2] - sp[2]};
   const double dl = std::sqrt(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]);
   if (dl > 1e-6) for (double& x : dv) x /= dl;
 
-  // aim in the bank-free frame: zero the roll terms of the snapshot and re-orthonormalise (0x51A45..0x51A72)
+  // aim in the bank-free frame (0x51A45..0x51A72)
   double m[9];
   std::copy(s.m, s.m + 9, m);
   m[1] = 0; m[3] = 0;
@@ -107,27 +372,34 @@ ShipInput aiControl(const ShipState& s, AiState& ai, const Scene& scene, const A
   out.steer = float(std::clamp(lx * 16384.0, -double(0x800), double(0x800)) * 8.0 / 16384.0);
   out.pitch = float(std::clamp(ly * 16384.0, -double(0x800), double(0x800)) * 8.0 / 16384.0);
 
-  // target speed (0x5191B..0x51A3A): curvature of the next 0x5F500 units of the chain
+  // ---- target speed (0x5191B..0x51A3A) ----
   double tgt = 0xae8f8;
   if (dist <= params.f6) {
     double acc = 0, sumLen = 0;
     double last[3] = {sp[0], sp[1], sp[2]};
     int n = cur;
     for (int guard = 0; guard < 200; ++guard) {
-      const double d[3] = {nodePos(t, n, 0) - last[0], nodePos(t, n, 1) - last[1], nodePos(t, n, 2) - last[2]};
+      const double d[3] = {np(t, n, 0) - last[0], np(t, n, 1) - last[1], np(t, n, 2) - last[2]};
       sumLen += est(d);
-      for (int i = 0; i < 3; ++i) last[i] = nodePos(t, n, i);
+      for (int i = 0; i < 3; ++i) last[i] = np(t, n, i);
       acc += 0x8000 - t.nodes[size_t(n)].straight;
       if (sumLen >= 0x5f500) break;
       n = nextNode(t, n, branch);
     }
-    double ebx = std::max(0.0, 0x4000 - acc);
+    const double ebx = std::max(0.0, 0x4000 - acc);
     if (ebx != 0x3000) {
       const int ti = std::clamp(scene.trackIndex, 1, 10);
-      tgt = std::floor(double(tables.speedRange[ti]) * ebx / 16384.0) + tables.minSpeed[ti];
+      tgt = std::floor(double(ctx.tables->speedRange[ti]) * ebx / 16384.0) + ctx.tables->minSpeed[ti];
     }
   }
-  tgt = std::min(tgt, 214500.0);  // AI ships (record +0xD != 0) are capped at 0x345E4
+  // keep behind a slower ship that blocks the way (0x51970..0x519C2)
+  if (followSlot >= 0 && followDist < 0xbea0) {
+    double lim = shipSpeed(*ctx.ships[size_t(followSlot)]);
+    if (followDist < 0x5f50) lim -= 0x1bee;
+    else if (followDist >= 0x9880) lim += 0x138d;
+    tgt = std::min(tgt, lim);
+  }
+  if (!ai.human) tgt = std::min(tgt, 214500.0);  // AI ships (record +0xD != 0) are capped at 0x345E4 (0x51A0D)
   out.throttle = tgt >= speed ? 1.0f : 0.0f;
   return out;
 }

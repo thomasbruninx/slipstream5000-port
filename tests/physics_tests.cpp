@@ -104,6 +104,26 @@ int main() {
     ShipState b3 = make(0, 13000, 0);
     NEAR(shipPairTimeOfImpact(a, b3, dz, zero), -1, 0);            // out of reach
   }
+  {  // wreck (0x3E8F2/0x3E9F5): flies along the heading at max(speed*0.75/2, 0x1174C), tumbles, lands after 1 s without an aim point
+    ShipState w;
+    const double n[3] = {0, 0, -1}, hd[3] = {0, 0, 1};
+    w.speed = 400000;
+    w.recentHit = 0.3;
+    shipHitResponse(w, n, hd);
+    NEAR(w.wrecked ? 1 : 0, 1, 0);
+    NEAR(w.savedSpeed, 300000, 1e-6);
+    NEAR(w.wreckSpeed, 150000, 1e-6);
+    double vw[3];
+    for (int f = 0; f < 70; ++f) stepShipDynamics(w, ShipInput{}, 1.0 / 60, p, vw);  // 1.17 s: landed
+    NEAR(w.wreckLanded ? 1 : 0, 1, 0);
+    NEAR(std::sqrt(vw[0] * vw[0] + vw[1] * vw[1] + vw[2] * vw[2]), 57344, 1);  // landed speed [+0xF0] = 0xE000
+    // factor: tier table row (oracle: AI factor multiplies thrust and cap)
+    ShipState q;
+    q.speedFactor = 0.5;
+    double vq[3];
+    for (int f = 0; f < 600; ++f) stepShipDynamics(q, ShipInput{1, 0, 0}, 1.0 / 60, p, vq);
+    NEAR(q.speed, p.topSpeed * 0.5, 1);
+  }
   std::printf(failures ? "physics: %d failure(s)\n" : "physics ok\n", failures);
   for (int i = 0; i < 9; ++i) std::printf("%g ", s.m[i] * 16384.0);
   std::printf("\n");

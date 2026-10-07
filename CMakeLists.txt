@@ -13,6 +13,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 add_library(slipstream_core STATIC
   src/original_formats/game_data.cpp
   src/original_formats/formats.cpp
+  src/original_formats/audio.cpp
   src/original_formats/track.cpp
   src/game/scene.cpp
   src/game/ship_params.cpp
@@ -29,10 +30,31 @@ add_library(slipstream_renderer STATIC src/renderer/software_renderer.cpp)
 target_link_libraries(slipstream_renderer PUBLIC slipstream_core)
 target_compile_options(slipstream_renderer PRIVATE -Wall -Wextra)
 
-# --- application (SDL3) -------------------------------------------------------------------
+# --- audio: sample mixer + FluidSynth music + SDL3 playback ---------------------------------------
 find_package(SDL3 REQUIRED CONFIG)
+find_package(PkgConfig QUIET)
+set(SLIP_FLUIDSYNTH_FOUND OFF)
+if(PkgConfig_FOUND)
+  pkg_check_modules(FLUIDSYNTH IMPORTED_TARGET fluidsynth)
+  if(FLUIDSYNTH_FOUND)
+    set(SLIP_FLUIDSYNTH_FOUND ON)
+  endif()
+endif()
+add_library(slipstream_audio STATIC src/audio/mixer.cpp src/audio/music_player.cpp src/audio/audio_system.cpp)
+target_link_libraries(slipstream_audio PUBLIC slipstream_core SDL3::SDL3)
+target_compile_options(slipstream_audio PRIVATE -Wall -Wextra)
+target_compile_definitions(slipstream_audio PRIVATE SLIP_SOURCE_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources")
+if(SLIP_FLUIDSYNTH_FOUND)
+  target_link_libraries(slipstream_audio PUBLIC PkgConfig::FLUIDSYNTH)
+  target_compile_definitions(slipstream_audio PUBLIC SLIP_HAVE_FLUIDSYNTH=1)
+  message(STATUS "FluidSynth found: MIDI music enabled")
+else()
+  message(WARNING "FluidSynth not found: the game is built without MIDI music (brew install fluid-synth)")
+endif()
+
+# --- application (SDL3) -------------------------------------------------------------------
 add_executable(slipstream src/platform/main.cpp src/platform/viewer_app.cpp)
-target_link_libraries(slipstream PRIVATE slipstream_renderer slipstream_core SDL3::SDL3)
+target_link_libraries(slipstream PRIVATE slipstream_renderer slipstream_audio slipstream_core SDL3::SDL3)
 target_compile_options(slipstream PRIVATE -Wall -Wextra)
 
 # --- tools / tests (need the user's original game files; skipped when SLIPSTREAM_DATA unset) -
@@ -47,3 +69,11 @@ add_test(NAME format_tests COMMAND slipstream_tests)
 add_executable(slipstream_physics_tests tests/physics_tests.cpp)
 target_link_libraries(slipstream_physics_tests PRIVATE slipstream_core)
 add_test(NAME physics_tests COMMAND slipstream_physics_tests)
+
+add_executable(slipstream_audio_tests tests/audio_tests.cpp)
+target_link_libraries(slipstream_audio_tests PRIVATE slipstream_audio slipstream_core)
+add_test(NAME audio_tests COMMAND slipstream_audio_tests)
+
+# offline renderer: music / effects to a WAV file (no sound device needed)
+add_executable(slipstream_audio_dump tools/audio_dump/audio_dump.cpp)
+target_link_libraries(slipstream_audio_dump PRIVATE slipstream_audio slipstream_core)

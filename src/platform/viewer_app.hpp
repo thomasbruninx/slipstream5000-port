@@ -7,6 +7,7 @@
 
 #include "game/scene.hpp"
 #include "game/ship_params.hpp"
+#include "audio/audio_system.hpp"
 #include "game/doors.hpp"
 #include "game/ship_ai.hpp"
 #include "game/ship_sim.hpp"
@@ -31,6 +32,9 @@ struct AppOptions {
   double cam[3] = {0, 0, 0};
   float camYaw = 0, camPitch = 0;
   float shipScale = 2.0f;
+  AudioConfig audio;       // --soundfont, --no-audio, --music-volume ...
+  std::string music;       // --music NAME.HMP (default: one of the race songs, as the original picks at random)
+  bool noMusic = false;
 };
 
 class ViewerApp {
@@ -48,6 +52,9 @@ class ViewerApp {
   void selectShip(int i);
   void toggleAllScenery() { showAllScenery_ = !showAllScenery_; }
   void toggleAI() { aiEnabled_ = !aiEnabled_; }
+  void toggleMusic() { audio_.toggleMusic(); }
+  void toggleSfx() { audio_.toggleSfx(); }
+  AudioSystem& audio() { return audio_; }
   void toggleAssist() { simCfg_.assist = !simCfg_.assist; }
   void togglePainter() { painter_ = !painter_; }
   void toggleVisibility() { useVisMask_ = !useVisMask_; }
@@ -76,6 +83,11 @@ class ViewerApp {
   Doors doors_;
   AiTables aiTables_;
   std::array<AiState, 10> ai_{};
+  RaceInfo race_;
+  AudioSystem audio_;
+  int engineVoice_ = 0;
+  void playTrackMusic();
+  void drainSounds(const double listener[3]);
   bool aiEnabled_ = std::getenv("SLIP_NOAI") == nullptr;
   double simAccum_ = 0;
   ShipInput lastDriveInput_;

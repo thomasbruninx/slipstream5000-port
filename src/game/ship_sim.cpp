@@ -53,6 +53,11 @@ void shipRenderMatrix(const ShipState& s, float* R) {
 
 // RaceSlotHover 0x51EC4: speed -> world velocity (forward * speed * factor + slide velocity).
 static void shipVelocity(const ShipState& s, double* v) {
+  if (s.wrecked) {  // wreck: slot speed along the flight direction
+    const double sp = s.wreckLanded ? 57344.0 : s.wreckSpeed;  // [+0xF0] = 0xE000 on the ground
+    for (int i = 0; i < 3; ++i) v[i] = s.wreckHead[i] * sp;
+    return;
+  }
   const double* m = s.m;
   const double fy = std::clamp(m[7], -0.25, 0.25);
   const double factor = -fy / 8.0 + (0x200 - std::fabs(m[1]) * 0x4000 / 32.0) / 16384.0 + (0x1000 - 40.0 * s.damageA) / 16384.0 + 0x2c00 / 16384.0;  // RaceSlotHover: 0x1000 - 0x28*[rec+0x2A]>>16
@@ -70,17 +75,46 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
   // per-frame timers (RaceSlotControl 0x104: ship data +0x12 and +0x24 count down in ms)
   s.recentHit = std::max(0.0, s.recentHit - dt);
   s.invuln = std::max(0.0, s.invuln - dt);
-  if (s.wrecked) {  // dead-ship handler 0x51293 -> 0x3E9F5: tumbling debris, no controls (simplified)
+  s.boostTime = std::max(0.0, s.boostTime - dt);
+  s.slowTime = std::max(0.0, s.slowTime - dt);
+  if (s.wrecked) {  // dead-ship handler 0x51293 -> 0x3E9F5 (message 0x104, 0x3EB28)
     s.wreckTime += dt;
     s.steerAxis = s.pitchAxis = 0;
-    s.speed = std::max(0.0, s.speed - 0.4 * s.speed * dt);
-    rot(s.m, 0.5 * dt, kRollPairs, -1, 1);  // spin about the nose axis
-    orthonormalize(s.m);
+    // heading steers towards the aim point at 2/s (0x3EB5D..0x3EB7F)
+    if (s.wreckAimValid) {
+      double d[3] = {s.wreckAim[0] - s.x, s.wreckAim[1] - s.y, s.wreckAim[2] - s.z};
+      const double l = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      if (l > 1) {
+        const double k = std::min(1.0, 2.0 * dt);
+        for (int i = 0; i < 3; ++i) s.wreckHead[i] += (d[i] / l - s.wreckHead[i]) * k;
+        const double hl = std::sqrt(s.wreckHead[0] * s.wreckHead[0] + s.wreckHead[1] * s.wreckHead[1] + s.wreckHead[2] * s.wreckHead[2]);
+        if (hl > 0) for (double& x : s.wreckHead) x /= hl;
+      }
+    }
+    if (!s.wreckLanded) {
+      // tumble: spin = 0xE000 units/s (0.875 turn/s) of yaw, twice that of pitch, random directions (0x3EBC2..0x3EC95)
+      const double spin = 57344.0 / 65536.0 * dt;
+      rot(s.m, s.wreckSpinPitch * 2 * spin, kPitchPairs, -1, 1);
+      rot(s.m, s.wreckSpinYaw * spin, kYawPairs, 1, -1);
+      orthonormalize(s.m);
+      s.wreckTimer -= dt;
+      if (s.wreckTimer <= 0) s.wreckLanded = true;  // mode |= 2 (0x3ECB8)
+    } else {
+      // landed: the orientation settles onto the travel direction (0x3ED5C..0x3EDE4, pitch limited to +-0x3000)
+      double f[3] = {s.wreckHead[0], std::clamp(s.wreckHead[1], -0.7071, 0.7071), s.wreckHead[2]};
+      const double fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+      if (fl > 1e-6) {
+        const double k = std::min(1.0, 4.0 * dt);
+        for (int i = 0; i < 3; ++i) s.m[6 + i] += (f[i] / fl - s.m[6 + i]) * k;
+        orthonormalize(s.m);
+      }
+    }
     shipVelocity(s, vel);
     return;
   }
   // ---- speed (RaceSlotMove 0x51BB6..0x51D66) ----
   double top = double(p.topSpeed);
+  double fac = s.speedFactor + (s.slowTime > 0 ? -0.25 : s.boostTime > 0 ? 0.5 : 0.0);  // 0x51CA6..0x51CC2
   double a;
   if (in.throttle > 0.01f) {
     double ratio = std::clamp(s.speed / top, 0.0, 1.0);
@@ -89,7 +123,8 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
     a = -double(p.coastDecel);
   }
   a -= double(p.coastDecel) * 2.0 * in.brake;  // PLACEHOLDER brake strength
-  s.speed = std::clamp(s.speed + a * dt, 0.0, top);
+  a *= fac;  // 0x51D0D: thrust * factor
+  s.speed = std::clamp(s.speed + a * dt, 0.0, top * fac);  // speed cap f3 * factor (0x51D36)
 
   // ---- orientation (0x51D72..0x51E59) ----
   // Keyboard steering ramp (sub_59A05): the axis moves 4.0/s towards the pressed side (reversing zeroes it first)
@@ -161,13 +196,43 @@ void shipDamage(ShipState& s, double a, double b) {  // RaceSlotDamage 0x52035 (
 }
 
 void shipHitResponse(ShipState& s, const double n[3], const double heading[3]) {
-  if (s.recentHit > 0) {  // second wall hit within 0x190 ms: the ship is wrecked (0x50AE0..0x50B30)
+  if (s.wrecked) {  // wall hit while wrecked (0x3EA19)
+    if (s.wreckLanded) { s.wreckRecover = true; return; }
+    const double hn = heading[0] * n[0] + heading[1] * n[1] + heading[2] * n[2];
+    if (std::fabs(hn) > 0x100 / 16384.0) {  // not grazing: speed/2 (>= 0x1174C), bounce 22.5 deg off the surface (0x3EAF8)
+      s.wreckSpeed = std::max(71500.0, s.wreckSpeed * 0.5);
+      const double ang = 0x1000 / 65536.0 * kTau;
+      double tg[3] = {heading[0] - n[0] * hn, heading[1] - n[1] * hn, heading[2] - n[2] * hn};
+      const double tl = std::sqrt(tg[0] * tg[0] + tg[1] * tg[1] + tg[2] * tg[2]);
+      for (int i = 0; i < 3; ++i) s.wreckHead[i] = tl < 1e-4 ? n[i] : std::cos(ang) * tg[i] / tl + std::sin(ang) * n[i];
+    }
+    return;
+  }
+  if (s.recentHit > 0) {  // second wall hit within 0x190 ms: the ship is wrecked (0x50AE0..0x50B30, 0x3E8F2)
+    s.speed *= 0.75;
+    s.savedSpeed = s.speed;
     s.wrecked = true;
+    ++s.sfxWreck;
+    s.wreckTime = 0;
+    s.wreckLanded = false;
+    s.wreckRecover = false;
+    s.wreckTimer = 1.0;
+    s.wreckSpeed = std::max(71500.0, s.speed * 0.5);
+    for (int i = 0; i < 3; ++i) s.wreckHead[i] = heading[i];
+    s.wreckAimValid = false;
+    s.wreckNode = -1;
+    s.wreckSpinYaw = ((s.hits * 7 + int(s.x)) & 1) ? 1 : -1;
+    s.wreckSpinPitch = ((s.hits * 5 + int(s.z)) & 1) ? 1 : -1;
     s.slide[0] = s.slide[1] = s.slide[2] = 0;
-    s.speed *= 0.5;  // 0x3E8F2 is given speed/2
+    s.recentHit = 0;
     return;
   }
   s.recentHit = 0.4;
+  {  // 0x50A82..0x50A9B: slot speed above 0x22E98 -> effect 2 (hard), else 3
+    double vv[3];
+    shipVelocity(s, vv);
+    (std::sqrt(vv[0] * vv[0] + vv[1] * vv[1] + vv[2] * vv[2]) > 0x22e98 ? s.sfxWallHard : s.sfxWallLight)++;
+  }
   const double ang = 0x3000 / 65536.0 * kTau;
   const double hn = heading[0] * n[0] + heading[1] * n[1] + heading[2] * n[2];
   double tg[3] = {heading[0] - n[0] * hn, heading[1] - n[1] * hn, heading[2] - n[2] * hn};
@@ -183,7 +248,7 @@ void shipHitResponse(ShipState& s, const double n[3], const double heading[3]) {
   shipDamage(s, 2.0, 1.0);
 }
 
-void setShipBoxFromMesh(ShipState& s, const Mesh& mesh) {
+void setShipBoxFromMesh(ShipState& s, const Mesh& mesh, double unscale) {
   if (mesh.verts.empty()) return;
   double lo[3] = {1e30, 1e30, 1e30}, hi[3] = {-1e30, -1e30, -1e30};
   for (const Vec3& v : mesh.verts) {
@@ -193,6 +258,13 @@ void setShipBoxFromMesh(ShipState& s, const Mesh& mesh) {
   const double ax = std::max(std::fabs(lo[0]), std::fabs(hi[0]));
   s.boxLo[0] = -ax; s.boxHi[0] = ax;
   for (int i = 1; i < 3; ++i) { s.boxLo[i] = lo[i]; s.boxHi[i] = hi[i]; }
+  for (int i = 0; i < 3; ++i) { s.boxLo[i] *= unscale; s.boxHi[i] *= unscale; }
+  double ext = 0;
+  for (int k = 0; k < 8; ++k) {
+    const double x = (k & 1) ? s.boxHi[0] : s.boxLo[0], y = (k & 2) ? s.boxHi[1] : s.boxLo[1], z = (k & 4) ? s.boxHi[2] : s.boxLo[2];
+    ext = std::max(ext, std::sqrt(x * x + y * y + z * z));
+  }
+  s.extent = ext;
   s.hasBox = true;
 }
 
@@ -224,9 +296,17 @@ void moveShip(ShipState& s, double dt, const Scene& scene, const ShipSimConfig& 
       shipHitResponse(s, h.n, dir);  // message 0x107 on every contact event, as in CollideStep
     }
     if (insideNow && !shipBoxInsideTrack(scene, np, s.m, s.boxLo, s.boxHi)) {
-      s.speed *= 0.5;  // PLACEHOLDER: the box would leave the piece graph, stay put
+      // 0x38C97: the static check failed at the end of the move -> bisect (15 halvings) back to the last valid position
+      double lo = 0, hi = 1;
+      const double d[3] = {np[0] - pos[0], np[1] - pos[1], np[2] - pos[2]};
+      for (int it = 0; it < 15; ++it) {
+        const double mid = (lo + hi) * 0.5;
+        const double q[3] = {pos[0] + d[0] * mid, pos[1] + d[1] * mid, pos[2] + d[2] * mid};
+        if (shipBoxInsideTrack(scene, q, s.m, s.boxLo, s.boxHi)) lo = mid; else hi = mid;
+      }
+      for (int i = 0; i < 3; ++i) np[i] = pos[i] + d[i] * lo;
+      s.speed *= 0.5;  // PLACEHOLDER response: the original sends a wall-hit message for the polygon at that spot
       ++s.hits;
-      return;
     }
     s.x = np[0]; s.y = np[1]; s.z = np[2];
     return;
@@ -324,6 +404,10 @@ double shipPairTimeOfImpact(const ShipState& a, const ShipState& b, const double
 // rammer (`1656B`: the collision also happens with the other ship standing still) loses speed (*0.625).
 // The narrow phase is a plain SAT test on the ART boxes instead of the original's contact generator (0x16454...).
 void shipPairResponse(ShipState& a, ShipState& b, bool aRams, bool bRams) {
+  ++a.sfxContact;
+  ++b.sfxContact;
+  if (a.wrecked) a.wreckRecover = true;  // message 0x106 in the debris handler: speed 0, handler restored (0x3EB19)
+  if (b.wrecked) b.wreckRecover = true;
   double va[3], vb[3];
   shipVelocity(a, va);
   shipVelocity(b, vb);

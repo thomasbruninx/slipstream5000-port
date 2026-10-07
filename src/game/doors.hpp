@@ -20,6 +20,7 @@ struct Door {
   double s[3] = {0, 0, 0};       // slide direction
   double closed[3] = {0, 0, 0}, open[3] = {0, 0, 0};
   double pos[3] = {0, 0, 0};     // current panel centre
+  double speed = 0x37dc;         // u/s; reset to 0x37DC on every flip, AI ships raise it to 0x53CA while they are on the door's piece (0x35564)
   int state = -1;                // -1 closing (towards `closed`), 0 opening (towards `open`)
   Mesh mesh;                     // panel relative to its centre (two-sided DOORS quad)
 };

@@ -27,7 +27,11 @@ static void usage() {
       "  --screenshot FILE   render one frame to a PPM file and exit (no window)\n"
       "  --cam X,Y,Z,YAW,PITCH   camera (world units, radians)\n"
       "  --sim SEC           with --drive and --screenshot: hold full throttle for SEC seconds first\n"
-      "  --bench N           headless: render N frames and report speed\n");
+      "  --bench N           headless: render N frames and report speed\n"
+      "  --soundfont FILE    SoundFont for the MIDI music (default: resources/GeneralUser-GS.sf2, bundled in the app)\n"
+      "  --music NAME        play this song (INGAME2/3/4/6, INTRO, WIN, LOSE .HMP) instead of a random race song\n"
+      "  --no-music          no music      --no-sfx   no sound effects     --no-audio   no sound at all\n"
+      "  --volume V          master volume 0..1 (default 1)   --music-volume V (0.8)   --sfx-volume V (1)\n");
 }
 
 static bool writePPM(const std::string& path, const SoftwareRenderer& r) {
@@ -72,6 +76,14 @@ int main(int argc, char** argv) {
     else if (a == "--screenshot") screenshot = next("--screenshot");
     else if (a == "--sim") simSeconds = std::atof(next("--sim"));
     else if (a == "--bench") bench = std::atoi(next("--bench"));
+    else if (a == "--soundfont") opt.audio.soundfont = next("--soundfont");
+    else if (a == "--music") { opt.music = next("--music"); if (opt.music.find('.') == std::string::npos) opt.music += ".HMP"; }
+    else if (a == "--no-music") opt.noMusic = true;
+    else if (a == "--no-sfx") opt.audio.sfx = 0.0f;
+    else if (a == "--no-audio") opt.audio.enabled = false;
+    else if (a == "--volume") opt.audio.master = float(std::atof(next("--volume")));
+    else if (a == "--music-volume") opt.audio.music = float(std::atof(next("--music-volume")));
+    else if (a == "--sfx-volume") opt.audio.sfx = float(std::atof(next("--sfx-volume")));
     else if (a == "--cam") {
       double v[5];
       if (std::sscanf(next("--cam"), "%lf,%lf,%lf,%lf,%lf", &v[0], &v[1], &v[2], &v[3], &v[4]) != 5) { usage(); return 2; }
@@ -80,6 +92,7 @@ int main(int argc, char** argv) {
     else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
   }
 
+  if (!screenshot.empty() || bench > 0) opt.audio.openDevice = false;  // headless runs stay silent (no device, nothing rendered)
   ViewerApp app;
   std::string err;
   if (!app.init(opt, &err)) {
@@ -171,6 +184,8 @@ int main(int argc, char** argv) {
             case SDLK_F7: app.toggleAllScenery(); break;
             case SDLK_F8: app.toggleAssist(); break;
             case SDLK_F9: app.toggleAI(); break;
+            case SDLK_M: app.toggleMusic(); break;
+            case SDLK_N: app.toggleSfx(); break;
             case SDLK_C:
               if (e.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) copyDebug(app);
               break;

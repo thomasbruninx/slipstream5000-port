@@ -36,6 +36,8 @@ struct TrackNode {  // path node of the racing line (TRD node list, header +8; 0
   int next = -1, prev = -1, alt = -1;  // +0 next, +2 previous, +4 alternative route (refuel branch)
   Vec3i pos;                         // +0xC
   int32_t width = 0;                 // +0x18
+  uint16_t merge = 0;                // +6: non-zero ends an alternative route's walk to the refuel pad (InitRefuel 0x3D6FC)
+  bool pit = false;                  // runtime +0x28 = 0xFFFF: the alternative route from this node passes the refuel pad (InitRefuel 0x3D568)
   uint16_t straight = 0x8000;        // +8: 0x8000 = no turn ahead (0x351A4 sums 0x8000 - this)
 };
 struct TrackPiece {
@@ -89,6 +91,7 @@ struct Track {
   std::vector<TrackPiece> pieces;
   std::vector<SceneryInstance> scenery;
   std::vector<TrackNode> nodes;
+  int refuelPiece = -1;        // piece holding the "Refuel 3" polygon (InitRefuel), -1 = none
   std::vector<BspNode> bsp;   // bsp[0] is the root (first TRK cell record)
   int groupCount = 0;
   std::vector<std::vector<GroupTreeNode>> groupTrees;  // per group; node 0 is the root

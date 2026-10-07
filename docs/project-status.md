@@ -18,7 +18,7 @@
 * Timing model (variable timestep, ≤70 Hz clock) INFERRED, not measured.
 
 ## UNKNOWN
-* Sample rate of `.SMP`; `.ANN`, `.ZON`, `.FNT` layouts; `SLIPSTRM.CFG`/`.SAV` formats; championship/save data.
+* `.ANN`, `.ZON`, `.FNT` layouts; `SLIPSTRM.CFG`/`.SAV` formats; championship/save data.
 * Palette entries 248–255; `.SPR` header words; SHP sort tree.
 * Menus, race rules, laps/checkpoints data (TRK cells?), weapons, pickups, AI.
 
@@ -26,7 +26,7 @@
 1. Validate scale/handedness with the original under DOSBox (camera FOV, ship size vs road).
 2. Decode TRK cells (checkpoints/lap distance) and use them for lap counting and a racing line.
 3. Port `RaceSlotMove` faithfully (2.14 / 32.16 integer maths) + collision against track polygons; build a headless validation harness.
-4. Audio: `.SMP`, `.HMP`→MIDI/FM synth via SDL3 audio.
+4. ~~Audio~~ DONE: `.SMP` effects + `.HMP` music via SDL3 + FluidSynth (docs/audio.md); more triggers to wire.
 5. Menus/championship (`.ST*`, `.FNT`, `.ZON`, save format), then weapons/AI.
 
 ## Milestones (docs/ task list)
@@ -39,4 +39,10 @@ A window/input/loop ✅ · B display original asset ✅ · C free-camera track v
 * DONE (decoded, visual only): sliding doors (`doors.cpp`).
 * DONE (oracle-verified): ship-vs-ship contact (TOI), frame re-simulation, damage model, wreck on a second hit.
 * DONE (decoded, behaviour-checked): AI ships (`ship_ai.cpp`), F9 toggle.
-* OPEN: AI avoidance/doors/pit, debris mover for wrecks, effects/sound, lap logic, respawn (0x14620), ship-vs-door cube, damage/boost timers, AI.
+* DONE (decoded, behaviour-checked): AI avoidance, doors, pit/random branches, tier speed factors, trailing boost, wreck/debris handler with recovery.
+* OPEN: effects/sound, official lap/finish logic, mode-specific tables (0x50252/0x5040C), weapons, difficulty selection (0x14620), ship-vs-door cube, damage/boost timers, AI.
+
+
+## Sound (this phase)
+* DONE: SDL3 audio stream + software mixer + FluidSynth MIDI with `--soundfont` (default bundled GeneralUser GS); `.SMP` = 8-bit unsigned mono 11025 Hz; `.HMP` -> SMF converter (120 ticks/s); Fx id table and positional rule from the original; engine loop, wall/contact/wreck effects, race music; `.app` bundles the soundfont and FluidSynth + dylibs.
+* OPEN: more effect triggers (weapons, pickups, water, jet-by, crowd, speech, menu), intro/win/lose music flow, second engine voice, per-track ambience, music loop points (HMI loop controllers are ignored: the whole file loops).

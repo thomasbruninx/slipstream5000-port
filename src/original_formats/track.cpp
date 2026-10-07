@@ -1,3 +1,4 @@
+#include <cctype>
 #include <cmath>
 #include <map>
 #include "original_formats/track.hpp"
@@ -227,6 +228,7 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
       nd.prev = idx(r.u16(o + 2));
       nd.alt = idx(r.u16(o + 4));
       nd.straight = r.u16(o + 8);
+      nd.merge = r.u16(o + 6);
       nd.pos = {r.s32(o + 0xc), r.s32(o + 0x10), r.s32(o + 0x14)};
       nd.width = r.s32(o + 0x18);
       t.nodes.push_back(nd);
@@ -235,6 +237,31 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
     for (size_t i = 0; i < t.pieces.size() && i < pieceNodeOff.size(); ++i) {
       auto it = at.find(pieceNodeOff[i]);
       t.pieces[i].node = it == at.end() ? -1 : it->second;
+    }
+  }
+  // InitRefuel (0x3D568): the piece with a polygon whose material is "REFUEL 3"; nodes with an alternative route that
+  // reaches that piece's node before a merge node get the pit flag.
+  {
+    for (size_t i = 0; i < t.pieces.size() && t.refuelPiece < 0; ++i)
+      for (const TrackPolygon& poly : t.records[size_t(t.pieces[i].record)].polys) {
+        if (poly.list != 0 || poly.material >= t.trcMaterials.size()) continue;
+        std::string nm = t.trcMaterials[poly.material].name;
+        for (char& ch : nm) ch = char(std::toupper((unsigned char)ch));
+        if (nm.rfind("REFUEL 3", 0) == 0) { t.refuelPiece = int(i); break; }
+      }
+    if (t.refuelPiece >= 0 && t.pieces[size_t(t.refuelPiece)].node >= 0) {
+      const int target = t.pieces[size_t(t.refuelPiece)].node;
+      for (size_t i = 0; i < t.nodes.size(); ++i) {
+        const TrackNode& nd = t.nodes[i];
+        if (nd.alt < 0) continue;
+        int w = nd.alt;
+        for (int guard = 0; guard < 1000 && w >= 0; ++guard) {
+          if (t.nodes[size_t(w)].merge) break;
+          if (w == target) { t.nodes[i].pit = true; break; }
+          if (w == int(i)) break;
+          w = t.nodes[size_t(w)].next;
+        }
+      }
     }
   }
   // ---- TRK BSP (needs TRD group offsets) ----
