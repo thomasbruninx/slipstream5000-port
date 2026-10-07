@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "game/doors.hpp"
+#include "game/ship_ai.hpp"
 #include "game/ship_sim.hpp"
 
 using namespace slip;
@@ -124,6 +125,67 @@ int main() {
     for (int f = 0; f < 600; ++f) stepShipDynamics(q, ShipInput{1, 0, 0}, 1.0 / 60, p, vq);
     NEAR(q.speed, p.topSpeed * 0.5, 1);
   }
+  {  // lap line (0x5A56A): B -> A counts, the first crossing only starts the race, a backwards crossing is cancelled out
+    AiState a;
+    const int A = 5, B = 4;
+    NEAR(int(lapCrossing(a, 3, 4, A, B, 2, 0)), int(LapEvent::None), 0);
+    NEAR(int(lapCrossing(a, B, A, A, B, 2, 0)), int(LapEvent::Started), 0);
+    NEAR(a.laps, 1, 0);
+    a.lapTime = 50;
+    NEAR(int(lapCrossing(a, A, B, A, B, 2, 0)), int(LapEvent::None), 0);   // backwards over the line
+    NEAR(a.back ? 1 : 0, 1, 0);
+    NEAR(int(lapCrossing(a, B, A, A, B, 2, 0)), int(LapEvent::None), 0);   // forward again: not counted
+    NEAR(a.laps, 1, 0);
+    NEAR(int(lapCrossing(a, B, A, A, B, 2, 0)), int(LapEvent::Lap), 0);
+    NEAR(a.laps, 2, 0);
+    NEAR(a.bestLap, 50, 1e-9);
+    a.lapTime = 40;
+    NEAR(int(lapCrossing(a, B, A, A, B, 2, 3)), int(LapEvent::Finished), 0);  // 2 laps done; 3 ships were in before: rank 4
+    NEAR(a.finishRank, 4, 0);
+    NEAR(a.bestLap, 40, 1e-9);
+    NEAR(int(lapCrossing(a, B, A, A, B, 2, 4)), int(LapEvent::None), 0);   // a finished ship is not counted again
+  }
+  {  // ranks: laps first, then the distance still to go; finished ships keep their finishing rank
+    AiState s[4];
+    s[0].laps = 2; s[1].laps = 3; s[2].laps = 2; s[3].laps = 3; s[3].finished = true; s[3].finishRank = 1;
+    s[2].back = true;
+    std::vector<AiState*> v = {&s[0], &s[1], &s[2], &s[3]};
+    assignRanks(v, {100, 500, 10, 0});
+    NEAR(s[3].rank, 1, 0); NEAR(s[1].rank, 2, 0); NEAR(s[0].rank, 3, 0); NEAR(s[2].rank, 4, 0);  // s2: 2 laps but crossed back -> 1
+  }
+  {  // door vs ship (0x3C00E / 0x3C17B / 0x3BFDB): a closing door never moves into a ship, it reopens; a touch opens it at 0x6FB8
+    Doors ds;
+    Door d;
+    d.u[0] = 1; d.w[1] = 1; d.n[2] = 1;  // panel in the xy plane, normal z
+    d.ha = 10000; d.hb = 10000;
+    d.s[1] = 1;                           // slides along +y
+    d.closed[1] = 0; d.open[1] = 30000;
+    d.pos[1] = 0;
+    d.state = 0;                          // opening
+    ds.list.push_back(d);
+    ShipState ship;
+    ship.matrixInit = true; ship.hasBox = true;
+    for (int i = 0; i < 3; ++i) { ship.boxLo[i] = -1000; ship.boxHi[i] = 1000; }
+    ship.x = 0; ship.y = 20000; ship.z = 0;   // parked where the panel will be when it closes
+    std::vector<ShipState*> ships = {&ship};
+    ds.list[0].pos[1] = 30000;                // fully open
+    ds.list[0].state = -1;                    // closing
+    ds.step(1.0, ships);                      // would sweep through the ship: stops short, reopens
+    NEAR(ds.list[0].state, 0, 0);
+    NEAR(ds.list[0].pos[1] > 30000 - 15000 ? 1 : 0, 1, 0);  // never travelled through the ship
+    ds.list[0].state = -1; ds.list[0].speed = 0x37dc; ds.list[0].pos[1] = 30000;
+    ship.y = 90000;                           // away: the door closes freely
+    ds.step(1.0, ships);
+    NEAR(ds.list[0].pos[1], 30000 - 0x37dc, 1);
+    ds.touch(0);
+    NEAR(ds.list[0].state, 0, 0);
+    NEAR(ds.list[0].speed, 0x6fb8, 0);
+    ShipState px = ds.proxy(0);
+    NEAR(px.slide[1], 0x6fb8, 1e-9);          // the panel moves along +s while opening
+    NEAR(px.boxHi[2], 0x7a0, 0);
+  }
+  NEAR(startBonusForRank(1), 0.75, 1e-9);
+  NEAR(startBonusForRank(10), 256 / 16384.0, 1e-9);
   std::printf(failures ? "physics: %d failure(s)\n" : "physics ok\n", failures);
   for (int i = 0; i < 9; ++i) std::printf("%g ", s.m[i] * 16384.0);
   std::printf("\n");

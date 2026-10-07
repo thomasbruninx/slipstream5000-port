@@ -231,9 +231,14 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
       nd.merge = r.u16(o + 6);
       nd.pos = {r.s32(o + 0xc), r.s32(o + 0x10), r.s32(o + 0x14)};
       nd.width = r.s32(o + 0x18);
+      nd.remain = r.s32(o + 0x24);
       t.nodes.push_back(nd);
     }
     if (!r.ok) t.nodes.clear();
+    for (size_t i = 0; i < t.pieces.size(); ++i) {
+      if (t.pieces[i].trdOffset == r.u16(4)) t.lapPieceA = int(i);
+      if (t.pieces[i].trdOffset == r.u16(6)) t.lapPieceB = int(i);
+    }
     for (size_t i = 0; i < t.pieces.size() && i < pieceNodeOff.size(); ++i) {
       auto it = at.find(pieceNodeOff[i]);
       t.pieces[i].node = it == at.end() ? -1 : it->second;

@@ -13,10 +13,14 @@ struct AiTables {  // read from the user's SLIPSTRM.EXE
   int32_t minSpeed[11] = {0, 214500, 171600, 171600, 214500, 171600, 214500, 228800, 171600, 171600, 171600};  // 0x5027A
   int32_t speedRange[11] = {0, 178750, 221650, 221650, 178750, 221650, 178750, 164450, 221650, 221650, 221650};  // 0x502A2
   int32_t tierFactor[4][11][4] = {};  // 0x5409C: [difficulty][track 1..10][tier 0..3], 2.14; used for AI controlled ships
+  int32_t lapEstimateMs[11] = {0, 90000, 90000, 90000, 90000, 90000, 90000, 90000, 90000, 90000, 90000};  // 0x5A4C4: lap time used to project the finish
   bool fromExecutable = false;
   int difficulty = 1;  // which of the four tables RaceSlotMove picks ([0x47234], menu setting; default = second)
 };
 AiTables loadAiTables(const GameData& data);
+// Difficulty level 0..2 ([0x492EA] = word at offset 157 of SLIPSTRM.CFG, read by 0x49F04; the file loads at 0x4924D). 1 when the
+// file is missing; the original's default is 1 as well. The level selects the AI tier table (0x5409C) and doubles the blaster damage at 2.
+int readConfiguredDifficulty(const GameData& data);
 // Tier of a ship that starts in grid position `rank` (1..10): table at 0x586DB = {0,0,1,1,1,2,2,3,3,3}.
 int aiTierForStartRank(int rank);
 
@@ -25,8 +29,20 @@ struct AiState {
   bool branch = false;  // [rec+0x9C]: follow the alternative route at splits
   double startDelay = 3.0;  // slot data +0x4A = 0xBB8 ms: no avoidance after the start
   double offX = 0, offY = 0;  // lateral offset of the aim point in the node frame ([slot+0x42] right, [+0x46] up)
-  int lap = 0;
+  int lap = 0;          // completed laps (laps - 1 once the start line has been crossed)
   double progress = 0;  // distance along the lap
+  // Race record (stride 0x4E record of the original, RaceUpdate 0x5A4EC): laps counts line crossings (+0x20: 1 after the start
+  // crossing), `back` = +0x22 (the line was crossed backwards, the next forward crossing is not counted).
+  int piece = -1;       // piece the ship is in (slot cell, sticky: only changes to linked pieces)
+  int laps = 0;
+  bool back = false;
+  bool finished = false;
+  int finishRank = 0;
+  int prevRank = 0;
+  double finishTime = 0;  // clock at the finish, or the projection made when the race ended (0x5A461)
+  bool projected = false;
+  double raceTime = 0, lapTime = 0, bestLap = 0, lastLap = 0;  // seconds ([+0xE], lap timer, [+0x16], last lap)
+  int cueRankAnnounce = 0;  // set when the lap line was crossed (the human hears the position)
   int startRank = 1;
   int rank = 1;
   bool human = false;
@@ -40,7 +56,20 @@ struct RaceInfo {
 };
 RaceInfo buildRaceInfo(const Scene& scene, int shipCount);
 
+struct RaceStatus {  // global race state ([0x5440C] end timer, 0x5A780)
+  double endTimer = -1;  // < 0: not started; 5 s after the second AI ship finished (or all AI ships are done) the race ends
+  bool over = false;
+  int finishedCount = 0;
+  int bestAiRank = 10, prevBestAiRank = 10;  // [0x50438] / [0x5043A]: best rank among the AI ships this / last frame
+  struct Event { int ship; int kind; };  // kind 0 start crossing, 1 lap line, 2 finished, 3 human passed the best AI ship
+  std::vector<Event> events;
+};
+
 struct RaceContext {
+  RaceStatus* status = nullptr;
+  double dt = 0;
+  bool running = true;   // false during the countdown ([0x54408] != 0): the clocks stand still
+  int totalLaps = 3;     // [0x5440E]
   const Scene* scene = nullptr;
   const AiTables* tables = nullptr;
   const RaceInfo* race = nullptr;
@@ -50,8 +79,18 @@ struct RaceContext {
   std::vector<const ShipParams*> params;
 };
 
-// Progress / laps / ranks of all ships (RaceUpdate role; ranks only feed the AI decisions and the trailing boost).
+// RaceUpdate 0x5A4EC: lap line crossings between the TRD lap pieces, finishing, ranks, clocks and the race end timer.
 void updateRace(RaceContext& ctx);
+
+enum class LapEvent { None, Started, Lap, Finished };
+// 0x5A56A..0x5A67A for one ship that moved from piece `oldPiece` to `newPiece` (pieceA = TRD header +4, pieceB = +6): crossing
+// B -> A is the forward line crossing (the first one only starts the race, laps becomes 1), A -> B sets the `back` flag.
+LapEvent lapCrossing(AiState& a, int oldPiece, int newPiece, int pieceA, int pieceB, int totalLaps, int finishedSoFar);
+// 0x5A6C6..0x5A74F: ranks 1..n; finished ships keep their finishing rank, the others sort by (laps - back) descending, then by the
+// distance still to go ascending.
+void assignRanks(const std::vector<AiState*>& state, const std::vector<double>& remain);
+// Start phase ([0x54404], first 15 s after GO): extra speed factor by rank (table 0x50252).
+double startBonusForRank(int rank);
 
 // Debris handler support (0x3E8F2 / 0x3E9F5): aim point for wrecked ships, recovery (re-alignment to the track) once the
 // wreck has left its piece, hit something, touched another ship or timed out.

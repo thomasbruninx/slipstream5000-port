@@ -11,6 +11,7 @@ AiTables loadAiTables(const GameData& data) {
   constexpr size_t kBase = 0x4D854 - 0x10000;  // file offset = VA + kBase
   if (!exe || exe->size() < kBase + 0x54500) return t;
   auto rd = [&](size_t va) { const size_t o = kBase + va; return int32_t((*exe)[o] | ((*exe)[o + 1] << 8) | ((*exe)[o + 2] << 16) | (uint32_t((*exe)[o + 3]) << 24)); };
+  for (int i = 1; i <= 10; ++i) t.lapEstimateMs[i] = rd(0x5a4c0 + 4 * size_t(i));
   if (rd(0x5027a + 4) != 214500 || rd(0x502a2 + 4) != 178750) return t;  // sanity: track 1 entries
   for (int i = 1; i <= 10; ++i) { t.minSpeed[i] = rd(0x5027a + 4 * size_t(i)); t.speedRange[i] = rd(0x502a2 + 4 * size_t(i)); }
   // [0x5409C + 4*difficulty] -> table of 10 row pointers -> 4 dwords (object-relative offsets: + 0x10000)
@@ -146,6 +147,12 @@ void lateralOf(RaceContext& ctx, size_t o, double* lx, double* ly) {
 }
 }  // namespace
 
+int readConfiguredDifficulty(const GameData& data) {
+  auto cfg = data.read("SLIPSTRM.CFG");
+  if (!cfg || cfg->size() < 160 || (*cfg)[0] != 'V') return 1;
+  return std::clamp(int((*cfg)[157]) | (int((*cfg)[158]) << 8), 0, 2);
+}
+
 RaceInfo buildRaceInfo(const Scene& scene, int shipCount) {
   RaceInfo r;
   r.shipCount = shipCount;
@@ -176,27 +183,136 @@ RaceInfo buildRaceInfo(const Scene& scene, int shipCount) {
   return r;
 }
 
+LapEvent lapCrossing(AiState& a, int oldPiece, int newPiece, int pieceA, int pieceB, int totalLaps, int finishedSoFar) {
+  if (pieceA < 0 || pieceB < 0 || oldPiece == newPiece) return LapEvent::None;
+  if (newPiece == pieceA) {
+    if (oldPiece != pieceB) return LapEvent::None;
+    if (a.back) { a.back = false; return LapEvent::None; }  // 0x5A5B4: returning over the line after a backwards crossing
+    if (a.finished) return LapEvent::None;
+    if (a.laps == 0) { a.laps = 1; return LapEvent::Started; }  // 0x5A5D7
+    a.lastLap = a.lapTime;                                       // 0x5A5E0: lap time, best lap
+    if (a.bestLap == 0 || a.lapTime < a.bestLap) a.bestLap = a.lapTime;
+    a.lapTime = 0;
+    ++a.laps;
+    if (a.laps - 1 >= totalLaps) {                               // 0x5A66D
+      a.finished = true;
+      a.finishRank = finishedSoFar + 1;
+      a.finishTime = a.raceTime;
+      return LapEvent::Finished;
+    }
+    return LapEvent::Lap;
+  }
+  if (newPiece == pieceB && oldPiece == pieceA) a.back = true;   // 0x5A5A0
+  return LapEvent::None;
+}
+
+void assignRanks(const std::vector<AiState*>& st, const std::vector<double>& remain) {
+  const size_t n = st.size();
+  std::vector<int> order;
+  std::vector<bool> taken(n + 2, false);
+  for (size_t i = 0; i < n; ++i) {
+    st[i]->prevRank = st[i]->rank;
+    if (st[i]->finished && st[i]->finishRank >= 1 && size_t(st[i]->finishRank) <= n) { st[i]->rank = st[i]->finishRank; taken[size_t(st[i]->finishRank)] = true; }
+    else order.push_back(int(i));
+  }
+  std::stable_sort(order.begin(), order.end(), [&](int x, int y) {
+    const int lx = st[size_t(x)]->laps - (st[size_t(x)]->back ? 1 : 0), ly = st[size_t(y)]->laps - (st[size_t(y)]->back ? 1 : 0);
+    if (lx != ly) return lx > ly;
+    return remain[size_t(x)] < remain[size_t(y)];
+  });
+  size_t r = 1;
+  for (int i : order) {
+    while (r <= n && taken[r]) ++r;
+    st[size_t(i)]->rank = int(r++);
+  }
+}
+
+double startBonusForRank(int rank) {
+  static const int kBonus[11] = {0, 12288, 11264, 10240, 8192, 6144, 4096, 2048, 1024, 512, 256};  // 0x50252
+  return rank >= 1 && rank <= 10 ? kBonus[rank] / 16384.0 : 0.0;
+}
+
+namespace {
+// Slot cell tracking: the piece only changes to a piece that is linked to the current one (portal), else a full search.
+int stepPiece(const Scene& scene, const ShipState& s, int cur) {
+  const Track& t = scene.track_data;
+  const float p[3] = {float(s.x - scene.origin[0]), float(s.y - scene.origin[1]), float(s.z - scene.origin[2])};
+  auto inside = [&](int k, float slack) { return k >= 0 && size_t(k) < scene.pieceBoxes.size() && scene.pieceBoxes[size_t(k)].graph && scene.pieceContains(size_t(k), p, slack); };
+  if (inside(cur, 0.0f)) return cur;
+  if (cur >= 0 && size_t(cur) < t.pieces.size()) {
+    for (const PieceLink& l : t.pieces[size_t(cur)].links) {
+      if (!l.pieceOffset) continue;
+      for (size_t k = 0; k < t.pieces.size(); ++k)
+        if (t.pieces[k].trdOffset == l.pieceOffset && inside(int(k), 0.0f)) return int(k);
+    }
+    if (inside(cur, 512.0f)) return cur;
+  }
+  const int found = pieceIndexAt(scene, s);
+  return found >= 0 ? found : cur;
+}
+}  // namespace
+
 void updateRace(RaceContext& ctx) {
   const Track& t = ctx.scene->track_data;
   if (t.nodes.empty()) return;
-  std::vector<double> total(ctx.ships.size(), 0);
-  for (size_t i = 0; i < ctx.ships.size(); ++i) {
+  RaceStatus local;
+  RaceStatus& st = ctx.status ? *ctx.status : local;
+  const size_t n = ctx.ships.size();
+  std::vector<double> remain(n, 0);
+  std::vector<AiState*> recs;
+  for (size_t i = 0; i < n; ++i) {
     ShipState& s = *ctx.ships[i];
     AiState& a = *ctx.state[i];
+    recs.push_back(&a);
     const int prevNode = a.node;
-    const int n = targetNode(*ctx.scene, s, a);
-    if (prevNode >= 0) {
-      const double before = ctx.race->lapDist[size_t(prevNode)], after = ctx.race->lapDist[size_t(a.node)];
-      if (before > 0.7 * ctx.race->lapLength && after < 0.3 * ctx.race->lapLength) ++a.lap;
-      else if (before < 0.3 * ctx.race->lapLength && after > 0.7 * ctx.race->lapLength && a.lap > 0) --a.lap;
+    const int node = targetNode(*ctx.scene, s, a);
+    (void)prevNode;
+    if (ctx.running) {  // 0x5A542: clocks only run after the countdown; the race clock stops at the finish
+      if (!a.finished) { a.raceTime += ctx.dt; a.lapTime += ctx.dt; }
     }
-    a.progress = ctx.race->lapDist[size_t(n)] - estv(np(t, n, 0) - s.x, np(t, n, 1) - s.y, np(t, n, 2) - s.z);
-    total[i] = a.lap * ctx.race->lapLength + a.progress;
+    const int np_ = s.wrecked ? a.piece : stepPiece(*ctx.scene, s, a.piece);
+    if (np_ != a.piece) {
+      const int old = a.piece;
+      a.piece = np_;
+      if (old >= 0) {
+        const LapEvent ev = lapCrossing(a, old, np_, t.lapPieceA, t.lapPieceB, ctx.totalLaps, st.finishedCount);
+        if (ev == LapEvent::Started) st.events.push_back({int(i), 0});
+        else if (ev == LapEvent::Lap) st.events.push_back({int(i), 1});
+        else if (ev == LapEvent::Finished) { ++st.finishedCount; st.events.push_back({int(i), 1}); st.events.push_back({int(i), 2}); }
+      }
+    }
+    a.progress = ctx.race->lapDist[size_t(node)] - estv(np(t, node, 0) - s.x, np(t, node, 1) - s.y, np(t, node, 2) - s.z);
+    remain[i] = ctx.race->lapLength - a.progress;  // 0x3BD0D: distance to the line along the route
+    a.lap = std::max(0, a.laps - 1);
   }
-  for (size_t i = 0; i < ctx.ships.size(); ++i) {
-    int rank = 1;
-    for (size_t j = 0; j < ctx.ships.size(); ++j) if (total[j] > total[i]) ++rank;
-    ctx.state[i]->rank = rank;
+  st.prevBestAiRank = st.bestAiRank;
+  assignRanks(recs, remain);
+  int best = 10;
+  for (size_t i = 0; i < n; ++i) if (!recs[i]->human) best = std::min(best, recs[i]->rank);  // 0x50446
+  st.bestAiRank = best;
+  for (size_t i = 0; i < n; ++i) {  // 0x50BB4..0x50BE0: the human took the place of the best AI ship
+    AiState& a = *recs[i];
+    if (a.human && a.rank != a.prevRank && st.bestAiRank != st.prevBestAiRank && a.rank == st.prevBestAiRank && a.rank < st.bestAiRank) st.events.push_back({int(i), 3});
+  }
+  // race end (0x5A74F..0x5A793): five seconds after the second AI ship finished, or when no AI ship is left racing
+  int aiDone = 0, aiRacing = 0;
+  for (size_t i = 0; i < n; ++i) if (!recs[i]->human) { if (recs[i]->finished) ++aiDone; else ++aiRacing; }
+  if (st.endTimer < 0 && !st.over && (aiDone >= 2 || (aiRacing == 0 && n > 0))) st.endTimer = 5.0;
+  if (st.endTimer >= 0 && ctx.running) {
+    st.endTimer -= ctx.dt;
+    if (st.endTimer < 0) {
+      st.over = true;
+      // 0x5A461: ships still racing get a projected finish clock: time left in the lap at the lap estimate (90 s per lap) plus the full laps to go
+      const double lap = ctx.tables ? ctx.tables->lapEstimateMs[std::clamp(ctx.scene->trackIndex, 1, 10)] / 1000.0 : 90.0;
+      for (size_t i = 0; i < n; ++i) {
+        AiState& a = *recs[i];
+        if (a.finished) continue;
+        a.finishTime = a.raceTime + remain[i] / std::max(1.0, ctx.race->lapLength) * lap + std::max(0, ctx.totalLaps - a.laps) * lap;
+        a.projected = true;
+        a.finished = true;
+        a.finishRank = a.rank;
+      }
+    }
   }
 }
 
@@ -238,7 +354,13 @@ void updateWrecks(RaceContext& ctx) {
 
 void applyTrailingBoost(RaceContext& ctx, size_t humanIndex) {
   AiState& a = *ctx.state[humanIndex];
-  if (a.rank != ctx.race->shipCount) return;  // last place
+  // 0x51C70..0x51CA0: the human is exactly one place behind the best AI ship ([0x50438] + 1 == rank), the ship ahead is more than
+  // 0x595B0 away and it is not the last lap (the original tests slot data +0x1C against 0x1DC90 there, which is nearly always
+  // smaller, so the boost is effectively off on the final lap).
+  int bestAi = 10;
+  for (size_t i = 0; i < ctx.state.size(); ++i) if (!ctx.state[i]->human) bestAi = std::min(bestAi, ctx.state[i]->rank);
+  if (a.rank != bestAi + 1) return;
+  if (a.laps == ctx.totalLaps) return;
   const Neighbours nb = findNeighbours(ctx, humanIndex);
   if (nb.ahead >= 0 && nb.dAhead > 0x595b0) ctx.ships[humanIndex]->boostTime = 6.0;  // [slot+0x3E] = 0x1770 ms
 }

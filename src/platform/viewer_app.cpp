@@ -28,6 +28,7 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
   }
   params_ = loadShipParams(*data_);
   aiTables_ = loadAiTables(*data_);
+  aiTables_.difficulty = opt.difficulty >= 0 ? opt.difficulty : readConfiguredDifficulty(*data_);
   weaponTable_ = loadWeaponTable(*data_);
   refPoints_ = loadShipRefPoints(*data_);
   {
@@ -129,6 +130,7 @@ void ViewerApp::setupCombat() {
   std::vector<PickupSpot> spots;
   if (opt_.pickups) spots = loadPickupSpots(*data_, track_);
   combat_.init(weaponTable_, refPoints_, track_, spots, unsigned(std::rand()) | 1u);
+  combat_.difficulty = aiTables_.difficulty;
   for (int k = 0; k < kWeaponCount; ++k) {
     const int mi = Scene::weaponMeshIndex(k);
     if (mi >= 0 && scene_->weaponMeshRadius[size_t(mi)] > 0) combat_.setProjectileRadius(k, std::max(500.0f, scene_->weaponMeshRadius[size_t(mi)]));
@@ -142,12 +144,15 @@ void ViewerApp::setupCombat() {
 void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
   CombatContext cc;
   cc.scene = scene_.get();
+  std::vector<ShipState> doorBoxes;
+  for (size_t d = 0; d < doors_.list.size(); ++d) doorBoxes.push_back(doors_.proxy(d));
+  for (const ShipState& b : doorBoxes) cc.obstacles.push_back(&b);
   cc.humanShip = player_.ship;
   cc.controls.assign(10, CombatControls{});
   for (int i = 0; i < 10; ++i) {
     cc.ships.push_back(i == player_.ship ? &player_ : &grid_[size_t(i)]);
     cc.human.push_back(i == player_.ship);
-    cc.finished.push_back(held || !aiEnabled_ || ai_[size_t(i)].lap >= opt_.laps);  // the AI holds its fire on the grid and after the finish
+    cc.finished.push_back(held || !aiEnabled_ || ai_[size_t(i)].finished || raceStatus_.over);  // the AI holds its fire on the grid and after the finish
     cc.shipClass.push_back(i + 1);
   }
   if (!held) {
@@ -193,6 +198,11 @@ void ViewerApp::drainSounds(const double listener[3]) {
     if (opt_.voices) audio_.playCue((std::rand() & 1) ? cues::shipBreaking1 : cues::shipBreaking2);
   }
   for (int i = 0; i < 10; ++i) grid_[size_t(i)].sfxOverDamage = 0;
+  for (int i = 0; i < 10; ++i) {
+    ShipState& s = i == player_.ship ? player_ : grid_[size_t(i)];
+    if (s.cueContact > 0 && opt_.voices) audio_.playCue(cues::contact(i + 1));  // 0x509B7
+    s.cueContact = 0;
+  }
   for (int i = 0; i < 10; ++i) {
     ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
     const bool own = driving_ && i == player_.ship;
@@ -314,6 +324,9 @@ void ViewerApp::toggleDrive() {
     lapsDone_ = 0;
     finishRank_ = 0;
     finished_ = false;
+    raceStatus_ = RaceStatus{};
+    startPhase_ = 15.0;
+    raceOverHandled_ = false;
     setupCombat();
   } else {
     countdown_ = 0;
@@ -327,7 +340,7 @@ void ViewerApp::toggleDrive() {
 void ViewerApp::update(double dt, const InputState& in) {
   if (dt > 0) fpsAvg_ = fpsAvg_ * 0.9 + (1.0 / dt) * 0.1;
   if (dt > 0 && dt < 1.0) animSeconds_ += dt;
-  if (dt > 0 && dt < 1.0 && mode_ == AppMode::Track) doors_.step(dt);
+  if (dt > 0 && dt < 1.0 && mode_ == AppMode::Track && !driving_) doors_.step(dt);
   if (mode_ == AppMode::Track && scene_) {
     if (driving_) {
       const bool held = countdown_ > 0;  // ships wait on the grid during the countdown (INFERRED: the original starts the race at 0)
@@ -361,16 +374,40 @@ void ViewerApp::update(double dt, const InputState& in) {
         for (int i = 0; i < 10; ++i)
           if (i != player_.ship) all.push_back(&grid_[size_t(i)]);
         for (ShipState* s : all) start.push_back({s->x, s->y, s->z});
+        ctx.status = &raceStatus_;
+        ctx.dt = step;
+        ctx.running = !held && !raceStatus_.over;
+        ctx.totalLaps = opt_.laps;
+        if (!held) startPhase_ = std::max(0.0, startPhase_ - step);
+        for (int i = 0; i < 10; ++i)  // 0x51CC2: speed factor bonus by rank during the first 15 s
+          ctx.ships[size_t(i)]->startBonus = startPhase_ > 0 ? startBonusForRank(ai_[size_t(i)].rank) : 0.0;
+        doors_.step(step, all);  // door slots update before the ships move (0x3C00E)
         updateRace(ctx);
         updateWrecks(ctx);
         applyTrailingBoost(ctx, size_t(player_.ship));
-        stepShip(player_, held ? ShipInput{} : ShipInput{in.throttle, in.brake, in.steer, in.pitch}, step, params_[size_t(player_.ship)], *scene_, simCfg_);
+        // a finished ship is steered by the autopilot, the player's too (0x51111: record +0xD set -> RaceAIControl)
+        static const bool testPilot = std::getenv("SLIP_AUTOPILOT") != nullptr;  // test hook: the player is steered by the AI from the start
+        const bool autopilot = (ai_[size_t(player_.ship)].finished || testPilot) && aiEnabled_ && !simCfg_.assist;
+        ShipInput pin = held ? ShipInput{} : autopilot ? aiControl(ctx, size_t(player_.ship), step) : ShipInput{in.throttle, in.brake, in.steer, in.pitch};
+        stepShip(player_, pin, step, params_[size_t(player_.ship)], *scene_, simCfg_);
         for (size_t k = 1; k < all.size(); ++k) {
           const int id = all[k]->ship;
           ShipInput ci = !held && aiEnabled_ && !simCfg_.assist ? aiControl(ctx, size_t(id), step) : ShipInput{};
           stepShip(*all[k], ci, step, params_[size_t(id)], *scene_, simCfg_);
         }
-        if (!simCfg_.assist) resolveShipPairs(all, start, step, *scene_, simCfg_);
+        if (!simCfg_.assist) {
+          // doors take part in the contact pass as static boxes that move with the panel (message 0x106 opens the door at 0x6FB8)
+          std::vector<ShipState> proxies;
+          for (size_t d = 0; d < doors_.list.size(); ++d) proxies.push_back(doors_.proxy(d));
+          std::vector<ShipState*> withDoors = all;
+          std::vector<std::array<double, 3>> startDoors = start;
+          for (size_t d = 0; d < proxies.size(); ++d) {
+            withDoors.push_back(&proxies[d]);
+            startDoors.push_back({doors_.list[d].prev[0], doors_.list[d].prev[1], doors_.list[d].prev[2]});
+          }
+          resolveShipPairs(withDoors, startDoors, step, *scene_, simCfg_);
+          for (size_t d = 0; d < proxies.size(); ++d) if (proxies[d].sfxContact > 0) doors_.touch(d);
+        }
         stepCombat(step, in, held);
         simAccum_ -= step;
       }
@@ -379,23 +416,26 @@ void ViewerApp::update(double dt, const InputState& in) {
         drainSounds(listener);
         audio_.engineSet(engineVoice_, player_.wrecked ? 0.0 : player_.speed);
         audio_.updateAmbient(dt, ambientForPlayer());
-        // laps and finish (RaceUpdate role): the lap counter counts completed circuits of the node chain
-        lapsDone_ = ai_[size_t(player_.ship)].lap;
-        if (lapsDone_ > lastLap_ && countdown_ <= 0) {  // 0x5A5FE..0x5A613: crossing the lap line announces the position (EPS0..9)
-          lastLap_ = lapsDone_;
-          if (opt_.voices) audio_.playCue(cues::positionAnnounce(std::clamp(ai_[size_t(player_.ship)].rank, 1, 10)));
+        // laps, finish and race end (RaceUpdate 0x5A4EC events)
+        const AiState& me = ai_[size_t(player_.ship)];
+        lapsDone_ = me.lap;
+        for (const RaceStatus::Event& e : raceStatus_.events) {
+          if (std::getenv("SLIP_RACE_LOG")) std::fprintf(stderr, "race event ship %d kind %d  rank %d laps %d t=%.1f\n", e.ship, e.kind, ai_[size_t(e.ship)].rank, ai_[size_t(e.ship)].laps, ai_[size_t(e.ship)].raceTime);
+          if (e.ship != player_.ship) continue;
+          if (e.kind == 1 && opt_.voices) audio_.playCue(cues::positionAnnounce(std::clamp(me.rank, 1, 10)));  // 0x5A5FE..0x5A613
+          if (e.kind == 2) {
+            finished_ = true;
+            finishRank_ = me.finishRank;
+            if (opt_.voices) audio_.playCue(cues::finishLine(player_.ship + 1));  // 0x5A6AA..0x5A6B4 (dropped while the position line plays)
+          }
+          if (e.kind == 3 && opt_.voices) audio_.playCue((std::rand() & 0x80) ? cues::passLine2(player_.ship + 1) : cues::passLine1(player_.ship + 1));  // 0x50BE7..0x50C00
         }
-        if (resultCueTimer_ > 0 && (resultCueTimer_ -= dt) <= 0 && opt_.voices) {  // results screen line (0x5A9A9..0x5A9CC)
-          const int rk = finishRank_;
-          audio_.playCue(rk == 1 ? (std::rand() & 1) : rk + 1);
-        }
-        if (!finished_ && lapsDone_ >= opt_.laps && countdown_ <= 0) {
-          finished_ = true;
-          finishRank_ = ai_[size_t(player_.ship)].rank;
-          resultCueTimer_ = 4.0;
-          if (opt_.voices) audio_.playCue(cues::finishLine(player_.ship + 1));  // 0x5A6AA..0x5A6B4 (dropped while the position line plays)
-          // results screen: 0x5A8D0 plays LOSE.HMP when the finishing position is below 4th, else WIN.HMP (0x5625B)
+        raceStatus_.events.clear();
+        if (raceStatus_.over && !raceOverHandled_) {  // race over: results (0x5A820): LOSE.HMP below 4th, else WIN.HMP; result line
+          raceOverHandled_ = true;
+          if (!finished_) { finished_ = true; finishRank_ = me.rank; }
           if (!opt_.noMusic) audio_.playMusic(finishRank_ > 3 ? "LOSE.HMP" : "WIN.HMP", false);
+          if (opt_.voices) audio_.playCue(finishRank_ == 1 ? (std::rand() & 1) : finishRank_ + 1);  // 0x5A9A9..0x5A9CC
         }
       }
       if (cockpit()) {
@@ -771,9 +811,15 @@ std::vector<std::string> ViewerApp::hudLines() const {
     if (driving_) {
       std::snprintf(buf, sizeof buf, "DRIVE ship %d  speed %.0f u/s  pos %.0f %.0f %.0f  hits %d", player_.ship, player_.speed, player_.x, player_.y, player_.z, player_.hits);
       l.push_back(buf);
+      const AiState& me = ai_[size_t(player_.ship)];
       if (countdown_ > 0) { std::snprintf(buf, sizeof buf, "GET READY  %d", int(std::ceil(countdown_))); l.push_back(buf); }
-      else if (finished_) { std::snprintf(buf, sizeof buf, "FINISHED - position %d of 10", finishRank_); l.push_back(buf); }
-      else { std::snprintf(buf, sizeof buf, "%s lap %d/%d  position %d", lapsDone_ == opt_.laps - 1 ? "FINAL LAP!!" : "", std::min(lapsDone_ + 1, opt_.laps), opt_.laps, ai_[size_t(player_.ship)].rank); l.push_back(buf); }
+      else if (raceStatus_.over) { std::snprintf(buf, sizeof buf, "RACE OVER - position %d of 10  time %.1f%s  best lap %.1f", finishRank_, me.finishTime, me.projected ? " (projected)" : "", me.bestLap); l.push_back(buf); }
+      else if (finished_) { std::snprintf(buf, sizeof buf, "FINISHED - position %d of 10  time %.1f  (autopilot, race ends %s)", finishRank_, me.raceTime, raceStatus_.endTimer >= 0 ? "soon" : "when the others are in"); l.push_back(buf); }
+      else {
+        std::snprintf(buf, sizeof buf, "%s lap %d/%d  position %d  time %.1f  last %.1f  best %.1f%s", me.laps == opt_.laps ? "FINAL LAP!!" : "", std::max(1, me.laps), opt_.laps, me.rank, me.raceTime, me.lastLap,
+                      me.bestLap, startPhase_ > 0 && countdown_ <= 0 ? "  START BOOST" : "");
+        l.push_back(buf);
+      }
       l.push_back(combatLine());
       std::snprintf(buf, sizeof buf, "damage engine %.0f%% steering %.0f%%  credits %d  projectiles %zu  pickups %zu", player_.damageA, player_.damageB, combat_.combat[size_t(player_.ship)].credits, combat_.projectiles.size(), combat_.pickups.size());
       l.push_back(buf);

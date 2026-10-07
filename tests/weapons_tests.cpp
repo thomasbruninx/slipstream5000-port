@@ -61,14 +61,14 @@ int main() {
     r.run(0.4);
     CHECK(r.w.combat[0].shotsFired == 2);
   }
-  {  // a beam that hits: 1 damage point on each counter (table +0x30/+0x34 = 0x10000), 3 s immunity afterwards
+  {  // a beam that hits: 2 damage points on each counter (table +0x30/+0x34 = 0x10000, shifted left by 1), 3 s immunity afterwards
     Rig r;
     r.ctx.controls[0].fire = true;
     r.run(0.1);
     r.ctx.controls[0].fire = false;
     r.run(1.0);
-    NEAR(r.b.damageA, 1.0, 1e-9);
-    NEAR(r.b.damageB, 1.0, 1e-9);
+    NEAR(r.b.damageA, 2.0, 1e-9);  // table 1.0 << 1
+    NEAR(r.b.damageB, 2.0, 1e-9);
     CHECK(r.b.invuln > 2.0);
   }
   {  // lock-on: Seeker locks a ship straight ahead inside the 0x145 cone, not one far to the side; the human cannot lock for 15 s

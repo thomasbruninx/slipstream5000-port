@@ -107,7 +107,7 @@ Door polygons = list-A polygons with file flag 0x20 (Dummy portal quads). `FindD
 the door slot server 0x3BF86 runs a constant 0x37DC u/s state machine between closed (+0x30) and open (+0x24) with
 state flips at both ends (no pause). The panel is the Dummy quad's rectangle textured with the track's `DOORS` material
 (105x46 texture, 197x154 in Egypt) drawn with the piece. The closed position leaves half of the Dummy quad's span
-covered (it is the midpoint of C and the open position, as decoded). Ship-vs-door (collision cube +-0x7A0) is not ported.
+covered (it is the midpoint of C and the open position, as decoded). Ship-vs-door: see "Door collision" below.
 
 ### Ship-vs-ship (STRONGLY INFERRED structure, response CONFIRMED by reading; narrow phase substituted)
 * `CollideStep` -> `0x15A46` loops over slot pairs whose collider has flag 2 and calls `0x14620`: broad phase =
@@ -193,6 +193,37 @@ crash, slide 0) when it leaves the piece it crashed in, touches a wall again (0x
 hits while flying: speed/2 (>= 0x1174C), bounce 22.5 deg off the surface (`0x3BD82` with angle 0x1000), grazing hits (|h.n| <= 0x100) are ignored.
 Port: `ShipState::wreck*`, `stepShipDynamics`, `shipHitResponse`, `updateWrecks`. Simplifications: the per-rotation collision
 revert is replaced by the normal track sweep, and a 12 s safety timeout recovers wrecks that never leave their piece.
+
+### Door collision (door slot server 0x3BF86, TrackInitDoors 0x3C813; `doors.cpp`, tested in `tests/physics_tests.cpp`)
+* **Collider** (INFERRED mapping): the door slot gets a box = the panel rectangle (half extents |v0-v1|/2 and |v0-v3|/2, from the shape bounds that 0x26003 returns) with a thickness of +-0x7A0 along the panel normal (`ecx = -0x7A0`, `edi = 0x7A0` at 0x3C92D, `0x135CA`); collider class 2.
+* **Contact, message 0x106** (0x3BFDB): if the other slot is a ship (slot flag +0xA0 & 4) the door is set to state 0 (opening) with speed 0x6FB8 (28600 u/s, twice the normal speed). The ship's own 0x106 handler runs the generic contact branch (flag tests for bonus / weapon fail): it is pushed away along the relative velocity by `max(1.5*|rel|, 0x37DC)`, loses 37.5 % speed when it was the rammer and takes (0, 4.0) damage - the same as a ship-ship contact with a standing ship. The port feeds the doors to the contact solver as static boxes that carry the panel velocity.
+* **Door update, message 0x104** (0x3C00E): when the door's cube overlaps a slot at the start of the frame it opens (state 0, speed 0x37DC). Each move (0x3C17B): the panel is placed at the new position and the overlap test (0x13474) runs; a *closing* door that now overlaps a slot goes back to where it was and reopens (state 0, speed 0x37DC); an opening door pushes on (the contact message handles the ship). End stops flip the state as before.
+* Missiles that reach a door are destroyed (their 0x106 handler); beams ignore it (not decoded further).
+
+### Race rules (CONFIRMED by reading RaceUpdate 0x5A4EC, the game loop 0x59003.. and RaceSlotMove 0x51C10..0x51CDB; `ship_ai.cpp`)
+* **Lap line.** TRD header `+4` / `+6` are the TRD offsets of two consecutive pieces A and B (`Track::lapPieceA/B`; on all ten tracks A holds path node 1 and B node 0).
+  Every frame the slot's current piece is compared with the previous one ([record +0x28]). Moving **B -> A** is a forward crossing: the first one only sets
+  the lap counter (record `+0x20`) to 1 (the grid lies before the line), later ones store the lap time (`+0xE` -> last / best lap `+0x16`) and add 1;
+  the ship is finished when `laps - 1 >= total laps` (`[0x5440E]`), record `+0xD = 1`, finishing rank = number of finished ships. Moving **A -> B** sets `+0x22`:
+  the next B -> A crossing is swallowed (driving back over the line). The port tracks the piece like the slot cell does (only linked pieces).
+* **Clocks.** Race time `+0xE` and the lap timer run only after the countdown (`[0x54408] == 0`) and stop at the finish.
+* **Ranks** (0x5A6C6..0x5A74F): finished ships keep their finishing rank; the others are sorted by `laps - (+0x22)` descending, then by `+0x1C` ascending, which is
+  `3BD0D`: the distance still to go along the node chain (node `+0x24`, computed at load by 0x3BB14) plus the distance to the ship's piece node.
+* **Race end** (0x5A74F..0x5A793, 0x59092): five seconds after the second AI ship finished (or when no AI ship is left racing) `[0x5440C]` expires and the race
+  ends; unfinished ships keep their rank and get a projected finish clock (0x5A461: `clock + distance_to_go / route length * 90000 ms + (laps total - laps) * 90000 ms`, lap estimate table 0x5A4C4, all 90000), shown as "projected". WIN.HMP / LOSE.HMP and the result line play then.
+* **Finished ships are autopiloted** (0x51111: record `+0xD` set -> RaceAIControl), the player's too.
+* **Start phase**: during the first 15 s after GO (`[0x54404] = 0x3A98`) every ship's speed factor gains `table 0x50252[rank]` = 0.75, 0.6875, 0.625, 0.5, 0.375,
+  0.25, 0.125, 0.0625, 0.03125, 0.0156 for ranks 1..10 (it multiplies thrust and the cap like the other factors). The tables 0x5040C / `[0x5441C]` belong to the
+  intro demo only (set in PlayTrackIntro 0x57A79, cleared at 0x57FDC), `[0x54414]` / `[0x50254]` to a special mode: not ported.
+* **Difficulty** `[0x49F04]` = `[0x492EA]` = the word at offset 157 of `SLIPSTRM.CFG` (the file is loaded at 0x4924D); 1 in the shipped config and in the executable default. It indexes the
+  AI tier tables (0x5409C), the shop prices and doubles the blaster damage again at 2. The port reads the CFG (`--difficulty N` overrides).
+  This confirms the earlier assumption of the second table.
+* **Trailing boost** (0x51C70) corrected: it is not for the last place; it needs the human to be **exactly one place behind the best AI ship** (`[0x50438] + 1 == rank`,
+  `[0x50438]` = best AI rank, 0x50446), the ship ahead more than 0x595B0 away, and not the final lap (the original's test of slot data `+0x1C` against 0x1DC90 is nearly always true).
+* **Voice cues** wired from this: lap line -> position announcement, the human taking the place of the best AI ship (0x50BB4: pass line, table 0x50C03 or 0x50C2B at random),
+  contact line (0x509A6, only when the high word of slide x is 2, which the original's code does by accident), finish line, result line, "under fire" / taunt cues of the weapon module.
+
+* **Retired flag** (record `+0xC`): the only writer in the race code is the init that clears it (0x50568); nothing sets it in a single player race, so it is not ported. The node distance `+0x24` (0x3BB14) takes the shorter of the main and the alternative route at splits; the port uses the main route length (affects rank ties near the pit route only).
 
 ### Weapons, pickups and status effects
 See `docs/weapons.md` (full tables and confidence labels). Ship-side effects live in `ShipState` / `stepShipDynamics`: reversed steering and pitch

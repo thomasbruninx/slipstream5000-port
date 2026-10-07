@@ -599,6 +599,12 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
       if (h.hit) wallT = h.dist / step;
     }
   }
+  if (!beam) {
+    for (const ShipState* o : ctx.obstacles) {
+      const double t = segmentVsShip(*o, p.pos, np, p.radius);
+      if (t >= 0 && t < wallT) wallT = t;
+    }
+  }
   if (bestShip >= 0 && bestT <= wallT) {
     for (int k = 0; k < 3; ++k) p.pos[k] += (np[k] - p.pos[k]) * std::min(bestT, 1.0);
     if (beam) beamHit(ctx, p, bestShip);
@@ -646,7 +652,8 @@ void CombatWorld::beamHit(const CombatContext& ctx, const Projectile& p, int vic
     return;
   }
   const WeaponDef& w = table_->w[kBlaster];
-  shipDamage(v, w.damageA, w.damageB);
+  const double mul = difficulty == 2 ? 4.0 : 2.0;  // 0x5C0F9: the table value is shifted left by 1 (by 2 at the hardest level)
+  shipDamage(v, w.damageA * mul, w.damageB * mul);
   emitFx(10, victim, vp);
   if (victim == ctx.humanShip) emitCue(ctx, victim, cues::underFire);
 }

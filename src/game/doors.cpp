@@ -41,6 +41,13 @@ void Doors::build(const Scene& scene) {
         snap[0] = h > 0 ? e[0] / h : 0; snap[1] = 0; snap[2] = h > 0 ? e[2] / h : 0;
       }
       const double b = el * 0.5;  // |v0 - v3| / 2
+      {
+        const double l1 = len(e1), l2 = len(e2);
+        if (l1 < 1 || l2 < 1) continue;
+        for (int i = 0; i < 3; ++i) { d.u[i] = e1[i] / l1; d.w[i] = e2[i] / l2; }
+        d.ha = l1 * 0.5; d.hb = l2 * 0.5;
+        d.n[0] = d.u[1] * d.w[2] - d.u[2] * d.w[1]; d.n[1] = d.u[2] * d.w[0] - d.u[0] * d.w[2]; d.n[2] = d.u[0] * d.w[1] - d.u[1] * d.w[0];
+      }
       for (int i = 0; i < 3; ++i) {
         d.s[i] = -snap[i];
         d.open[i] = d.c[i] + d.s[i] * (2 * b - b / 16);
@@ -79,7 +86,43 @@ void Doors::build(const Scene& scene) {
 }
 
 void Doors::step(double dt) {
-  for (Door& d : list) {
+  static const std::vector<ShipState*> none;
+  step(dt, none);
+}
+
+ShipState Doors::proxy(size_t i) const {
+  const Door& d = list[i];
+  ShipState s;
+  s.hasBox = true;
+  s.matrixInit = true;
+  s.x = d.pos[0]; s.y = d.pos[1]; s.z = d.pos[2];
+  for (int k = 0; k < 3; ++k) { s.m[k] = d.u[k]; s.m[3 + k] = d.w[k]; s.m[6 + k] = d.n[k]; }
+  s.boxLo[0] = -d.ha; s.boxHi[0] = d.ha; s.boxLo[1] = -d.hb; s.boxHi[1] = d.hb; s.boxLo[2] = -0x7a0; s.boxHi[2] = 0x7a0;
+  s.extent = std::sqrt(d.ha * d.ha + d.hb * d.hb + double(0x7a0) * 0x7a0);
+  const double sg = d.state == 0 ? 1.0 : -1.0;
+  for (int k = 0; k < 3; ++k) s.slide[k] = d.s[k] * sg * d.speed;  // velocity of the panel
+  s.speed = 0;
+  return s;
+}
+
+void Doors::touch(size_t i) {
+  Door& d = list[i];
+  d.state = 0;      // [edi+4] = 0: opening
+  d.speed = 0x6fb8; // [edi] = 0x6FB8
+  d.touched = true;
+}
+
+void Doors::step(double dt, const std::vector<ShipState*>& ships) {
+  for (size_t di = 0; di < list.size(); ++di) {
+    Door& d = list[di];
+    for (int k = 0; k < 3; ++k) d.prev[k] = d.pos[k];
+    auto overlapsShip = [&]() {
+      const ShipState px = proxy(di);
+      for (const ShipState* s : ships)
+        if (s && s->hasBox && shipBoxesOverlap(px, *s)) return true;
+      return false;
+    };
+    if (!ships.empty() && overlapsShip()) { d.state = 0; d.speed = 0x37dc; }  // 0x3C00E: standing in the doorway -> open
     double remaining = d.speed * dt;
     for (int guard = 0; guard < 4 && remaining > 0; ++guard) {
       const double* target = d.state == 0 ? d.open : d.closed;
@@ -87,11 +130,22 @@ void Doors::step(double dt) {
       // distance left to the end stop along the slide direction
       double left = 0;
       for (int i = 0; i < 3; ++i) left += (target[i] - d.pos[i]) * d.s[i] * sg;
-      if (left > remaining) {
-        for (int i = 0; i < 3; ++i) d.pos[i] += d.s[i] * sg * remaining;
-        break;
+      const bool reaches = left <= remaining;
+      double np[3];
+      for (int i = 0; i < 3; ++i) np[i] = reaches ? target[i] : d.pos[i] + d.s[i] * sg * remaining;
+      if (d.state != 0 && !ships.empty()) {  // 0x3C17B: a closing door that would collide stays put and reopens
+        const double old[3] = {d.pos[0], d.pos[1], d.pos[2]};
+        for (int i = 0; i < 3; ++i) d.pos[i] = np[i];
+        if (overlapsShip()) {
+          for (int i = 0; i < 3; ++i) d.pos[i] = old[i];
+          d.state = 0;
+          d.speed = 0x37dc;
+          break;
+        }
+        for (int i = 0; i < 3; ++i) d.pos[i] = old[i];
       }
-      for (int i = 0; i < 3; ++i) d.pos[i] = target[i];
+      for (int i = 0; i < 3; ++i) d.pos[i] = np[i];
+      if (!reaches) break;
       remaining -= std::max(left, 0.0);
       d.state = d.state == 0 ? -1 : 0;  // reached the end: flip (xor [edi+4], -1)
       d.speed = 0x37dc;

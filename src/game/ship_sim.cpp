@@ -120,6 +120,7 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
   // ---- speed (RaceSlotMove 0x51BB6..0x51D66) ----
   double top = double(p.topSpeed);
   double fac = s.speedFactor + (s.slowTime > 0 ? -0.25 : s.boostTime > 0 ? 0.5 : 0.0);  // 0x51CA6..0x51CC2
+  fac += s.startBonus;
   if (s.boosterFreeTime > 0 || s.boosterOn) fac += s.boosterGain;  // 0x51CDC..0x51CFD: booster item factor - 1
   const bool forced = s.forceThrottleTime > 0;  // 0x51B1D: control flag bit 0 (throttle) forced on
   double a;
@@ -422,6 +423,8 @@ double shipPairTimeOfImpact(const ShipState& a, const ShipState& b, const double
 void shipPairResponse(ShipState& a, ShipState& b, bool aRams, bool bRams) {
   ++a.sfxContact;
   ++b.sfxContact;
+  for (ShipState* q : {&a, &b})  // 0x509A6: the pilot's contact line only plays when the high word of slide x (slot data +2) is 2
+    if (((long long)(q->slide[0]) >> 16 & 0xFFFF) == 2) ++q->cueContact;
   if (a.wrecked) a.wreckRecover = true;  // message 0x106 in the debris handler: speed 0, handler restored (0x3EB19)
   if (b.wrecked) b.wreckRecover = true;
   double va[3], vb[3];

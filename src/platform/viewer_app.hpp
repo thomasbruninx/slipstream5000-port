@@ -41,6 +41,7 @@ struct AppOptions {
   std::string weapons = "default";  // --weapons SPEC: the player's loadout ("default" = the original's cheat loadout, "none" = blaster only)
   bool pickups = true;              // --no-pickups
   bool aiWeapons = true;            // --no-ai-weapons
+  int difficulty = -1;              // --difficulty 0..2 (default: SLIPSTRM.CFG, normally 1)
   bool voices = true;               // --no-voices: pilot / announcer lines
   int view = 0;                     // 0 cockpit, 1 cockpit with the own ship drawn (--ship-view), 2 chase (--chase); V cycles
 };
@@ -112,6 +113,9 @@ class ViewerApp {
   int view_ = 0;  // 0 cockpit, 1 cockpit + own ship, 2 chase
   bool cockpit() const { return view_ != 2; }
   int lastLap_ = 0;
+  RaceStatus raceStatus_;
+  double startPhase_ = 15.0;  // [0x54404]: the first 15 s after GO give a rank dependent speed bonus (table 0x50252)
+  bool raceOverHandled_ = false;
   double resultCueTimer_ = -1;
   std::array<Sprite, 6> bonusSprites_, explSprites_;
   std::array<Sprite, 4> fireSprites_;

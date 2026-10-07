@@ -36,11 +36,11 @@ A window/input/loop ✅ · B display original asset ✅ · C free-camera track v
 ## Physics / collision / doors (this phase)
 * DONE (oracle-checked): ship speed, steering/bank/yaw, pitch, drag, speed->velocity (`ship_sim.cpp`, `tests/physics_tests.cpp`).
 * DONE (geometry and response decoded and ported; damage/explosion not): ship-vs-track polygon sweep (`ship_collide.cpp`), controls E/Q pitch, F8 = hover assist.
-* DONE (decoded, visual only): sliding doors (`doors.cpp`).
+* DONE (decoded): sliding doors including the collision cube, blocked-door reopen, contact opening at 0x6FB8 (`doors.cpp`).
 * DONE (oracle-verified): ship-vs-ship contact (TOI), frame re-simulation, damage model, wreck on a second hit.
 * DONE (decoded, behaviour-checked): AI ships (`ship_ai.cpp`), F9 toggle.
 * DONE (decoded, behaviour-checked): AI avoidance, doors, pit/random branches, tier speed factors, trailing boost, wreck/debris handler with recovery.
-* OPEN: official lap/finish logic, mode-specific tables (0x50252/0x5040C), difficulty selection, ship-vs-door cube.
+* DONE: lap line / finish / ranks / race end / start bonus / difficulty from the CFG (docs/simulation.md "Race rules"). OPEN: exact node distance at route splits, special modes ([0x54414], intro demo tables).
 
 
 ## Sound (this phase)

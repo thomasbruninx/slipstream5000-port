@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "game/scene.hpp"
+#include "game/ship_sim.hpp"
 
 namespace slip {
 
@@ -22,13 +23,25 @@ struct Door {
   double pos[3] = {0, 0, 0};     // current panel centre
   double speed = 0x37dc;         // u/s; reset to 0x37DC on every flip, AI ships raise it to 0x53CA while they are on the door's piece (0x35564)
   int state = -1;                // -1 closing (towards `closed`), 0 opening (towards `open`)
+  // Collision cube of the door slot (TrackInitDoors 0x3C813: the panel rectangle, thickness +-0x7A0 along the normal; INFERRED mapping):
+  double u[3] = {1, 0, 0}, w[3] = {0, 1, 0}, n[3] = {0, 0, 1};  // panel axes (v0->v1, v0->v3) and normal
+  double ha = 0, hb = 0;                                         // half extents along u and w
+  double prev[3] = {0, 0, 0};                                    // position before the last step (contact solver)
+  bool touched = false;                                          // set by the step when a ship overlaps / touches it
   Mesh mesh;                     // panel relative to its centre (two-sided DOORS quad)
 };
 
 struct Doors {
   std::vector<Door> list;
   void build(const Scene& scene);
-  void step(double dt);  // original 0x3BF86 update at dt seconds
+  void step(double dt);  // original 0x3BF86 update at dt seconds, without ships (viewer)
+  // With ships (door slot update 0x104): a door whose cube overlaps a ship at the start of the step opens at 0x37DC; a closing
+  // door that would end up inside a ship stays where it is and reopens (0x3C17B).
+  void step(double dt, const std::vector<ShipState*>& ships);
+  // Door as a static-box slot for the contact solver: box = the cube, velocity = slide direction * speed (in `slide`).
+  ShipState proxy(size_t i) const;
+  // Message 0x106 from a ship (0x3BFDB): the door opens at 0x6FB8 u/s.
+  void touch(size_t i);
 };
 
 }  // namespace slip

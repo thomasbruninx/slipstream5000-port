@@ -14,7 +14,7 @@ object-relative offsets (+0x10000).
 
 | id | name | refill/s | cost | cone | damage engine / steering | launcher | projectile |
 |---|---|---|---|---|---|---|---|
-| 0 | Blaster | 0.125 | 0.1875 | 0x145 | 1 / 1 | 0x5C3BF | 2 beams, server 0x5C481 |
+| 0 | Blaster | 0.125 | 0.1875 | 0x145 | 1 / 1 (x2 when a beam hits, x4 at difficulty 2) | 0x5C3BF | 2 beams, server 0x5C481 |
 | 1 | Disrupter | 1 | 1 | 0x145 | (none, see 3) | 0x5C66C | 2 beams, server 0x5C741 |
 | 2 | Frag | 1 | 1 | 0x145 | 2 / 15 | 0x5CE0A | missile, server 0x5D24B |
 | 3 | Super Frag | 1 | 1 | 0x145 | 4 / 25 | 0x5CF17 | missile 0x5D24B |
@@ -81,13 +81,13 @@ owner's orientation; the owner's sound: effect 4 (beams), 5 (missiles, smoker), 
 
 ## 5. What a hit does (victim side, CONFIRMED)
 * Message 0x202 (beams, 0x50651): human victim -> boost timer `+0x3E` cleared and `+0x40 = 0xFA` ms (slow + jittery steering).
-  Blaster: damage 1/1, effect 10 (LASERHIT), the human hears cue 0x3F. Disrupter: no damage, `+0x26 = 0x1388` (steering and pitch
+  Blaster: damage 2/2 (table value << 1, 0x5C0F9; << 2 at difficulty level 2), effect 10 (LASERHIT), the human hears cue 0x3F. Disrupter: no damage, `+0x26 = 0x1388` (steering and pitch
   reversed for 5 s), effect 11 (DISRUPTR).
 * Message 0x106 with a weapon slot (0x5082F..0x50A57): effect by weapon: Ambler `+0x28 = 0x2710` (10 s, effect 16), Bomber `+0x2A = 0xFA0`
   (4 s, effect 13), Hyper Neuro `+0x2C = 0x2710` (10 s, effect 15), Scrambler effect 14, Mini Mines effect 9 (+ cue 0x40 for the human),
   everything else effect 9 (EXPLOSN); then `RaceSlotDamage(table +0x30, +0x34)` (3 s immunity applies). When the *human* fired the weapon
   the pilot of the victim's class answers with a line (cue 13+class, table 0x50881).
-* Not ported: the difficulty doubling of blaster damage ([0x49F04] == 2, the port uses level 1), the push along the contact normal and the
+* Not ported: the push along the contact normal and the
   0.625 speed factor of the pair response for projectile contacts, screen shake and flash (0x440F3, 0x4F3A0), and the particle effects
   (the port uses the EXPL / FIRE sprites for explosions and smoke).
 

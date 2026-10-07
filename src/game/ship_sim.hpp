@@ -35,6 +35,8 @@ struct ShipState {
   // +0x2C hypersensitive steering (x16, also while +0x40 runs), +0x2E / booster switch: speed factor + boosterGain.
   double reverseTime = 0, halfCapTime = 0, forceThrottleTime = 0, hyperTime = 0, boosterFreeTime = 0;
   bool boosterOn = false;       // [+0x34]: the selected booster item is burning fuel
+  double startBonus = 0;        // speed factor added during the first 15 s of the race by rank (0x51CC2, table 0x50252)
+  int cueContact = 0;           // slot data +2 == 2 at a ship contact (0x509A6): the pilot's contact line (cue 3 + class)
   double boosterGain = 0;       // table 0x5BD44 +0x1C factor - 1 of the fitted booster item (0 = none)
   // Wreck = debris handler 0x3E9F5 (installed by 0x3E8F2 after a second wall hit): the ship tumbles along the track towards the
   // next node for a while, then recovers (re-aligned to the track) once it left the wreck piece, hit something, or timed out.

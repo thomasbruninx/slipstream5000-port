@@ -123,6 +123,7 @@ struct CombatContext {
   std::vector<bool> finished;         // ships that finished the race (the AI stops shooting)
   std::vector<int> shipClass;         // 1..10 (record +0: pilot class), used by the cue tables
   std::vector<CombatControls> controls;  // human intents for this step (cycle is an edge)
+  std::vector<const ShipState*> obstacles;  // door panels (static boxes): missiles stop at them (their 0x106 handler destroys the missile)
   int humanShip = -1;                 // the listener ([0x543DD]): receives the pilot / announcer cues
 };
 
@@ -135,6 +136,7 @@ class CombatWorld {
   void step(const CombatContext& ctx, double dt);
 
   const WeaponTable& table() const { return *table_; }
+  int difficulty = 1;  // [0x49F04]: 2 doubles the blaster damage again (0x5C0F9)
   std::array<CombatState, 10> combat;
   std::vector<Projectile> projectiles;
   std::vector<Pickup> pickups;
