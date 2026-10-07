@@ -33,7 +33,8 @@ static void usage() {
       "  --laps N            race length for the finish / result music (default 3)\n"
       "  --no-countdown      skip the 5 s start sequence\n"
       "  --weapons SPEC      player loadout, e.g. seeker:9,scrambler:9,booster:2 (default: the original's cheat loadout; 'none' = blaster only)\n"
-      "  --chase             start in the chase camera (V switches between cockpit and chase view)\n"
+      "  --chase             start in the chase camera (V cycles cockpit / close chase / far chase)\n"
+      "  --ship-view         start in the close chase view (camera locked to the ship's attitude)\n"
       "  --no-pickups        no bonus objects      --no-ai-weapons   the AI ships do not shoot      --no-voices   no pilot/announcer lines\n"
       "  --no-music          no music      --no-sfx   no sound effects     --no-audio   no sound at all\n"
       "  --volume V          master volume 0..1 (default 1)   --music-volume V (0.8)   --sfx-volume V (1)\n");
@@ -86,7 +87,8 @@ int main(int argc, char** argv) {
     else if (a == "--laps") opt.laps = std::max(1, std::atoi(next("--laps")));
     else if (a == "--no-countdown") opt.countdown = false;
     else if (a == "--weapons") opt.weapons = next("--weapons");
-    else if (a == "--chase") opt.cockpit = false;
+    else if (a == "--chase") opt.view = 2;
+    else if (a == "--ship-view") opt.view = 1;
     else if (a == "--no-pickups") opt.pickups = false;
     else if (a == "--no-ai-weapons") opt.aiWeapons = false;
     else if (a == "--no-voices") opt.voices = false;

@@ -42,7 +42,7 @@ struct AppOptions {
   bool pickups = true;              // --no-pickups
   bool aiWeapons = true;            // --no-ai-weapons
   bool voices = true;               // --no-voices: pilot / announcer lines
-  bool cockpit = true;              // first person camera at the ship's 'head' reference point (--chase starts in the chase view)
+  int view = 0;                     // 0 cockpit, 1 cockpit with the own ship drawn (--ship-view), 2 chase (--chase); V cycles
 };
 
 class ViewerApp {
@@ -64,7 +64,7 @@ class ViewerApp {
   void toggleSfx() { audio_.toggleSfx(); }
   AudioSystem& audio() { return audio_; }
   void cycleWeapon() { cyclePending_ = true; }
-  void toggleCamera() { cockpit_ = !cockpit_; }
+  void toggleCamera() { view_ = (view_ + 1) % 3; }
   void toggleAssist() { simCfg_.assist = !simCfg_.assist; }
   void togglePainter() { painter_ = !painter_; }
   void toggleVisibility() { useVisMask_ = !useVisMask_; }
@@ -109,7 +109,8 @@ class ViewerApp {
   CombatWorld combat_;
   Loadout playerLoadout_;
   bool cyclePending_ = false;
-  bool cockpit_ = true;
+  int view_ = 0;  // 0 cockpit, 1 cockpit + own ship, 2 chase
+  bool cockpit() const { return view_ != 2; }
   int lastLap_ = 0;
   double resultCueTimer_ = -1;
   std::array<Sprite, 6> bonusSprites_, explSprites_;
