@@ -21,6 +21,7 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
   if (!data_) return false;
   rememberGameDirectory(dir);
   params_ = loadShipParams(*data_);
+  aiTables_ = loadAiTables(*data_);
   renderer_.resize(opt.width, opt.height);
   cam_.fovY = 1.15f;
   shapes_ = data_->list("SHP");
@@ -157,6 +158,7 @@ void ViewerApp::toggleDrive() {
     player_ = grid_[size_t(std::clamp(opt_.ship, 0, 9))];
     player_.speed = 0;
     setShipBoxFromMesh(player_, scene_->shipMeshes[size_t(std::clamp(opt_.ship, 0, 9))]);
+    for (int i = 0; i < 10; ++i) { setShipBoxFromMesh(grid_[size_t(i)], scene_->shipMeshes[size_t(i)]); grid_[size_t(i)].speed = 0; ai_[size_t(i)] = AiState{}; }
     simAccum_ = 0;
   } else {
     placeCameraAtStart();
@@ -173,7 +175,19 @@ void ViewerApp::update(double dt, const InputState& in) {
       const double step = 1.0 / 120.0;
       int guard = 0;
       while (simAccum_ >= step && guard++ < 16) {
+        std::vector<ShipState*> all;
+        std::vector<std::array<double, 3>> start;
+        all.push_back(&player_);
+        for (int i = 0; i < 10; ++i)
+          if (i != player_.ship) all.push_back(&grid_[size_t(i)]);
+        for (ShipState* s : all) start.push_back({s->x, s->y, s->z});
         stepShip(player_, ShipInput{in.throttle, in.brake, in.steer, in.pitch}, step, params_[size_t(player_.ship)], *scene_, simCfg_);
+        for (size_t k = 1; k < all.size(); ++k) {
+          const int id = all[k]->ship;
+          ShipInput ci = aiEnabled_ && !simCfg_.assist ? aiControl(*all[k], ai_[size_t(id)], *scene_, aiTables_, params_[size_t(id)]) : ShipInput{};
+          stepShip(*all[k], ci, step, params_[size_t(id)], *scene_, simCfg_);
+        }
+        if (!simCfg_.assist) resolveShipPairs(all, start, step, *scene_, simCfg_);
         simAccum_ -= step;
       }
       // chase camera
@@ -482,6 +496,7 @@ std::vector<std::string> ViewerApp::hudLines() const {
       std::snprintf(buf, sizeof buf, "DRIVE ship %d  speed %.0f u/s  pos %.0f %.0f %.0f  hits %d", player_.ship, player_.speed, player_.x, player_.y, player_.z, player_.hits);
       l.push_back(buf);
       l.push_back("W/S throttle/brake, A/D steer, E/Q nose up/down, Space = free cam");
+      l.push_back(aiEnabled_ ? "AI ships racing (F9 = stop them)" : "AI off (F9)");
       l.push_back(simCfg_.assist ? "hover assist ON (F8): legacy floor following, no collision" : "original-style flight model (F8 = hover assist): manual pitch, polygon collision");
     } else {
       l.push_back("WASD move, Q/E down/up, mouse look, Shift fast | [ ] track | Space drive | 1-0 ship | F2 models F3 sprites | F4 or Cmd+C copy debug | Esc quit");

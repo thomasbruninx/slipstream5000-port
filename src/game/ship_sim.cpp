@@ -55,7 +55,7 @@ void shipRenderMatrix(const ShipState& s, float* R) {
 static void shipVelocity(const ShipState& s, double* v) {
   const double* m = s.m;
   const double fy = std::clamp(m[7], -0.25, 0.25);
-  const double factor = -fy / 8.0 + (0x200 - std::fabs(m[1]) * 0x4000 / 32.0) / 16384.0 + 0x1000 / 16384.0 + 0x2c00 / 16384.0;
+  const double factor = -fy / 8.0 + (0x200 - std::fabs(m[1]) * 0x4000 / 32.0) / 16384.0 + (0x1000 - 40.0 * s.damageA) / 16384.0 + 0x2c00 / 16384.0;  // RaceSlotHover: 0x1000 - 0x28*[rec+0x2A]>>16
   const double eff = s.speed * factor;
   for (int i = 0; i < 3; ++i) v[i] = m[6 + i] * eff + s.slide[i];
 }
@@ -66,6 +66,18 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
     const double m[9] = {c, 0, -sn, 0, 1, 0, sn, 0, c};
     std::copy(m, m + 9, s.m);
     s.matrixInit = true;
+  }
+  // per-frame timers (RaceSlotControl 0x104: ship data +0x12 and +0x24 count down in ms)
+  s.recentHit = std::max(0.0, s.recentHit - dt);
+  s.invuln = std::max(0.0, s.invuln - dt);
+  if (s.wrecked) {  // dead-ship handler 0x51293 -> 0x3E9F5: tumbling debris, no controls (simplified)
+    s.wreckTime += dt;
+    s.steerAxis = s.pitchAxis = 0;
+    s.speed = std::max(0.0, s.speed - 0.4 * s.speed * dt);
+    rot(s.m, 0.5 * dt, kRollPairs, -1, 1);  // spin about the nose axis
+    orthonormalize(s.m);
+    shipVelocity(s, vel);
+    return;
   }
   // ---- speed (RaceSlotMove 0x51BB6..0x51D66) ----
   double top = double(p.topSpeed);
@@ -82,7 +94,10 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
   // ---- orientation (0x51D72..0x51E59) ----
   // Keyboard steering ramp (sub_59A05): the axis moves 4.0/s towards the pressed side (reversing zeroes it first)
   // and back to centre at the same rate when released.
-  {
+  if (in.direct) {
+    s.steerAxis = std::clamp(double(in.steer), -1.0, 1.0);
+    s.pitchAxis = std::clamp(double(in.pitch), -1.0, 1.0);
+  } else {
     double want = std::clamp(double(in.steer), -1.0, 1.0), step = 4.0 * dt;
     if (std::fabs(want) < 0.01) {
       s.steerAxis = s.steerAxis > 0 ? std::max(0.0, s.steerAxis - step) : std::min(0.0, s.steerAxis + step);
@@ -99,7 +114,7 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
   const double dtq = std::floor(dt * 16384.0);  // GetFrameDeltaSecs: 2.14 seconds
   // hi16(dtq * input) for the steering input and for the bank term -m[1] (snapshot, 2.14)
   double yawTerm = (std::floor(dtq * steer16 / 65536.0) + std::floor(dtq * std::round(-m[1] * 16384.0) / 65536.0)) / 65536.0;
-  {
+  if (!in.direct) {
     double want = std::clamp(double(in.pitch), -1.0, 1.0), step = 4.0 * dt;
     if (std::fabs(want) < 0.01) s.pitchAxis = s.pitchAxis > 0 ? std::max(0.0, s.pitchAxis - step) : std::min(0.0, s.pitchAxis + step);
     else {
@@ -109,8 +124,10 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
   }
   // DX input +0x4000 = nose up (emulator: forward.y = m[7] rises, tests/physics_tests.cpp)
   double pitchTerm = std::floor(dtq * (s.pitchAxis * 0x4000) / 65536.0) / 65536.0;
-  double yawGain = double(p.f5) / 16384.0;
-  double pitchGain = double(p.f4) / 16384.0;
+  // steering damage: gains lose 0x51*[rec+0x2E]>>16 (0x51 = 81 per damage point), RaceSlotMove 0x51E0D
+  const double dmgGain = 81.0 * s.damageB / 16384.0;
+  double yawGain = double(p.f5) / 16384.0 - dmgGain;
+  double pitchGain = double(p.f4) / 16384.0 - dmgGain;
   double ang_pitch = pitchTerm * pitchGain;
   if (m[7] > 0.8125 && ang_pitch >= 0) ang_pitch = 0;
   if (m[7] < -0.8125 && ang_pitch < 0) ang_pitch = 0;
@@ -134,7 +151,23 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
 // direction CONFIRMED against the emulator: 0x3BD82 = cos(0x3000)*heading_tangent + sin(0x3000)*normal):
 //   speed *= 0.75;  slide += unit(...) * speed;  then RaceSlotHover recomputes the velocity.
 // Not ported: effects/sound, RaceSlotDamage(0x20000, 0x10000) and the "second hit while [+0x12] != 0" explosion branch.
+void shipDamage(ShipState& s, double a, double b) {  // RaceSlotDamage 0x52035 (units: 1.0 = 0x10000)
+  if (s.invuln > 0) { a = b = 0; }
+  else if (a != 0 || b != 0) s.invuln = 3.0;  // [slot+0x24] = 0xBB8 ms
+  const double na = std::max(0.0, s.damageA + a), nb = std::max(0.0, s.damageB + b);
+  if (na > 100.0 || nb > 100.0) return;  // over the limit: only effects, nothing is stored (0x520F8..0x52189)
+  s.damageA = na;
+  s.damageB = nb;
+}
+
 void shipHitResponse(ShipState& s, const double n[3], const double heading[3]) {
+  if (s.recentHit > 0) {  // second wall hit within 0x190 ms: the ship is wrecked (0x50AE0..0x50B30)
+    s.wrecked = true;
+    s.slide[0] = s.slide[1] = s.slide[2] = 0;
+    s.speed *= 0.5;  // 0x3E8F2 is given speed/2
+    return;
+  }
+  s.recentHit = 0.4;
   const double ang = 0x3000 / 65536.0 * kTau;
   const double hn = heading[0] * n[0] + heading[1] * n[1] + heading[2] * n[2];
   double tg[3] = {heading[0] - n[0] * hn, heading[1] - n[1] * hn, heading[2] - n[2] * hn};
@@ -147,6 +180,7 @@ void shipHitResponse(ShipState& s, const double n[3], const double heading[3]) {
   }
   s.speed *= 0.75;
   for (int i = 0; i < 3; ++i) s.slide[i] += u[i] * s.speed;
+  shipDamage(s, 2.0, 1.0);
 }
 
 void setShipBoxFromMesh(ShipState& s, const Mesh& mesh) {
@@ -162,9 +196,9 @@ void setShipBoxFromMesh(ShipState& s, const Mesh& mesh) {
   s.hasBox = true;
 }
 
-void stepShip(ShipState& s, const ShipInput& in, double dt, const ShipParams& p, const Scene& scene, const ShipSimConfig& cfg) {
+void moveShip(ShipState& s, double dt, const Scene& scene, const ShipSimConfig& cfg) {
   double v[3];
-  stepShipDynamics(s, in, dt, p, v);
+  shipVelocity(s, v);
   const double len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) * dt;
   if (s.hasBox && !cfg.assist) {
     if (len <= 0) return;
@@ -174,7 +208,7 @@ void stepShip(ShipState& s, const ShipInput& in, double dt, const ShipParams& p,
     const bool insideNow = shipBoxInsideTrack(scene, pos, s.m, s.boxLo, s.boxHi);
     double np[3] = {pos[0], pos[1], pos[2]};
     double tr = dt;
-    s.hitCooldown = std::max(0.0, s.hitCooldown - dt);
+    s.pairCooldown = std::max(0.0, s.pairCooldown - dt);
     for (int iter = 0; iter < 6 && tr > 1e-9; ++iter) {
       double vv[3];
       shipVelocity(s, vv);
@@ -187,13 +221,7 @@ void stepShip(ShipState& s, const ShipInput& in, double dt, const ShipParams& p,
       if (!h.hit) break;
       ++s.hits;
       tr *= 1.0 - h.dist / l;
-      // one message per original frame (~60/s): the original sends it once per CollideStep, not per sub-step
-      if (s.hitCooldown <= 0) {
-        shipHitResponse(s, h.n, dir);
-        s.hitCooldown = 1.0 / 60.0;
-      } else {
-        tr = 0;  // blocked: remaining motion is lost this step
-      }
+      shipHitResponse(s, h.n, dir);  // message 0x107 on every contact event, as in CollideStep
     }
     if (insideNow && !shipBoxInsideTrack(scene, np, s.m, s.boxLo, s.boxHi)) {
       s.speed *= 0.5;  // PLACEHOLDER: the box would leave the piece graph, stay put
@@ -214,6 +242,149 @@ void stepShip(ShipState& s, const ShipInput& in, double dt, const ShipParams& p,
   } else {
     // No ground ahead: the edge of the track acts as a wall (PLACEHOLDER, not original collision).
     s.speed *= 0.35;
+  }
+}
+
+void stepShip(ShipState& s, const ShipInput& in, double dt, const ShipParams& p, const Scene& scene, const ShipSimConfig& cfg) {
+  double v[3];
+  stepShipDynamics(s, in, dt, p, v);
+  moveShip(s, dt, scene, cfg);
+}
+
+namespace {
+// Separating-axis test of two oriented boxes (model-space lo/hi, rows of M = right/up/forward in world).
+bool obbOverlap(const double pa[3], const double* Ma, const double* loA, const double* hiA, const double pb[3], const double* Mb,
+                const double* loB, const double* hiB) {
+  double ca[3], cb[3], ha[3], hb[3];
+  for (int i = 0; i < 3; ++i) {
+    const double la = (loA[0] + hiA[0]) * 0.5, ua = (loA[1] + hiA[1]) * 0.5, wa = (loA[2] + hiA[2]) * 0.5;
+    const double lb = (loB[0] + hiB[0]) * 0.5, ub = (loB[1] + hiB[1]) * 0.5, wb = (loB[2] + hiB[2]) * 0.5;
+    ca[i] = pa[i] + Ma[i] * la + Ma[3 + i] * ua + Ma[6 + i] * wa;
+    cb[i] = pb[i] + Mb[i] * lb + Mb[3 + i] * ub + Mb[6 + i] * wb;
+    ha[i] = (hiA[i] - loA[i]) * 0.5;
+    hb[i] = (hiB[i] - loB[i]) * 0.5;
+  }
+  const double d[3] = {cb[0] - ca[0], cb[1] - ca[1], cb[2] - ca[2]};
+  auto test = [&](const double ax[3]) {
+    const double l = std::sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+    if (l < 1e-9) return true;  // degenerate axis: cannot separate
+    double ra = 0, rb = 0, dd = 0;
+    for (int k = 0; k < 3; ++k) {
+      ra += ha[k] * std::fabs(Ma[3 * k] * ax[0] + Ma[3 * k + 1] * ax[1] + Ma[3 * k + 2] * ax[2]);
+      rb += hb[k] * std::fabs(Mb[3 * k] * ax[0] + Mb[3 * k + 1] * ax[1] + Mb[3 * k + 2] * ax[2]);
+    }
+    dd = std::fabs(d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2]);
+    return dd <= ra + rb;  // ra, rb, dd all scale with |ax|
+  };
+  for (int k = 0; k < 3; ++k) {
+    if (!test(Ma + 3 * k) || !test(Mb + 3 * k)) return false;
+    for (int j = 0; j < 3; ++j) {
+      const double* a = Ma + 3 * k;
+      const double* b = Mb + 3 * j;
+      const double c[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+      if (!test(c)) return false;
+    }
+  }
+  return true;
+}
+
+// First fraction f in [0,1] at which the boxes overlap when A travels dA and B dB (-1 = never).
+double firstOverlap(const ShipState& a, const ShipState& b, const double dA[3], const double dB[3]) {
+  constexpr int kSteps = 256;
+  auto at = [&](double f) {
+    const double pa[3] = {a.x + dA[0] * f, a.y + dA[1] * f, a.z + dA[2] * f};
+    const double pb[3] = {b.x + dB[0] * f, b.y + dB[1] * f, b.z + dB[2] * f};
+    return obbOverlap(pa, a.m, a.boxLo, a.boxHi, pb, b.m, b.boxLo, b.boxHi);
+  };
+  if (at(0)) return -1;  // boxes already overlapping: the original reports no collision (oracle, tools/re/ss_emu.py)
+  double prev = 0;
+  for (int k = 1; k <= kSteps; ++k) {
+    const double f = double(k) / kSteps;
+    if (at(f)) {
+      double lo = prev, hi = f;
+      for (int it = 0; it < 12; ++it) { const double mid = (lo + hi) * 0.5; if (at(mid)) hi = mid; else lo = mid; }
+      return hi;
+    }
+    prev = f;
+  }
+  return -1;
+}
+}  // namespace
+
+bool shipBoxesOverlap(const ShipState& a, const ShipState& b) {
+  const double pa[3] = {a.x, a.y, a.z}, pb[3] = {b.x, b.y, b.z};
+  return obbOverlap(pa, a.m, a.boxLo, a.boxHi, pb, b.m, b.boxLo, b.boxHi);
+}
+
+double shipPairTimeOfImpact(const ShipState& a, const ShipState& b, const double dA[3], const double dB[3]) { return firstOverlap(a, b, dA, dB); }
+
+// Slot-vs-slot collision (CollideStep -> 0x15A46 -> 0x14620 -> 0x149A1/0x14A16, message 0x106 -> RaceSlotControl 0x509E6):
+// the contact normal is NOT geometric: B gets unit(vA - vB), A the opposite, and the relative speed |vA - vB| rides along.
+// Each ship's handler (CONFIRMED by reading the code): slide += normal * max(1.5*rel, 0x37DC); a ship flagged as the
+// rammer (`1656B`: the collision also happens with the other ship standing still) loses speed (*0.625).
+// The narrow phase is a plain SAT test on the ART boxes instead of the original's contact generator (0x16454...).
+void shipPairResponse(ShipState& a, ShipState& b, bool aRams, bool bRams) {
+  double va[3], vb[3];
+  shipVelocity(a, va);
+  shipVelocity(b, vb);
+  const double rel[3] = {va[0] - vb[0], va[1] - vb[1], va[2] - vb[2]};
+  const double rl = std::sqrt(rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2]);
+  if (rl < 1e-6) return;
+  const double mag = std::max(1.5 * rl, double(0x37dc));
+  for (int i = 0; i < 3; ++i) {
+    b.slide[i] += rel[i] / rl * mag;
+    a.slide[i] -= rel[i] / rl * mag;
+  }
+  if (aRams) a.speed *= 0.625;
+  if (bRams) b.speed *= 0.625;
+  shipDamage(a, aRams ? 2.0 : 0.0, aRams ? 6.0 : 4.0);  // RaceSlotDamage(0 [+0x20000], 0x40000 [+0x20000]) 0x50A20..0x50A50
+  shipDamage(b, bRams ? 2.0 : 0.0, bRams ? 6.0 : 4.0);
+}
+
+void resolveShipPairs(std::vector<ShipState*>& ships, const std::vector<std::array<double, 3>>& startPos, double dt, const Scene& scene,
+                      const ShipSimConfig& cfg) {
+  // CollideStep (0x137A2) loop: find the earliest slot-slot contact of the remaining time, advance every slot to it, send
+  // the messages, then continue with the remaining time and the new velocities (0x1446B / jump back to 0x137CA).
+  std::vector<std::array<double, 3>> start = startPos;
+  double remaining = dt;
+  for (int pass = 0; pass < 4 && remaining > 1e-9; ++pass) {
+    double bestF = 2;
+    size_t bi = 0, bj = 0;
+    bool aRams = false, bRams = false;
+    for (size_t i = 0; i < ships.size(); ++i)
+      for (size_t j = i + 1; j < ships.size(); ++j) {
+        ShipState& a = *ships[i];
+        ShipState& b = *ships[j];
+        if (!a.hasBox || !b.hasBox || a.pairCooldown > 0 || b.pairCooldown > 0) continue;
+        const double dA[3] = {a.x - start[i][0], a.y - start[i][1], a.z - start[i][2]};
+        const double dB[3] = {b.x - start[j][0], b.y - start[j][1], b.z - start[j][2]};
+        ShipState a0 = a, b0 = b;
+        a0.x = start[i][0]; a0.y = start[i][1]; a0.z = start[i][2];
+        b0.x = start[j][0]; b0.y = start[j][1]; b0.z = start[j][2];
+        const double f = firstOverlap(a0, b0, dA, dB);
+        if (f < 0 || f >= bestF) continue;
+        const double zero[3] = {0, 0, 0};
+        bestF = f; bi = i; bj = j;
+        aRams = firstOverlap(a0, b0, dA, zero) >= 0;  // 0x1656B: A alone reaches B
+        bRams = firstOverlap(a0, b0, zero, dB) >= 0;
+        if (!aRams && !bRams) aRams = bRams = true;
+      }
+    if (bestF > 1) break;
+    // advance every ship to the contact instant
+    for (size_t k = 0; k < ships.size(); ++k) {
+      ShipState& s = *ships[k];
+      s.x = start[k][0] + (s.x - start[k][0]) * bestF;
+      s.y = start[k][1] + (s.y - start[k][1]) * bestF;
+      s.z = start[k][2] + (s.z - start[k][2]) * bestF;
+      start[k] = {s.x, s.y, s.z};
+    }
+    shipPairResponse(*ships[bi], *ships[bj], aRams, bRams);
+    ships[bi]->pairCooldown = ships[bj]->pairCooldown = 1.0 / 60.0;
+    ++ships[bi]->hits; ++ships[bj]->hits;
+    remaining *= 1.0 - bestF;
+    // carry on with the remaining time and the new velocities
+    for (ShipState* s : ships)
+      if (s->hasBox) moveShip(*s, remaining, scene, cfg);
   }
 }
 

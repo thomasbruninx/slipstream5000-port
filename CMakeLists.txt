@@ -19,7 +19,8 @@ add_library(slipstream_core STATIC
   src/game/panel_detail.cpp
   src/game/ship_sim.cpp
   src/game/ship_collide.cpp
-  src/game/doors.cpp)
+  src/game/doors.cpp
+  src/game/ship_ai.cpp)
 target_include_directories(slipstream_core PUBLIC src)
 target_compile_options(slipstream_core PRIVATE -Wall -Wextra)
 

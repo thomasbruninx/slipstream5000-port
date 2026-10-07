@@ -109,6 +109,58 @@ state flips at both ends (no pause). The panel is the Dummy quad's rectangle tex
 (105x46 texture, 197x154 in Egypt) drawn with the piece. The closed position leaves half of the Dummy quad's span
 covered (it is the midpoint of C and the open position, as decoded). Ship-vs-door (collision cube +-0x7A0) is not ported.
 
+### Ship-vs-ship (STRONGLY INFERRED structure, response CONFIRMED by reading; narrow phase substituted)
+* `CollideStep` -> `0x15A46` loops over slot pairs whose collider has flag 2 and calls `0x14620`: broad phase =
+  centre distance <= extent(A)+extent(B)+travelled(A)+travelled(B) (`[slot+0x24]` extents and `[slot+0]` distances),
+  then a cube-vs-cube contact generator (`0x1497B` = `0x16454, 0x14B6C, 0x14DC0, 0x15008, 0x1525C, 0x156F8, 0x154A4`,
+  not decoded). `0x149A1` keeps the earliest pair (fraction `[0x12FAA]`), `0x14A16` writes the records: **normal =
+  unit(vA - vB) for B and its negation for A (not geometric)**, `+0x3C` = |vA - vB|, contact point `+0x2C`.
+  `0x1656B` decides who is the rammer (`+0x38 = -1`): with one slot treated as standing, the one whose own motion
+  still produces the collision; if neither alone does, both. `0x1453C` sends message **0x106** to each ship.
+* Ship handler (`RaceSlotControl` 0x50832..0x50A57; bonuses are the other branch of 0x106, tested through `0x26FB1`
+  bit 0): rammer: speed *= 0.625; `slide += normal * max(1.5*|rel|, 0x37DC)`; RaceSlotHover; `RaceSlotDamage(0x40000
+  (+0x20000 for the rammer), ...)`. Weapon/bonus effects and sounds are skipped.
+* **Contact generator checked against the original (oracle `tools/re/ss_emu.py`, CONFIRMED equivalent for
+  separated boxes).** The emulator runs `0x14620` on two synthetic collide slots (face-point pool `0x133BE`
+  initialised by hand). Result: for boxes that do not overlap at the start the carry flag/`[0x13220]` equal the plain
+  time of impact of the two oriented boxes (ART box, rotation fixed during the frame): 193 of 193 random separated
+  configurations agree on hit/no-hit and on the contact distance within 6 units (integer rounding), e.g. two
+  5361-half-length boxes 11500 apart report 778 = 11500 - 10722. Boxes that already overlap are reported as no contact in
+  ~87 % of the cases (14 of 107 random overlapping starts still produce a hit through feature crossings); the port
+  treats "overlapping at the start" as no contact. The seven routines of `0x1497B` were therefore not transcribed; they
+  implement the same sweep with face/edge tests on 16.16 integers. (The comparison also caught a scaling bug in the
+  port's first SAT test.)
+* Port: `resolveShipPairs`/`shipPairResponse` (`ship_sim.cpp`): the earliest pair contact of the remaining time is
+  found (SAT sweep, 256 samples + bisection), every ship is advanced to it, the 0x106 response is applied, then all
+  ships continue with the remaining time and new velocities (up to 4 passes, like the CollideStep loop). Other grid
+  ships are simulated so the player can shove them.
+
+### Damage (CONFIRMED from `RaceSlotDamage` 0x52035 / RaceSlotHover / RaceSlotMove; checked with the oracle)
+Two accumulators in the ship record, 16.16 (the port uses 0..100): **A (`+0x2A`) lowers the speed**: the hover factor
+term `0x1000 - 0x28*A` shrinks (at 50: 0.9686 -> 0.8275); **B (`+0x2E`) degrades steering**: both rotation gains lose
+`0x51*B>>16`. `RaceSlotDamage(a, b)`: ignored while the 3 s immunity (`slot data +0x24 = 0xBB8`) runs; any non-zero damage
+starts it; values are clamped at 0; if a sum exceeds 100 only effects fire and nothing is stored. Sources: wall hit
+(2.0, 1.0), ship contact (0, 4.0; the rammer 2.0, 6.0). Port: `shipDamage`, unit-tested (oracle: damage 50/50 -> speed 54246,
+matrix as the emulator). The wall-hit "second hit within 0x190 ms" branch is implemented: the ship is wrecked (tumbling
+debris, no controls; the original hands it to the debris mover `0x3E9F5`, which follows the track centre line - not
+ported) and half its speed is kept.
+
+### AI ships (STRONGLY INFERRED from `RaceAIControl` 0x5135E / 0x51688; behaviour checked by running whole races headless)
+The path is a chain of **nodes** in the TRD (list offset at header +8, count, 0x32 bytes each: +0 next, +2 previous,
++4 alternative (refuel) route, +8 straightness (0x8000 = no turn), +0xC position, +0x18 width); every piece entry points
+to its node (`+0x1E`). Per frame (port: `ship_ai.cpp`): the target node is the node of the piece the ship is in, or the
+next one when closer than 0x800 (estimated length `0x21F87` = max + (mid+min)/4); the look-ahead threshold is
+`0x5F50 + speed*0x1E8/0x2CB/4 + 2.5*width`; when the node is closer the node window advances; the aim point lies on the
+segment to the previous node at `(dist - threshold)` from the node (`0x517E7`); the direction is rotated into the
+ship's *bank-free* frame (matrix with the roll terms zeroed, re-orthonormalised) and `steer = clamp(right*0x4000,
++-0x800)*8`, `pitch = clamp(up*0x4000, +-0x800)*8` (raw axes, no keyboard ramp); throttle when the target speed >= speed.
+Target speed = `min` of: `minSpeed[track] + speedRange[track]*(0x4000 - curvature)>>14` (tables at 0x5027A/0x502A2, read
+from the user's exe; curvature = sum of `0x8000 - straightness` over the next 0x5F500 units; only when the node is within
+the ship's `f6` = 244000) and 214500 (AI cap `0x345E4`). Damaged ships (A or B > 50) take the alternative route.
+Headless races: 9 AI ships complete laps on all ten tracks at 214-230k u/s with few contacts. Not ported: lateral
+avoidance of other slots (record `+0x42/+0x46`, neighbours `0x3B6D0`), doors (`TrackSlotFindDoor`), random branch choice,
+rubber-band caps, pit logic.
+
 ### Not done
 * Ship-vs-ship collision (`0x14620`, OBB solver), damage and the explosion branch of the wall-hit handler.
 * Pitch coupling to the ground, damage (`RaceSlotDamage`), boost/slow timers (+0x3E/+0x40), AI (`RaceAIControl`).

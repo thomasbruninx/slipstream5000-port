@@ -37,4 +37,6 @@ A window/input/loop ✅ · B display original asset ✅ · C free-camera track v
 * DONE (oracle-checked): ship speed, steering/bank/yaw, pitch, drag, speed->velocity (`ship_sim.cpp`, `tests/physics_tests.cpp`).
 * DONE (geometry and response decoded and ported; damage/explosion not): ship-vs-track polygon sweep (`ship_collide.cpp`), controls E/Q pitch, F8 = hover assist.
 * DONE (decoded, visual only): sliding doors (`doors.cpp`).
-* OPEN: damage + explosion branch, ship-vs-ship (0x14620), ship-vs-door cube, damage/boost timers, AI.
+* DONE (oracle-verified): ship-vs-ship contact (TOI), frame re-simulation, damage model, wreck on a second hit.
+* DONE (decoded, behaviour-checked): AI ships (`ship_ai.cpp`), F9 toggle.
+* OPEN: AI avoidance/doors/pit, debris mover for wrecks, effects/sound, lap logic, respawn (0x14620), ship-vs-door cube, damage/boost timers, AI.

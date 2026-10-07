@@ -170,6 +170,7 @@ int main(int argc, char** argv) {
             case SDLK_F6: app.togglePainter(); break;
             case SDLK_F7: app.toggleAllScenery(); break;
             case SDLK_F8: app.toggleAssist(); break;
+            case SDLK_F9: app.toggleAI(); break;
             case SDLK_C:
               if (e.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) copyDebug(app);
               break;

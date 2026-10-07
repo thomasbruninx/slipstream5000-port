@@ -123,6 +123,7 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
   }
 
   std::vector<uint32_t> groupOffsets;
+  std::vector<uint32_t> pieceNodeOff;
   // ---- TRD: pieces (placement of TRC records) and scenery shape instances ----
   {
     R r{*trdB};
@@ -148,6 +149,7 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
           tp.record = ri;
           tp.pos = {r.s32(e + 0x12), r.s32(e + 0x16), r.s32(e + 0x1a)};
           tp.group = g;
+          pieceNodeOff.push_back(r.u16(e + 0x1e));
           t.pieces.push_back(tp);
         }
       }
@@ -208,6 +210,32 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
     }
     t.groupCount = int(ng);
     if (!r.ok) return fail("truncated TRD");
+  }
+  // ---- TRD path nodes ----
+  {
+    R r{*trdB};
+    size_t lo = r.u16(8);
+    size_t n = lo ? r.u16(lo) : 0;
+    std::map<uint32_t, int> at;
+    for (size_t i = 0; i < n; ++i) at[uint32_t(lo + 2 + 0x32 * i)] = int(i);
+    for (size_t i = 0; i < n && r.ok; ++i) {
+      size_t o = lo + 2 + 0x32 * i;
+      TrackNode nd;
+      nd.offset = uint32_t(o);
+      auto idx = [&](uint32_t off) { auto it = at.find(off); return it == at.end() ? -1 : it->second; };
+      nd.next = idx(r.u16(o));
+      nd.prev = idx(r.u16(o + 2));
+      nd.alt = idx(r.u16(o + 4));
+      nd.straight = r.u16(o + 8);
+      nd.pos = {r.s32(o + 0xc), r.s32(o + 0x10), r.s32(o + 0x14)};
+      nd.width = r.s32(o + 0x18);
+      t.nodes.push_back(nd);
+    }
+    if (!r.ok) t.nodes.clear();
+    for (size_t i = 0; i < t.pieces.size() && i < pieceNodeOff.size(); ++i) {
+      auto it = at.find(pieceNodeOff[i]);
+      t.pieces[i].node = it == at.end() ? -1 : it->second;
+    }
   }
   // ---- TRK BSP (needs TRD group offsets) ----
   {

@@ -282,3 +282,12 @@ Still open: lighting routine `0x3F2C8` (colour accuracy), `[33EF0]==0x10` class 
 
 ## Session: collision response decoded
 Collide-slot type 3 -> `0x145B6` -> `SlotSendMessage(0x107)` -> ship handler 0x50A64: speed*0.75, slide velocity += speed * U, U = 67.5 deg from the surface towards the normal (`0x3BD82`, emulator-checked), then RaceSlotHover/RaceSlotDamage. Remaining frame time continues with the new velocity (no sliding along the plane). The `[+0x12]` second-hit explosion branch is documented but not ported. Port: `shipHitResponse`, `stepShip` sub-step loop; a 30 s straight run on Chicago now bounces along the track instead of sticking.
+
+## Session: ship-to-ship collision
+Decoded `0x15A46/0x14620/0x149A1/0x14A16/0x1656B/0x1453C` and the ship's 0x106 handler (0x50832..0x50A57): normals are relative-velocity based, not geometric; each ship is pushed by `max(1.5*|rel|, 0x37DC)` along the other's relative velocity, the rammer loses 37.5 % speed. The cube contact generator (0x16454, 0x14B6C, 0x14DC0, 0x15008, 0x1525C, 0x156F8, 0x154A4) was NOT decoded; the port uses a SAT box test. Ported as `resolveShipPairs`; verified in a headless run (player shoves the start grid, cascade of pushes) and by a unit test of the response numbers.
+
+## Session: contact generator oracle, frame re-simulation, damage, wrecks, AI
+* `tools/re/ss_emu.py` runs the original `0x14620` on two synthetic slots (needs the face-point pool of `0x133BE`). 193/193 random separated box pairs agree with the port's SAT time of impact (error <= 6 units); the harness exposed a scaling bug in the first port version. Overlapping starts are mostly "no contact" in the original.
+* `resolveShipPairs` now follows the CollideStep loop (advance all to the earliest contact, respond, continue the remaining time).
+* Damage model decoded (RaceSlotDamage + its consumers) and ported; second wall hit within 0.4 s wrecks the ship.
+* AI decoded and ported (node chain in the TRD, see simulation.md); `Track::nodes`, `TrackPiece::node`, `ship_ai.cpp`; `F9` toggles the AI ships in the viewer. Found: `ShipParams::f6` (= 244000) is the AI's look-at-curvature distance, the 0x502D0 table is just the parameter-block pointer table.

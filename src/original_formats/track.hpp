@@ -31,7 +31,15 @@ struct PieceLink {  // TRD piece entry +4/+8/+0xC: neighbour piece reached throu
   uint32_t pieceOffset = 0;  // TRD offset of the neighbour entry (0 = none)
   uint32_t portalOffset = 0; // TRC offset of the portal polygon in this piece's record
 };
+struct TrackNode {  // path node of the racing line (TRD node list, header +8; 0x32 bytes each; used by the AI, 0x3BEA2)
+  uint32_t offset = 0;
+  int next = -1, prev = -1, alt = -1;  // +0 next, +2 previous, +4 alternative route (refuel branch)
+  Vec3i pos;                         // +0xC
+  int32_t width = 0;                 // +0x18
+  uint16_t straight = 0x8000;        // +8: 0x8000 = no turn ahead (0x351A4 sums 0x8000 - this)
+};
 struct TrackPiece {
+  int node = -1;               // TRD entry +0x1E: path node of this piece
   uint32_t trdOffset = 0;
   PieceLink links[3];
   int record = -1;
@@ -80,6 +88,7 @@ struct Track {
   std::vector<TrackRecord> records;
   std::vector<TrackPiece> pieces;
   std::vector<SceneryInstance> scenery;
+  std::vector<TrackNode> nodes;
   std::vector<BspNode> bsp;   // bsp[0] is the root (first TRK cell record)
   int groupCount = 0;
   std::vector<std::vector<GroupTreeNode>> groupTrees;  // per group; node 0 is the root
