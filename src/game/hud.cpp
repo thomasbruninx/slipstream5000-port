@@ -205,7 +205,7 @@ void Hud::draw(uint32_t* fb, int w, int h, const HudState& st, const HudAssets& 
   if (st.finishedPosition > 0) c.textCentered(a.time, "Finished Position " + std::to_string(st.finishedPosition), 0, 319, 13, 0xFE);
   // sights (0x5C234): crosshair for lock capable weapons, flashing marker on the locked ship
   if (st.canLock) {
-    c.blit(a.nsight, st.centerX - 14, st.centerY - 11, transparentOf(a.nsight));
+    if (st.cockpit) c.blit(a.nsight, st.centerX - 14, st.centerY - 11, transparentOf(a.nsight));  // the crosshair only makes sense along the nose: hidden in the chase views
     if (st.lockVisible) {
       const int k = (int(st.time * 12.0) & 1);
       c.blit(a.tsight[k], int(st.lockX) - 6, int(st.lockY) - 6, transparentOf(a.tsight[k]));
