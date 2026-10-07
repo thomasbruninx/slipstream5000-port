@@ -77,6 +77,7 @@ class ViewerApp {
   std::string status_;
   bool showAllScenery_ = std::getenv("SLIP_ALLSCENERY") != nullptr;  // ignore the [0x33EEC] far-scenery cull (F7)
   int cullOverride_ = -1;  // -1 automatic, 0/1 forced by Tab
+  double animSeconds_ = std::getenv("SLIP_TIME") ? std::atof(std::getenv("SLIP_TIME")) : 0.0;  // animation clock for the flashing lights
   bool painter_ = !std::getenv("SLIP_NOPAINTER");  // original back-to-front BSP/painter order (F6 toggles)
   void renderTrackPainter(const MeshTransform& xf);
   bool useVisMask_ = !std::getenv("SLIP_NOVIS");  // original per-record visibility classes (F5 toggles)

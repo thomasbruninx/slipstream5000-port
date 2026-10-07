@@ -84,7 +84,9 @@ struct Scene {
   Palette palette;
   std::vector<Texture> textures;
   std::vector<SurfaceMaterial> materials;
-  std::array<PanelDetail, 16> panelDetails;
+  std::array<PanelDetail, 28> panelDetails;
+  int sdOrangeMaterial = -1, sdFloorLightMaterial = -1, sdBlueMaterial = -1, sdRoadLineMaterial = -1;
+  int sdCageMaterial = -1;
   int sdYellowMaterial = -1;  // "SDYellow" (colour of the floor border polygons)  // read from the user's executable
   std::vector<Billboard> billboards;
   Mesh track;                         // world coordinates minus `origin`

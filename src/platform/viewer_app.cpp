@@ -168,6 +168,7 @@ void ViewerApp::toggleDrive() {
 
 void ViewerApp::update(double dt, const InputState& in) {
   if (dt > 0) fpsAvg_ = fpsAvg_ * 0.9 + (1.0 / dt) * 0.1;
+  if (dt > 0 && dt < 1.0) animSeconds_ += dt;
   if (mode_ == AppMode::Track && scene_) {
     if (driving_) {
       simAccum_ += dt;
@@ -244,6 +245,7 @@ void ViewerApp::render() {
   // The original always culls back-facing track polygons (0x3948C, 0x193FF); legacy mode only culls while driving.
   if (std::getenv("SLIP_NOCULL")) cullOverride_ = 0;
   renderer_.cullBackfaces = cullOverride_ >= 0 ? cullOverride_ != 0 : (mode_ == AppMode::Track && (painter_ || driving_));
+  renderer_.animTimer = uint32_t(animSeconds_ * 16384.0);
   renderer_.portalCulling = useVisMask_ && !std::getenv("SLIP_NOPORTAL");
   if (mode_ == AppMode::Track) renderer_.computePortalVisibility(*scene_); else renderer_.portalCulling = false;
   renderer_.visMask = (mode_ == AppMode::Track && useVisMask_) ? scene_->visMaskAt(cam_.pos[0], cam_.pos[1], cam_.pos[2]) : 0xFFFF;

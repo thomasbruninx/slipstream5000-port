@@ -335,6 +335,11 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
 
   s->panelDetails = loadPanelDetails(data);
   s->sdYellowMaterial = b.mats.find("SDYellow");
+  s->sdCageMaterial = b.mats.find("SDCage");
+  s->sdOrangeMaterial = b.mats.find("SDOrangeLight");
+  s->sdFloorLightMaterial = b.mats.find("SDFloorLight");
+  s->sdBlueMaterial = b.mats.find("SDBlueLight");
+  s->sdRoadLineMaterial = b.mats.find("SDRoadLine");
   s->groupTrees = t.groupTrees;  // planes come straight from the group points (see track.cpp)
 
   // --- ship models (10 ART files): body shape of the root node plus first shape of each child ---

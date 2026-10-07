@@ -60,6 +60,7 @@ class SoftwareRenderer {
   void setSceneryWindow(const WinRect* w) { sceneryWin_ = w; }  // clip window for polygons that belong to no piece
   void setPieceWindow(size_t i, const WinRect& w) { if (i < pieceWin_.size()) pieceWin_[i] = w; }
   const std::vector<WinRect>& pieceWindows() const { return pieceWin_; }
+  uint32_t animTimer = 0;   // animation clock in 2.14 seconds ([0x3F078]); the viewer advances it every frame
   bool wireframe = false;
   bool cullBackfaces = false;  // uses the stored face normals (INFERRED that the original culls too)
   float farPlane = 9.0e6f;
@@ -75,6 +76,13 @@ class SoftwareRenderer {
   bool polyRect(const Scene& scene, const MeshPoly& p, const float cp[3], const WinRect& win, WinRect* out) const;
   // Flat-colour palette index of a polygon (original lighting law) and the panel-line detail drawn over it.
   int flatIndex(const SurfaceMaterial* mat, int upLight) const;
+  struct P3 { float x, y, z; };
+  void drawLine3D(P3 a, P3 b, uint32_t color);  // camera-space line, near-clipped, depth-tested against the current item
+  std::vector<VV> detailPoints(const PanelDetail& d, const std::vector<VV>& tv, const MeshPoly& p) const;
+  void fillIdxPoly(const Scene& scene, const SurfaceMaterial* mat, const std::vector<VV>& pts, const std::vector<uint16_t>& idx, int colorIdx);
+  void drawRoadFloor(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat);
+  void drawChase(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat);
+  void drawCageLines(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat);
   void drawFloorDetail(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat);
   void drawPanelLines(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat, int flatIdx);
   void addExtent(const Scene& scene, size_t piece, const float cp[3]);
