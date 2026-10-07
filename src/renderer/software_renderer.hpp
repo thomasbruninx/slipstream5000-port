@@ -13,6 +13,7 @@ struct Camera {
   double pos[3] = {0, 0, 0};
   float yaw = 0;     // radians, 0 = +z, positive turns towards +x
   float pitch = 0;   // radians, positive looks up (+y)
+  float roll = 0;    // radians, positive banks right (right wing down); the cockpit camera follows the ship's bank
   float fovY = 1.0f; // radians
   float nearPlane = 600.0f;
 };

@@ -27,13 +27,20 @@ void SoftwareRenderer::beginFrame(const Camera& cam, uint32_t sky, uint32_t grou
   up_[0] = fwd_[1] * right_[2] - fwd_[2] * right_[1];
   up_[1] = fwd_[2] * right_[0] - fwd_[0] * right_[2];
   up_[2] = fwd_[0] * right_[1] - fwd_[1] * right_[0];
+  if (cam.roll != 0) {  // bank: rotate right/up about the view axis
+    const float cr = std::cos(cam.roll), sr = std::sin(cam.roll);
+    for (int k = 0; k < 3; ++k) {
+      const float r0 = right_[k], u0 = up_[k];
+      right_[k] = r0 * cr - u0 * sr;
+      up_[k] = u0 * cr + r0 * sr;
+    }
+  }
   focal_ = (float(h_) * 0.5f) / std::tan(cam.fovY * 0.5f);
-  // simple two-colour backdrop split at the horizon
-  int horizon = int(h_ * 0.5f + std::tan(cam.pitch) * focal_);
-  horizon = std::clamp(horizon, 0, h_);
+  // two-colour backdrop split at the horizon: a pixel is sky when its view ray points above the horizontal plane
   for (int y = 0; y < h_; ++y) {
-    uint32_t c = y < horizon ? sky : ground;
-    std::fill_n(&color_[size_t(y) * size_t(w_)], w_, c);
+    const float a = fwd_[1] * focal_ + up_[1] * (float(h_) * 0.5f - (float(y) + 0.5f)), b = right_[1];
+    uint32_t* row = &color_[size_t(y) * size_t(w_)];
+    for (int x = 0; x < w_; ++x) row[x] = (a + b * (float(x) + 0.5f - float(w_) * 0.5f)) > 0 ? sky : ground;
   }
   std::fill(depth_.begin(), depth_.end(), 0.0f);
   std::fill(backdrop_.begin(), backdrop_.end(), uint8_t(0));

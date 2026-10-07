@@ -57,6 +57,7 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
     if (!opt.shape.empty() && shapes_[i] == withExt(opt.shape, ".SHP")) shapeIdx_ = int(i);
   for (size_t i = 0; i < sprites_.size(); ++i)
     if (!opt.sprite.empty() && sprites_[i] == withExt(opt.sprite, ".SPR")) spriteIdx_ = int(i);
+  cockpit_ = opt.cockpit;
   mode_ = opt.mode;
   track_ = std::clamp(opt.track, 1, 10);
   if (mode_ == AppMode::Track) {
@@ -397,6 +398,18 @@ void ViewerApp::update(double dt, const InputState& in) {
           if (!opt_.noMusic) audio_.playMusic(finishRank_ > 3 ? "LOSE.HMP" : "WIN.HMP", false);
         }
       }
+      if (cockpit_) {
+        // First person view (0x44F64): camera at the ship's 'head' reference point with the ship's full orientation (incl. bank).
+        const double* h = refPoints_[size_t(player_.ship)].head;
+        const double* m = player_.m;
+        for (int k = 0; k < 3; ++k) cam_.pos[k] = (&player_.x)[k] + m[k] * h[0] + m[3 + k] * h[1] + m[6 + k] * h[2];
+        cam_.yaw = float(std::atan2(m[6], m[8]));
+        cam_.pitch = float(std::asin(std::clamp(m[7], -1.0, 1.0)));
+        const double cy = std::cos(cam_.yaw), sy = std::sin(cam_.yaw), cp = std::cos(cam_.pitch), sp = std::sin(cam_.pitch);
+        const double r0[3] = {cy, 0, -sy}, u0[3] = {-sy * sp, cp, -cy * sp};  // unrolled basis for this yaw / pitch
+        cam_.roll = float(std::atan2(m[3] * r0[0] + m[4] * r0[1] + m[5] * r0[2], m[3] * u0[0] + m[4] * u0[1] + m[5] * u0[2]));
+      } else {
+      cam_.roll = 0;
       // chase camera
       double behind = 110000, above = 28000;
       double tx = player_.x - std::sin(player_.yaw) * behind, tz = player_.z - std::cos(player_.yaw) * behind;
@@ -409,7 +422,9 @@ void ViewerApp::update(double dt, const InputState& in) {
       while (dyaw < -kPi) dyaw += 2 * kPi;
       cam_.yaw += float(dyaw * k);
       cam_.pitch = -0.22f;
+      }
     } else {
+      cam_.roll = 0;
       cam_.yaw += in.lookDX;
       cam_.pitch = std::clamp(cam_.pitch - in.lookDY, -1.5f, 1.5f);
       double speed = (in.fast ? 3.0e6 : 5.0e5);
@@ -491,7 +506,7 @@ void ViewerApp::render() {
     }
     for (int i = 0; i < 10; ++i) {
       const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
-      if (scene_->shipMeshes[size_t(i)].polys.empty()) continue;
+      if (scene_->shipMeshes[size_t(i)].polys.empty() || (driving_ && cockpit_ && i == player_.ship)) continue;
       MeshTransform sx;
       sx.pos[0] = s.x; sx.pos[1] = s.y; sx.pos[2] = s.z;
       shipRenderMatrix(s, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
@@ -602,7 +617,7 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
   std::vector<std::vector<int>> shipsOnPiece(sc.pieceBoxes.size());
   std::vector<int> looseShips;
   for (int i = 0; i < 10; ++i) {
-    if (sc.shipMeshes[size_t(i)].polys.empty()) continue;
+    if (sc.shipMeshes[size_t(i)].polys.empty() || (driving_ && cockpit_ && i == player_.ship)) continue;  // no own ship from inside the cockpit
     const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
     const float p[3] = {float(s.x - sc.origin[0]), float(s.y - sc.origin[1]), float(s.z - sc.origin[2])};
     int best = -1;
@@ -753,7 +768,7 @@ std::vector<std::string> ViewerApp::hudLines() const {
       l.push_back(combatLine());
       std::snprintf(buf, sizeof buf, "damage engine %.0f%% steering %.0f%%  credits %d  projectiles %zu  pickups %zu", player_.damageA, player_.damageB, combat_.combat[size_t(player_.ship)].credits, combat_.projectiles.size(), combat_.pickups.size());
       l.push_back(buf);
-      l.push_back("W/S throttle/brake, A/D steer, E/Q nose up/down, F fire, X next weapon (booster: F switches it), Space = free cam");
+      l.push_back("W/S throttle/brake, A/D steer, E/Q nose up/down, F fire, X next weapon (booster: F switches it), V cockpit/chase view, Space = free cam");
       l.push_back(aiEnabled_ ? "AI ships racing (F9 = stop them)" : "AI off (F9)");
       l.push_back(simCfg_.assist ? "hover assist ON (F8): legacy floor following, no collision" : "original-style flight model (F8 = hover assist): manual pitch, polygon collision");
     } else {

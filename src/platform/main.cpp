@@ -33,6 +33,7 @@ static void usage() {
       "  --laps N            race length for the finish / result music (default 3)\n"
       "  --no-countdown      skip the 5 s start sequence\n"
       "  --weapons SPEC      player loadout, e.g. seeker:9,scrambler:9,booster:2 (default: the original's cheat loadout; 'none' = blaster only)\n"
+      "  --chase             start in the chase camera (V switches between cockpit and chase view)\n"
       "  --no-pickups        no bonus objects      --no-ai-weapons   the AI ships do not shoot      --no-voices   no pilot/announcer lines\n"
       "  --no-music          no music      --no-sfx   no sound effects     --no-audio   no sound at all\n"
       "  --volume V          master volume 0..1 (default 1)   --music-volume V (0.8)   --sfx-volume V (1)\n");
@@ -85,6 +86,7 @@ int main(int argc, char** argv) {
     else if (a == "--laps") opt.laps = std::max(1, std::atoi(next("--laps")));
     else if (a == "--no-countdown") opt.countdown = false;
     else if (a == "--weapons") opt.weapons = next("--weapons");
+    else if (a == "--chase") opt.cockpit = false;
     else if (a == "--no-pickups") opt.pickups = false;
     else if (a == "--no-ai-weapons") opt.aiWeapons = false;
     else if (a == "--no-voices") opt.voices = false;
@@ -179,6 +181,7 @@ int main(int argc, char** argv) {
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) app.toggleDrive();
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) app.cycleWeapon();
+          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_NORTH) app.toggleCamera();
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) app.nextItem(1);
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) app.nextItem(-1);
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) running = false;
@@ -203,6 +206,7 @@ int main(int argc, char** argv) {
             case SDLK_M: app.toggleMusic(); break;
             case SDLK_N: app.toggleSfx(); break;
             case SDLK_X: app.cycleWeapon(); break;
+            case SDLK_V: app.toggleCamera(); break;
             case SDLK_C:
               if (e.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) copyDebug(app);
               break;
