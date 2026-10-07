@@ -9,6 +9,7 @@ void PauseMenu::load(const GameData& data) {
   if (auto b = data.read("PAUSED.ST0"))
     for (const auto& [tag, text] : parseStringTable(*b))
       if (tag.size() == 4 && tag.compare(0, 3, "OPT") == 0 && tag[3] >= '1' && tag[3] <= '4') optMain_[tag[3] - '1'] = text;
+  optMain_[3] = "Exit Game";
   if (auto b = data.read("CONFIG.ST0"))
     for (const auto& [tag, text] : parseStringTable(*b)) {
       if (tag == "TITL") titleConfig_ = text;
