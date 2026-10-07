@@ -40,10 +40,10 @@ inline int panelIndex(int type) {
   switch (type) {  // cage / wire-grid types and light types
     case 0x01: return 24; case 0x1E: return 25; case 0x8F: return 26; case 0x90: return 27;
     case 0x80: return 14; case 0x81: return 15; case 0x82: return 16; case 0x84: return 17; case 0x85: return 18;
-    case 0x8C: return 19; case 0x8D: return 20; case 0x8E: return 21; case 0x91: return 22; case 0x92: return 23;
+    case 0x8C: return 19; case 0x8D: return 20; case 0x8E: return 21; case 0x91: return 22; case 0x92: return 23; case 0x93: return 28;
     default: return 0;
   }
 }
-std::array<PanelDetail, 28> loadPanelDetails(const GameData& data);
+std::array<PanelDetail, 32> loadPanelDetails(const GameData& data);
 
 }  // namespace slip

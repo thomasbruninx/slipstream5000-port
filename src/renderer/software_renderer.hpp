@@ -23,6 +23,14 @@ struct MeshTransform {
   float R[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 };
 
+// A mesh that casts a shadow onto up-facing track polygons (the ships). `piece` = track piece it stands on (-1 = none).
+struct ShadowCaster {
+  const Mesh* mesh = nullptr;
+  MeshTransform xf;
+  int piece = -1;
+  std::vector<Vec3> world;  // vertices relative to the scene origin, filled lazily per frame by the renderer
+};
+
 struct RenderStats {
   uint32_t polysSubmitted = 0, polysDrawn = 0, trisRastered = 0;
 };
@@ -61,6 +69,10 @@ class SoftwareRenderer {
   void setPieceWindow(size_t i, const WinRect& w) { if (i < pieceWin_.size()) pieceWin_[i] = w; }
   const std::vector<WinRect>& pieceWindows() const { return pieceWin_; }
   uint32_t animTimer = 0;   // animation clock in 2.14 seconds ([0x3F078]); the viewer advances it every frame
+  // Ship shadows (CONFIRMED mechanism, see docs/research-log.md): the caster's polygons are projected along the light
+  // direction (0,-1,0) onto the receiving polygon's plane and filled with the receiver's shadow colour inside it.
+  std::vector<ShadowCaster> shadowCasters;
+  bool shadows = true;
   bool wireframe = false;
   bool cullBackfaces = false;  // uses the stored face normals (INFERRED that the original culls too)
   float farPlane = 9.0e6f;
@@ -78,7 +90,8 @@ class SoftwareRenderer {
   int flatIndex(const SurfaceMaterial* mat, int upLight) const;
   struct P3 { float x, y, z; };
   void drawLine3D(P3 a, P3 b, uint32_t color);  // camera-space line, near-clipped, depth-tested against the current item
-  std::vector<VV> detailPoints(const PanelDetail& d, const std::vector<VV>& tv, const MeshPoly& p) const;
+  // `farBranch`: 0x3F3C4 above 0xA6CC0 units projects the base vertices and takes the midpoints in screen space (2D)
+  std::vector<VV> detailPoints(const PanelDetail& d, const std::vector<VV>& tv, const MeshPoly& p, bool allowScreenMid = false) const;
   void fillIdxPoly(const Scene& scene, const SurfaceMaterial* mat, const std::vector<VV>& pts, const std::vector<uint16_t>& idx, int colorIdx);
   void drawRoadFloor(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat);
   void drawChase(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat);
@@ -91,6 +104,10 @@ class SoftwareRenderer {
   int sx0_ = 0, sy0_ = 0, sx1_ = 0, sy1_ = 0;  // raster scissor (inclusive)
   int w_ = 0, h_ = 0;
   std::vector<uint32_t> color_;
+  std::vector<int32_t> recvBuf_;   // id of the receiver polygon (and sub-polygon) that last wrote the pixel, 0 = none
+  int recvId_ = 0;                 // id written by rasterTri for the polygon being drawn
+  int shadowRecv_ = 0;             // >0: rasterTri paints only pixels owned by this receiver, without depth test
+  void drawShadowsOn(const Scene& scene, const MeshPoly& rp, int baseId, int sub, int colorIdx);
   std::vector<int32_t> itemBuf_;   // painter's mode: id of the item that last wrote the pixel
   int curItem_ = -1;
   std::vector<uint8_t> backdrop_;  // per pixel: 0 track, 1 scenery, 2 backdrop scenery

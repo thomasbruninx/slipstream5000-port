@@ -35,6 +35,7 @@ struct Builder {
       t.w = spr->w;
       t.h = spr->h;
       t.index = std::move(spr->pixels);
+      t.transparent = spr->hdr8 == 0xFFFF ? -1 : int(spr->hdr8 & 0xFF);
       scene.textures.push_back(std::move(t));
       idx = int(scene.textures.size()) - 1;
       break;
@@ -56,6 +57,9 @@ struct Builder {
         int end = int(m.palStart) + range - ((1 << std::min(shift, 15)) - 1);
         sm.palEnd = uint8_t(std::clamp(end, 0, 255));
         sm.fallbackColor = m.raw[0x12];
+        sm.flag15 = int(int8_t(m.raw[0x15]));
+        sm.upperName = m.name;
+        for (auto& ch : sm.upperName) ch = char(std::toupper(static_cast<unsigned char>(ch)));
         sm.fixedLight = m.raw[0x16] | (m.raw[0x17] << 8);
         sm.ambientCoef = m.raw[0x18] | (m.raw[0x19] << 8);
         sm.diffuseCoef = m.raw[0x1A] | (m.raw[0x1B] << 8);
@@ -123,6 +127,36 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     m.polys.push_back(p);
   };
 
+  // Load-time polygon flag rewrite of TrackDrawSetup (0x3984E..0x39A6B), list A polygons only: the file's 0x80/0x08/0x40
+  // bits are cleared and re-derived, bit 1 is recomputed (surface faces the light = upward), bit 3 (0x08) marks the polygons that
+  // define the visible-extent window (cage / chase-light types, transparent textured slopes), bit 6 (0x40) = material "TRNC*".
+  auto deriveFlags = [&](const TrackPolygon& poly) -> uint16_t {
+    uint16_t f = poly.flags;
+    const int gm = b.globalMaterial(t.trcMaterials, poly.material);
+    const SurfaceMaterial* sm = gm >= 0 && size_t(gm) < s->materials.size() ? &s->materials[size_t(gm)] : nullptr;
+    const std::string nm = sm ? sm->upperName : std::string();
+    auto starts = [&](const char* pre) { return nm.rfind(pre, 0) == 0; };
+    f = uint16_t(f & ~0x80);
+    if (starts("WATE")) f |= 0x80;
+    f = uint16_t(f & ~(0x08 | 0x40));
+    const int type = f >> 8;
+    const bool skip = (f & 1) || (f & 4);
+    if (!skip) {
+      switch (type) { case 0x80: case 0x81: case 0x82: case 0x8F: case 0x8D: case 0x91: case 0x84: case 0x85: case 0x92: case 0x93: f |= 8; break; default: break; }
+    }
+    f = uint16_t(f & ~2);
+    bool toTrnc = true;
+    if (type != 0x8F && skip) toTrnc = false;
+    else if (type != 0x8F && (f & 8)) toTrnc = true;
+    else if (type != 0x8F && nm.rfind("TRNCHIDD", 0) == 0) toTrnc = true;
+    else {
+      if (poly.ny >= 316) f |= 2;  // faces the light (cos 0x3F00 in 2.14)
+      if (poly.ny <= 0x3000 && sm && sm->texture >= 0 && sm->flag15 == 0 && s->textures[size_t(sm->texture)].transparent >= 0) f |= 8;
+    }
+    if (toTrnc && starts("TRNC")) f |= 0x40;
+    return f;
+  };
+
   // --- track pieces ---
   s->piecePolys.assign(t.pieces.size(), {});
   for (auto& pc : t.pieces) s->pieceGroup.push_back(pc.group);
@@ -146,7 +180,7 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
       addPoly(s->track, vs, poly.uv, b.globalMaterial(t.trcMaterials, poly.material), Builder::unitNormal(poly.nx, poly.ny, poly.nz));
       s->track.polys.back().vis = rec.visFlags;
       s->track.polys.back().piece = int32_t(pi);
-      s->track.polys.back().pflags = poly.flags;
+      s->track.polys.back().pflags = poly.list == 0 ? deriveFlags(poly) : poly.flags;
       if (poly.uv.empty() && panelIndex(poly.flags >> 8)) s->track.polys.back().detail = uint8_t(panelIndex(poly.flags >> 8));
       s->track.polys.back().portal = (poly.flags & 1) != 0;
       // list A: flags 0x1 (portal) / 0x4 are skipped (0x3948C: test al,5); list B: 0x1/0x4/0x10 (0x3872C: test al,0x15)
@@ -204,7 +238,7 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
       }
       pb.lo[0] = lx; pb.lo[1] = ly; pb.lo[2] = lz; pb.hi[0] = hx; pb.hi[1] = hy; pb.hi[2] = hz;
       for (const TrackPolygon& tp : rec.polys) {
-        if (tp.list != 0 || (tp.flags & 0x40)) continue;
+        if (tp.list != 0 || (deriveFlags(tp) & 0x40)) continue;
         auto it = polyOf[pi].find(tp.offset);
         if (it == polyOf[pi].end()) continue;
         const MeshPoly& mp = s->track.polys[size_t(it->second)];

@@ -12,8 +12,8 @@ constexpr TypeInfo kTypes[] = {
 };
 }  // namespace
 
-std::array<PanelDetail, 28> loadPanelDetails(const GameData& data) {
-  std::array<PanelDetail, 28> out{};
+std::array<PanelDetail, 32> loadPanelDetails(const GameData& data) {
+  std::array<PanelDetail, 32> out{};
   auto exe = data.read("SLIPSTRM.EXE");
   if (!exe) return out;
   auto off = [](uint32_t va) { return size_t(0x4D854) + size_t(va - 0x10000); };
@@ -93,7 +93,7 @@ std::array<PanelDetail, 28> loadPanelDetails(const GameData& data) {
   constexpr Cage kCages[] = {
       {0x80, 0x4019A, 0x4017C, true},  {0x81, 0x4047A, 0x40464, true},  {0x82, 0x404FA, 0x404E4, true},  {0x84, 0x4028A, 0x4027C, false},
       {0x85, 0x402F2, 0x402E4, false}, {0x8C, 0x4036A, 0x4034C, false}, {0x8D, 0x4021E, 0x40208, false}, {0x8E, 0x403F6, 0x403D8, false},
-      {0x91, 0x416E6, 0x416D4, false}, {0x92, 0x41746, 0x4173C, false},
+      {0x91, 0x416E6, 0x416D4, false}, {0x92, 0x41746, 0x4173C, false}, {0x93, 0x417A2, 0x41798, false},
   };
   for (const Cage& c : kCages) {
     PanelDetail d;

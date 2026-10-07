@@ -24,7 +24,8 @@ inline Vec3 operator*(Vec3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
 
 struct Texture {
   int w = 0, h = 0;
-  std::vector<uint8_t> index;  // palette indices; 0 is treated as transparent when sampled
+  std::vector<uint8_t> index;  // palette indices
+  int transparent = -1;        // SPR header +8: the transparent colour index, -1 = opaque (CONFIRMED by correlation with the data)
 };
 
 struct SurfaceMaterial {
@@ -33,6 +34,8 @@ struct SurfaceMaterial {
   int texture = -1;                   // index into Scene::textures, or -1
   // lighting coefficients from the MAT record (+0x16/+0x18/+0x1A/+0x1C -> runtime +0x1C/+0x20/+0x24/+0x28, 2.14),
   // CONFIRMED use in 0x1C4B6; ramp end already reduced by (1<<shift)-1 (0x18E80..0x18E99)
+  int flag15 = 0;         // MAT +0x15 (s8) -> runtime +0x1A: non-zero materials are skipped by the transparency flag test (0x1A3D5)
+  std::string upperName;  // normalised name for the load-time flag rules (TRNC*, WATE*)
   int fallbackColor = 0;  // MAT +0x12 -> runtime +0x50: colour used when ramp colour-1 would fall below the ramp
   int fixedLight = 0, ambientCoef = 0, diffuseCoef = 0, specularCoef = 0;
   bool invisible = false;             // "Dummy" helper surfaces (palette index 250): not drawn (INFERRED)
@@ -84,7 +87,7 @@ struct Scene {
   Palette palette;
   std::vector<Texture> textures;
   std::vector<SurfaceMaterial> materials;
-  std::array<PanelDetail, 28> panelDetails;
+  std::array<PanelDetail, 32> panelDetails;
   int sdOrangeMaterial = -1, sdFloorLightMaterial = -1, sdBlueMaterial = -1, sdRoadLineMaterial = -1;
   int sdCageMaterial = -1;
   int sdYellowMaterial = -1;  // "SDYellow" (colour of the floor border polygons)  // read from the user's executable

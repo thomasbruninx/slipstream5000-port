@@ -80,6 +80,7 @@ class ViewerApp {
   double animSeconds_ = std::getenv("SLIP_TIME") ? std::atof(std::getenv("SLIP_TIME")) : 0.0;  // animation clock for the flashing lights
   bool painter_ = !std::getenv("SLIP_NOPAINTER");  // original back-to-front BSP/painter order (F6 toggles)
   void renderTrackPainter(const MeshTransform& xf);
+  void buildShadowCasters();
   bool useVisMask_ = !std::getenv("SLIP_NOVIS");  // original per-record visibility classes (F5 toggles)
   double orbitDist_ = 10000, orbitYaw_ = 0.6, orbitPitch_ = 0.25;
   double modelCenter_[3] = {0, 0, 0};

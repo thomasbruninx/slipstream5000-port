@@ -245,11 +245,13 @@ void ViewerApp::render() {
   // The original always culls back-facing track polygons (0x3948C, 0x193FF); legacy mode only culls while driving.
   if (std::getenv("SLIP_NOCULL")) cullOverride_ = 0;
   renderer_.cullBackfaces = cullOverride_ >= 0 ? cullOverride_ != 0 : (mode_ == AppMode::Track && (painter_ || driving_));
+  renderer_.shadows = !std::getenv("SLIP_NOSHADOW");
   renderer_.animTimer = uint32_t(animSeconds_ * 16384.0);
   renderer_.portalCulling = useVisMask_ && !std::getenv("SLIP_NOPORTAL");
   if (mode_ == AppMode::Track) renderer_.computePortalVisibility(*scene_); else renderer_.portalCulling = false;
   renderer_.visMask = (mode_ == AppMode::Track && useVisMask_) ? scene_->visMaskAt(cam_.pos[0], cam_.pos[1], cam_.pos[2]) : 0xFFFF;
   MeshTransform xf;
+  if (mode_ == AppMode::Track) buildShadowCasters(); else renderer_.shadowCasters.clear();
   if (mode_ == AppMode::Track) {
     xf.pos[0] = scene_->origin[0]; xf.pos[1] = scene_->origin[1]; xf.pos[2] = scene_->origin[2];
     if (painter_ && !scene_->bsp.empty()) { renderTrackPainter(xf); return; }
@@ -424,6 +426,30 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
   if (!havePortals)
     for (size_t k = 0; k < shipsOnPiece.size(); ++k)
       for (int sh : shipsOnPiece[k]) drawShip(sh, itemId++);
+}
+
+// Ships cast shadows onto up-facing track polygons of the piece they stand on and its neighbours (0x397B1, 0x3977A).
+void ViewerApp::buildShadowCasters() {
+  renderer_.shadowCasters.clear();
+  if (!scene_) return;
+  const Scene& sc = *scene_;
+  for (int i = 0; i < 10; ++i) {
+    if (sc.shipMeshes[size_t(i)].polys.empty()) continue;
+    const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
+    ShadowCaster c;
+    c.mesh = &sc.shipMeshes[size_t(i)];
+    c.xf.pos[0] = s.x; c.xf.pos[1] = s.y; c.xf.pos[2] = s.z;
+    yawMatrix(s.yaw, c.xf.R);
+    const float p[3] = {float(s.x - sc.origin[0]), float(s.y - sc.origin[1]), float(s.z - sc.origin[2])};
+    double bestVol = 1e300;
+    for (size_t k = 0; k < sc.pieceBoxes.size(); ++k) {
+      const auto& b = sc.pieceBoxes[k];
+      if (!b.graph || !sc.pieceContains(k, p)) continue;
+      const double vol = double(b.hi[0] - b.lo[0]) * double(b.hi[1] - b.lo[1]) * double(b.hi[2] - b.lo[2]);
+      if (vol < bestVol) { bestVol = vol; c.piece = int(k); }
+    }
+    renderer_.shadowCasters.push_back(c);
+  }
 }
 
 std::vector<std::string> ViewerApp::hudLines() const {

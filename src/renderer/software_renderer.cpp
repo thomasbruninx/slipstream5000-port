@@ -14,6 +14,7 @@ void SoftwareRenderer::resize(int w, int h) {
   depth_.assign(size_t(w) * size_t(h), 0.0f);
   backdrop_.assign(size_t(w) * size_t(h), 0);
   itemBuf_.assign(size_t(w) * size_t(h), -1);
+  recvBuf_.assign(size_t(w) * size_t(h), 0);
 }
 
 void SoftwareRenderer::beginFrame(const Camera& cam, uint32_t sky, uint32_t ground) {
@@ -37,6 +38,7 @@ void SoftwareRenderer::beginFrame(const Camera& cam, uint32_t sky, uint32_t grou
   std::fill(depth_.begin(), depth_.end(), 0.0f);
   std::fill(backdrop_.begin(), backdrop_.end(), uint8_t(0));
   std::fill(itemBuf_.begin(), itemBuf_.end(), -1);
+  std::fill(recvBuf_.begin(), recvBuf_.end(), 0);
 }
 
 bool SoftwareRenderer::visAllows(uint16_t vis) const {
@@ -137,16 +139,31 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
     if (clipped.size() < 3) continue;
     stats_.polysDrawn++;
     const bool detailed = p.detail && mat && !p.hasUV && scene.panelDetails[p.detail].valid;
+    const size_t polyIdx = only ? size_t((*only)[pi_]) : pi_;
+    const bool receiver = shadows && !shadowCasters.empty() && p.piece >= 0 && (p.pflags & 2) && !p.scenery;
+    const int baseId = receiver ? int((polyIdx + 1) << 2) : 0;
+    recvId_ = baseId;
     if (detailed) {
       const PanelKind kind = scene.panelDetails[p.detail].kind;
       // types with bit 7 (floors, cages, road floors, chase floors) are drawn only by their routine (0x39640 -> 0x3F2C8)
-      if (kind == PanelKind::Cage) { drawCageLines(scene, p, tv, mat); continue; }
-      if (kind == PanelKind::Floor) { drawFloorDetail(scene, p, tv, mat); continue; }
-      if (kind == PanelKind::RoadFloor) { drawRoadFloor(scene, p, tv, mat); continue; }
-      if (kind == PanelKind::ChaseFloor) { drawChase(scene, p, tv, mat); continue; }
+      if (kind == PanelKind::Cage) { recvId_ = 0; drawCageLines(scene, p, tv, mat); continue; }
+      if (kind == PanelKind::Floor || kind == PanelKind::RoadFloor) {
+        if (kind == PanelKind::Floor) drawFloorDetail(scene, p, tv, mat); else drawRoadFloor(scene, p, tv, mat);
+        recvId_ = 0;
+        if (receiver) {
+          // border polygons use the SDYellow fallback colour, lane polygons colour 0 (0x3F53B with eax = [0x3F030] / 0)
+          const int yellow = scene.sdYellowMaterial >= 0 ? scene.materials[size_t(scene.sdYellowMaterial)].fallbackColor : 0;
+          drawShadowsOn(scene, p, baseId, 1, yellow);
+          drawShadowsOn(scene, p, baseId, 2, 0);
+        }
+        continue;
+      }
+      if (kind == PanelKind::ChaseFloor) { recvId_ = 0; drawChase(scene, p, tv, mat); continue; }
     }
     for (size_t k = 1; k + 1 < clipped.size(); ++k)
       rasterTri(scene, clipped[0], clipped[k], clipped[k + 1], mat, p.hasUV, light, int(std::clamp(ny, 0.0f, 1.0f) * 16384.0f), uint8_t(p.backdrop ? 2 : p.scenery ? 1 : 0));
+    recvId_ = 0;
+    if (receiver) drawShadowsOn(scene, p, baseId, 0, mat ? mat->fallbackColor : 0);  // 0x39738: colour = material +0x50
     if (detailed) {
       const PanelKind kind = scene.panelDetails[p.detail].kind;
       if (kind == PanelKind::Lines) drawPanelLines(scene, p, tv, mat, flatIndex(mat, int(std::clamp(ny, 0.0f, 1.0f) * 16384.0f)));
@@ -200,6 +217,10 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
       if (w0 < 0 || w1 < 0 || w2 < 0) continue;
       float z = w0 * iw[0] + w1 * iw[1] + w2 * iw[2];
       size_t o = size_t(y) * size_t(w_) + size_t(x);
+      if (shadowRecv_) {
+        if (recvBuf_[o] == shadowRecv_) color_[o] = flat;
+        continue;
+      }
       // Layering of scenery against road (see docs/research-log.md): scenery must be clearly nearer than road to
       // cover it (near-ties and slight intrusions of building volumes into tunnel walls resolve to the road);
       // backdrop scenery never covers road. Among equal layers a later-drawn near-tie wins (coplanar decals).
@@ -228,12 +249,13 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
         int tx = std::min(tex->w - 1, int(u * float(tex->w)));
         int ty = std::min(tex->h - 1, int(vv * float(tex->h)));
         uint8_t pi = tex->index[size_t(ty) * size_t(tex->w) + size_t(tx)];
-        if (pi == 0) continue;  // index 0 = transparent (INFERRED)
+        if (int(pi) == tex->transparent) continue;  // transparent colour from the SPR header (+8)
         col = shade(scene.palette.rgba[pi], 1.0f);  // textured polygons are not lit in the original (0x19E0D -> 0x1C753 passes no shade)
       }
       depth_[o] = z;
       backdrop_[o] = layer;
       itemBuf_[o] = curItem_;
+      recvBuf_[o] = recvId_;
       color_[o] = col;
     }
   }
@@ -293,6 +315,18 @@ void SoftwareRenderer::computePortalVisibility(const Scene& scene) {
     }
   } rec{scene, *this, cp};
   rec.visit(start, WinRect{0, 0, w_ - 1, h_ - 1, true}, -1, 0);
+  if (!union_.vis) {
+    // The code only validates the window ([0x33EB0]) through extent polygons (flag 0x08 after the load-time rewrite: cages and
+    // chase-light floors, transparent slopes); tracks such as Chicago have none. We then use the union of the portal windows
+    // so the far-to-near pass and the scenery still run (UNVERIFIED against the original, see docs/research-log.md).
+    union_ = WinRect{w_, h_, -1, -1, false};
+    for (size_t i = 0; i < pieceWin_.size(); ++i)
+      if (inGraph[i] && pieceWin_[i].vis) {
+        union_.x0 = std::min(union_.x0, pieceWin_[i].x0); union_.y0 = std::min(union_.y0, pieceWin_[i].y0);
+        union_.x1 = std::max(union_.x1, pieceWin_[i].x1); union_.y1 = std::max(union_.y1, pieceWin_[i].y1);
+        union_.vis = true;
+      }
+  }
 }
 }  // namespace slip
 
@@ -365,12 +399,22 @@ int SoftwareRenderer::flatIndex(const SurfaceMaterial* mat, int upLight) const {
   return int(mat->palStart) + (((int(mat->palEnd) - int(mat->palStart)) * s) >> 14);
 }
 
-std::vector<SoftwareRenderer::VV> SoftwareRenderer::detailPoints(const PanelDetail& d, const std::vector<VV>& tv, const MeshPoly& p) const {
+std::vector<SoftwareRenderer::VV> SoftwareRenderer::detailPoints(const PanelDetail& d, const std::vector<VV>& tv, const MeshPoly& p, bool allowScreenMid) const {
   std::vector<VV> pts(d.mid.size());
+  bool screenMid = false;
+  if (allowScreenMid) {
+    float nearest = 1e30f;
+    for (uint16_t k = 0; k < p.count; ++k) nearest = std::min(nearest, tv[p.first + k].z);
+    screenMid = nearest >= 683200.0f;  // 0xA6CC0: the far branch of 0x3F3C4 interpolates in 2D
+  }
   for (size_t k = 0; k < pts.size(); ++k) {
-    if (int(k) < d.nBase) pts[k] = tv[p.first + k];
-    else {
-      const VV &a = pts[d.mid[k][0] % pts.size()], &b = pts[d.mid[k][1] % pts.size()];
+    if (int(k) < d.nBase) { pts[k] = tv[p.first + k]; continue; }
+    const VV &a = pts[d.mid[k][0] % pts.size()], &b = pts[d.mid[k][1] % pts.size()];
+    if (screenMid) {
+      const float ax = a.x / a.z, ay = a.y / a.z, bx = b.x / b.z, by = b.y / b.z;
+      const float z = (a.z + b.z) * 0.5f;
+      pts[k] = {(ax + bx) * 0.5f * z, (ay + by) * 0.5f * z, z, 0, 0};
+    } else {
       pts[k] = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f, 0, 0};
     }
   }
@@ -392,6 +436,63 @@ void SoftwareRenderer::fillIdxPoly(const Scene& scene, const SurfaceMaterial* ma
   for (size_t k = 1; k + 1 < cl.size(); ++k) rasterTri(scene, cl[0], cl[k], cl[k + 1], mat, false, 1.0f, 0, 0, colorIdx);
 }
 
+void SoftwareRenderer::drawShadowsOn(const Scene& scene, const MeshPoly& rp, int baseId, int sub, int colorIdx) {
+  if (rp.normal.y < 0.0193f) return;  // only surfaces facing the light (flag bit 1: n.y >= 316/16384)
+  const Vec3 v0 = scene.track.verts[rp.first];
+  const Vec3 n = rp.normal;
+  float lox = 1e30f, hix = -1e30f, loz = 1e30f, hiz = -1e30f;
+  for (uint16_t k = 0; k < rp.count; ++k) {
+    const Vec3& v = scene.track.verts[rp.first + k];
+    lox = std::min(lox, v.x); hix = std::max(hix, v.x); loz = std::min(loz, v.z); hiz = std::max(hiz, v.z);
+  }
+  float margin = 60000.0f;  // a ship's half-extent (scaled models)
+  const double camRel[3] = {cam_.pos[0] - scene.origin[0], cam_.pos[1] - scene.origin[1], cam_.pos[2] - scene.origin[2]};
+  const auto& pb = scene.pieceBoxes[size_t(rp.piece)];
+  for (ShadowCaster& cs : shadowCasters) {
+    if (!cs.mesh || cs.piece < 0) continue;
+    if (cs.piece != rp.piece && cs.piece != pb.link[0] && cs.piece != pb.link[1] && cs.piece != pb.link[2]) continue;  // 0x397B1: the piece and its three neighbours
+    const float cx = float(cs.xf.pos[0] - scene.origin[0]), cz = float(cs.xf.pos[2] - scene.origin[2]);
+    if (cx < lox - margin || cx > hix + margin || cz < loz - margin || cz > hiz + margin) continue;
+    const Mesh& m = *cs.mesh;
+    if (cs.world.size() != m.verts.size()) {
+      cs.world.resize(m.verts.size());
+      for (size_t i = 0; i < m.verts.size(); ++i) {
+        const Vec3& v = m.verts[i];
+        cs.world[i] = {float(cs.xf.pos[0] + cs.xf.R[0] * v.x + cs.xf.R[1] * v.y + cs.xf.R[2] * v.z - scene.origin[0]),
+                       float(cs.xf.pos[1] + cs.xf.R[3] * v.x + cs.xf.R[4] * v.y + cs.xf.R[5] * v.z - scene.origin[1]),
+                       float(cs.xf.pos[2] + cs.xf.R[6] * v.x + cs.xf.R[7] * v.y + cs.xf.R[8] * v.z - scene.origin[2])};
+      }
+    }
+    shadowRecv_ = baseId | sub;
+    // project every caster vertex once for this receiver (camera space), then fill the polygons
+    thread_local std::vector<VV> cam;
+    cam.resize(cs.world.size());
+    for (size_t i = 0; i < cs.world.size(); ++i) {
+      const Vec3& w = cs.world[i];
+      const double wy = double(v0.y) - (double(n.x) * (double(w.x) - double(v0.x)) + double(n.z) * (double(w.z) - double(v0.z))) / double(n.y) + 40.0;
+      const double rx = double(w.x) - camRel[0], ry = wy - camRel[1], rz = double(w.z) - camRel[2];
+      cam[i] = {float(rx * right_[0] + ry * right_[1] + rz * right_[2]), float(rx * up_[0] + ry * up_[1] + rz * up_[2]),
+                float(rx * fwd_[0] + ry * fwd_[1] + rz * fwd_[2]), 0, 0};
+    }
+    thread_local std::vector<VV> poly, cl;
+    for (const MeshPoly& cp : m.polys) {
+      poly.assign(cam.begin() + cp.first, cam.begin() + cp.first + cp.count);
+      cl.clear();
+      for (size_t i = 0; i < poly.size(); ++i) {
+        const VV &a = poly[i], &b = poly[(i + 1) % poly.size()];
+        const bool ain = a.z >= cam_.nearPlane, bin = b.z >= cam_.nearPlane;
+        if (ain) cl.push_back(a);
+        if (ain != bin) {
+          const float t = (cam_.nearPlane - a.z) / (b.z - a.z);
+          cl.push_back({a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, cam_.nearPlane, 0, 0});
+        }
+      }
+      for (size_t k = 1; k + 1 < cl.size(); ++k) rasterTri(scene, cl[0], cl[k], cl[k + 1], nullptr, false, 1.0f, 0, 0, colorIdx);
+    }
+    shadowRecv_ = 0;
+  }
+}
+
 void SoftwareRenderer::drawRoadFloor(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat) {
   // type 0x90 (0x4147E): two lane polygons (80 % ramp colour and one step darker) and three SDRoadLine polygons
   const PanelDetail& d = scene.panelDetails[p.detail];
@@ -403,12 +504,15 @@ void SoftwareRenderer::drawRoadFloor(const Scene& scene, const MeshPoly& p, cons
     fillIdxPoly(scene, mat, std::vector<VV>(tv.begin() + p.first, tv.begin() + p.first + p.count), [&] { std::vector<uint16_t> v; for (uint16_t k = 0; k < p.count; ++k) v.push_back(k); return v; }(), lane);
     return;
   }
-  const std::vector<VV> pts = detailPoints(d, tv, p);
+  const std::vector<VV> pts = detailPoints(d, tv, p, true);
   int laneDark = lane - 1;
   if (laneDark < int(mat->palStart)) laneDark = mat->fallbackColor;
   int line = lane;
   if (scene.sdRoadLineMaterial >= 0) line = ramp80(scene.materials[size_t(scene.sdRoadLineMaterial)]);
+  const int baseRecvR = recvId_;
+  if (baseRecvR) recvId_ = baseRecvR | 2;
   for (const auto& pl : d.polys) fillIdxPoly(scene, mat, pts, pl.idx, pl.yellow ? laneDark : lane);
+  recvId_ = baseRecvR;
   for (const auto& pl : d.roadLine) fillIdxPoly(scene, mat, pts, pl.idx, line);
 }
 
@@ -419,7 +523,7 @@ void SoftwareRenderer::drawChase(const Scene& scene, const MeshPoly& p, const st
   float nearest = 1e30f;
   for (uint16_t k = 0; k < p.count; ++k) nearest = std::min(nearest, tv[p.first + k].z);
   if (int(p.count) != d.nBase || nearest > float(d.gate)) return;
-  const std::vector<VV> pts = detailPoints(d, tv, p);
+  const std::vector<VV> pts = detailPoints(d, tv, p, d.kind != PanelKind::Refuel);
   const uint32_t t = animTimer;
   const int phase = int(((~t) & 0x1FFF) >> 11);
   auto range = [&](int matIdx, int* lo, int* hi) {
@@ -469,18 +573,40 @@ void SoftwareRenderer::drawLine3D(P3 a, P3 b, uint32_t col) {
   else if (b.z < n) { float t = (n - b.z) / (a.z - b.z); b = {b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t, n}; }
   const float x0 = float(w_) * 0.5f + a.x / a.z * focal_, y0 = float(h_) * 0.5f - a.y / a.z * focal_;
   const float x1 = float(w_) * 0.5f + b.x / b.z * focal_, y1 = float(h_) * 0.5f - b.y / b.z * focal_;
-  const float iz0 = 1.0f / a.z, iz1 = 1.0f / b.z;
-  const int steps = std::min(int(std::max(std::fabs(x1 - x0), std::fabs(y1 - y0))) + 1, 4096);
+  float iz0 = 1.0f / a.z, iz1 = 1.0f / b.z;
+  // clip to the scissor rectangle (Liang-Barsky) so very long lines keep one sample per pixel
+  float cx0 = x0, cy0 = y0, cx1 = x1, cy1 = y1, ta = 0.0f, tb = 1.0f;
+  {
+    const float dx = x1 - x0, dy = y1 - y0;
+    const float p[4] = {-dx, dx, -dy, dy};
+    const float q[4] = {x0 - float(sx0_), float(sx1_ + 1) - x0, y0 - float(sy0_), float(sy1_ + 1) - y0};
+    for (int k = 0; k < 4; ++k) {
+      if (p[k] == 0) { if (q[k] < 0) return; continue; }
+      const float r = q[k] / p[k];
+      if (p[k] < 0) ta = std::max(ta, r); else tb = std::min(tb, r);
+      if (ta > tb) return;
+    }
+    cx0 = x0 + dx * ta; cy0 = y0 + dy * ta; cx1 = x0 + dx * tb; cy1 = y0 + dy * tb;
+    const float z0 = iz0, z1 = iz1;
+    iz0 = z0 + (z1 - z0) * ta; iz1 = z0 + (z1 - z0) * tb;
+  }
+  const int steps = std::min(int(std::max(std::fabs(cx1 - cx0), std::fabs(cy1 - cy0))) + 1, 8192);
   for (int i = 0; i <= steps; ++i) {
     const float t = float(i) / float(steps);
-    const int x = int(std::floor(x0 + (x1 - x0) * t)), y = int(std::floor(y0 + (y1 - y0) * t));
-    if (x < sx0_ || x > sx1_ || y < sy0_ || y > sy1_) continue;
-    const size_t o = size_t(y) * size_t(w_) + size_t(x);
+    const int x = int(std::floor(cx0 + (cx1 - cx0) * t)), y = int(std::floor(cy0 + (cy1 - cy0) * t));
     const float z = iz0 + (iz1 - iz0) * t;
-    if (z < depth_[o] * (1.0f - 1e-3f) && (curItem_ < 0 || itemBuf_[o] == curItem_)) continue;
-    color_[o] = col;
-    depth_[o] = std::max(depth_[o], z);
-    itemBuf_[o] = curItem_;
+    // the original draws 1-pixel lines at 320x200: keep the same proportion at our resolution
+    const int th = std::max(1, int(std::lround(float(w_) / 320.0f)));
+    for (int dy = 0; dy < th; ++dy)
+      for (int dx = 0; dx < th; ++dx) {
+        const int px = x + dx - th / 2, py = y + dy - th / 2;
+        if (px < sx0_ || px > sx1_ || py < sy0_ || py > sy1_) continue;
+        const size_t o = size_t(py) * size_t(w_) + size_t(px);
+        if (z < depth_[o] * (1.0f - 2e-2f) && (curItem_ < 0 || itemBuf_[o] == curItem_)) continue;
+        color_[o] = col;
+        depth_[o] = std::max(depth_[o], z);
+        itemBuf_[o] = curItem_;
+      }
   }
 }
 
@@ -493,16 +619,9 @@ void SoftwareRenderer::drawCageLines(const Scene& scene, const MeshPoly& p, cons
   const SurfaceMaterial* cm = (d.sdCage && scene.sdCageMaterial >= 0) ? &scene.materials[size_t(scene.sdCageMaterial)] : mat;
   const int idx = int(cm->palStart) + (((int(cm->palEnd) - int(cm->palStart)) * 0x3333) >> 14);  // 0x1A1C8 at 80 %
   const uint32_t col = 0xff000000u | (scene.palette.rgba[size_t(std::clamp(idx, 0, 255))] & 0xffffffu);
-  std::vector<P3> pts(d.mid.size());
-  for (size_t k = 0; k < pts.size(); ++k) {
-    if (int(k) < d.nBase) { const VV& v = tv[p.first + k]; pts[k] = {v.x, v.y, v.z}; }
-    else {
-      const P3 &a = pts[d.mid[k][0] % pts.size()], &b = pts[d.mid[k][1] % pts.size()];
-      pts[k] = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f};
-    }
-  }
+  const std::vector<VV> vp = detailPoints(d, tv, p, true);
   for (const auto& ln : d.lines)
-    if (ln.a < pts.size() && ln.b < pts.size()) drawLine3D(pts[ln.a], pts[ln.b], col);
+    if (ln.a < vp.size() && ln.b < vp.size()) drawLine3D({vp[ln.a].x, vp[ln.a].y, vp[ln.a].z}, {vp[ln.b].x, vp[ln.b].y, vp[ln.b].z}, col);
 }
 
 void SoftwareRenderer::drawFloorDetail(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat) {
@@ -522,13 +641,16 @@ void SoftwareRenderer::drawFloorDetail(const Scene& scene, const MeshPoly& p, co
     }
     for (size_t k = 1; k + 1 < cl.size(); ++k) rasterTri(scene, cl[0], cl[k], cl[k + 1], mat, false, 1.0f, 0, 0, idx);
   };
+  const int baseRecv = recvId_;
   float nearest = 1e30f;
   for (uint16_t k = 0; k < p.count; ++k) nearest = std::min(nearest, tv[p.first + k].z);
   bool near = nearest >= cam_.nearPlane;
   if (!d.valid || int(p.count) != d.nBase || !near || nearest > float(d.gate)) {
     // far branch (0x40B84): the polygon in the 80 % lane colour
     std::vector<VV> poly(tv.begin() + p.first, tv.begin() + p.first + p.count);
+    if (baseRecv) recvId_ = baseRecv | 2;
     fan(poly, lane);
+    recvId_ = baseRecv;
     return;
   }
   std::vector<VV> pts(d.mid.size());
@@ -544,28 +666,17 @@ void SoftwareRenderer::drawFloorDetail(const Scene& scene, const MeshPoly& p, co
   for (const auto& pl : d.polys) {
     std::vector<VV> poly;
     for (uint16_t i : pl.idx) poly.push_back(pts[i % pts.size()]);
+    if (baseRecv) recvId_ = baseRecv | (pl.yellow ? 1 : 2);
     fan(poly, pl.yellow ? yellow : lane);
+    recvId_ = baseRecv;
   }
   const int cPlus = std::min(lane + 1, int(mat->palEnd));
   int cMinus = lane - 1;
   if (cMinus < int(mat->palStart)) cMinus = mat->fallbackColor;
   for (const auto& ln : d.lines) {
     if (ln.a >= pts.size() || ln.b >= pts.size()) continue;
-    const VV &a = pts[ln.a], &b = pts[ln.b];
-    const float x0 = float(w_) * 0.5f + a.x / a.z * focal_, y0 = float(h_) * 0.5f - a.y / a.z * focal_;
-    const float x1 = float(w_) * 0.5f + b.x / b.z * focal_, y1 = float(h_) * 0.5f - b.y / b.z * focal_;
-    const float iz0 = 1.0f / a.z, iz1 = 1.0f / b.z;
-    const int steps = int(std::max(std::fabs(x1 - x0), std::fabs(y1 - y0))) + 1;
     const uint32_t col = 0xff000000u | (scene.palette.rgba[size_t(std::clamp(ln.darker ? cMinus : cPlus, 0, 255))] & 0xffffffu);
-    for (int i = 0; i <= steps; ++i) {
-      const float t = float(i) / float(steps);
-      const int x = int(std::floor(x0 + (x1 - x0) * t)), y = int(std::floor(y0 + (y1 - y0) * t));
-      if (x < sx0_ || x > sx1_ || y < sy0_ || y > sy1_) continue;
-      const size_t o = size_t(y) * size_t(w_) + size_t(x);
-      const float z = iz0 + (iz1 - iz0) * t;
-      if (curItem_ >= 0 ? (itemBuf_[o] != curItem_ || z < depth_[o] * (1.0f - 1e-3f)) : z < depth_[o] * (1.0f - 1e-3f)) continue;
-      color_[o] = col;
-    }
+    drawLine3D({pts[ln.a].x, pts[ln.a].y, pts[ln.a].z}, {pts[ln.b].x, pts[ln.b].y, pts[ln.b].z}, col);
   }
 }
 
@@ -591,21 +702,7 @@ void SoftwareRenderer::drawPanelLines(const Scene& scene, const MeshPoly& p, con
   const uint32_t colMinus = 0xff000000u | (scene.palette.rgba[size_t(std::clamp(cMinus, 0, 255))] & 0xffffffu);
   for (const auto& ln : d.lines) {
     if (ln.a >= pts.size() || ln.b >= pts.size()) continue;
-    P3 a = pts[ln.a], b = pts[ln.b];
-    const float x0 = float(w_) * 0.5f + a.x / a.z * focal_, y0 = float(h_) * 0.5f - a.y / a.z * focal_;
-    const float x1 = float(w_) * 0.5f + b.x / b.z * focal_, y1 = float(h_) * 0.5f - b.y / b.z * focal_;
-    const float iz0 = 1.0f / a.z, iz1 = 1.0f / b.z;
-    const int steps = int(std::max(std::fabs(x1 - x0), std::fabs(y1 - y0))) + 1;
-    const uint32_t col = ln.darker ? colMinus : colPlus;
-    for (int i = 0; i <= steps; ++i) {
-      const float t = float(i) / float(steps);
-      const int x = int(std::floor(x0 + (x1 - x0) * t)), y = int(std::floor(y0 + (y1 - y0) * t));
-      if (x < sx0_ || x > sx1_ || y < sy0_ || y > sy1_) continue;
-      const size_t o = size_t(y) * size_t(w_) + size_t(x);
-      const float z = iz0 + (iz1 - iz0) * t;
-      if (curItem_ >= 0 ? (itemBuf_[o] != curItem_ || z < depth_[o] * (1.0f - 1e-3f)) : z < depth_[o] * (1.0f - 1e-3f)) continue;
-      color_[o] = col;
-    }
+    drawLine3D({pts[ln.a].x, pts[ln.a].y, pts[ln.a].z}, {pts[ln.b].x, pts[ln.b].y, pts[ln.b].z}, ln.darker ? colMinus : colPlus);
   }
 }
 
