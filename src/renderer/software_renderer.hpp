@@ -68,6 +68,12 @@ class SoftwareRenderer {
   void setSceneryWindow(const WinRect* w) { sceneryWin_ = w; }  // clip window for polygons that belong to no piece
   void setPieceWindow(size_t i, const WinRect& w) { if (i < pieceWin_.size()) pieceWin_[i] = w; }
   const std::vector<WinRect>& pieceWindows() const { return pieceWin_; }
+  // Overlay primitives for gameplay objects (pickups, explosions, beams, lock marker), drawn after the track: they are depth
+  // tested against whatever the frame already holds but take part in no painter item.
+  bool projectToScreen(const double world[3], float* x, float* y, float* z) const;
+  void drawSpriteWorld(const Sprite& spr, const Palette& pal, const double world[3], double worldWidth, int transparent);
+  void drawLineWorld(const double a[3], const double b[3], uint32_t color);
+  void drawRectScreen(int x0, int y0, int x1, int y1, uint32_t color);
   uint32_t animTimer = 0;   // animation clock in 2.14 seconds ([0x3F078]); the viewer advances it every frame
   // Ship shadows (CONFIRMED mechanism, see docs/research-log.md): the caster's polygons are projected along the light
   // direction (0,-1,0) onto the receiving polygon's plane and filled with the receiver's shadow colour inside it.

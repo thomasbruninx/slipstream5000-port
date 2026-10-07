@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <memory>
 
+#include "audio/audio_system.hpp"
 #include "audio/mixer.hpp"
 #include "original_formats/audio.hpp"
 #include "original_formats/game_data.hpp"
@@ -104,6 +105,48 @@ int main() {
         CHECK(smf.has_value());
         // 120 ticks per second: the longest track matches the header's length in seconds (INTRO's header differs, see docs)
         if (smf && std::string(n) != "INTRO.HMP") CHECK(std::fabs(info.lengthTicks / 120.0 - info.seconds) < 2.0);
+      }
+      // HMI loop markers: INGAME2 loops ticks 2..3595 forever (first loop end), INTRO 6748..8545, WIN/LOSE have none
+      {
+        auto seg = hmpToSegments(*d->read("INGAME2.HMP"));
+        CHECK(seg && !seg->loop.empty() && seg->loopStartTick == 2 && seg->loopEndTick == 3595);
+        auto in = hmpToSegments(*d->read("INTRO.HMP"));
+        CHECK(in && in->loopStartTick == 6748 && in->loopEndTick == 8545);
+        auto win = hmpToSegments(*d->read("WIN.HMP"));
+        CHECK(win && win->loop.empty() && !win->intro.empty());
+      }
+      {  // announcer samples per track exist (lists read from the exe) and every fixed effect sample exists
+        AudioConfig cfg;
+        cfg.openDevice = false;
+        AudioSystem a;
+        a.init(*d, cfg, nullptr);
+        for (int trk = 1; trk <= 10; ++trk)
+          for (int w = 1; w <= 2; ++w) CHECK(d->exists(a.speechName(trk, w)));
+        CHECK(a.speechName(1, 1) == "EM01.SMP" && a.speechName(2, 1) == "EF12.SMP" && a.speechName(1, 2) == "EM02.SMP");
+        for (int f = 1; f <= 16; ++f) if (f != 13 || true) CHECK(d->exists(fxSampleName(Fx(f))));
+        CHECK(d->exists("PITSLP.SMP") && d->exists("CROWDLP.SMP") && d->exists("LOW.SMP"));
+      }
+      {  // voice cues of mode 3: 85 entries (exe list), all samples exist; one voice at a time, no repeat of the last four
+        AudioConfig cfg;
+        cfg.openDevice = false;
+        AudioSystem a;
+        a.init(*d, cfg, nullptr);
+        CHECK(a.cueCount() == 85);
+        CHECK(a.cueSample(0) == "EF93.SMP" && a.cueSample(14) == "EM102.SMP" && a.cueSample(65) == "EPS0.SMP" && a.cueSample(84) == "EM101.SMP");
+        CHECK(a.cueSpeaker(14) == 1 && a.cueSpeaker(23) == 10 && a.cueSpeaker(65) == 0);
+        for (int c = 0; c < a.cueCount(); ++c) CHECK(d->exists(a.cueSample(c)));
+        CHECK(a.playCue(14));
+        CHECK(a.cueBusy());
+        CHECK(!a.playCue(15));              // the previous line is still playing -> dropped
+        float buf[2048];
+        a.renderBlock(buf, 1024);
+        float peak = 0;
+        for (float v : buf) peak = std::max(peak, std::fabs(v));
+        CHECK(peak > 0.05f);
+        for (int i = 0; i < 400 && a.cueBusy(); ++i) a.renderBlock(buf, 1024);  // let it finish
+        CHECK(!a.cueBusy());
+        CHECK(!a.playCue(14));              // one of the last four cues
+        CHECK(a.playCue(15));
       }
       CHECK(d->list("SMP").size() == 980);
       auto b = d->read("CRASH.SMP");

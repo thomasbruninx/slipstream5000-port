@@ -1,0 +1,123 @@
+# Weapons, pickups and pilot voices
+
+Port: `src/game/weapons.{hpp,cpp}` (simulation, SDL-free), `tests/weapons_tests.cpp`, the overlay in `src/platform/viewer_app.cpp`,
+voice cues in `src/audio/audio_system.cpp`. Every number below is read from the user's `SLIPSTRM.EXE` at run time.
+Labels: **CONFIRMED** = read straight from the disassembly, **INFERRED** = follows from the code but a detail is assumed,
+**SPECULATIVE** = guess (marked in the code too). Addresses are virtual addresses of the LE image; pointer tables hold
+object-relative offsets (+0x10000).
+
+## 1. Weapon table (CONFIRMED, 12 records x 0x38 bytes at 0x5D612)
+`+0` name (16 B) · `+0x10/+0x14/+0x18` shop price per difficulty level · `+0x1C` rounds per purchase (-1 = unlimited) ·
+`+0x20` energy refill per second (2.14) · `+0x24` energy a shot needs (2.14, 0x4000 = a full pool) · `+0x28` launcher address
+(relocated) · `+0x2C` lock-on cone half angle (1/65536 turn; 0 = no lock-on) · `+0x30` / `+0x34` engine / steering damage
+(16.16 percentage points, `RaceSlotDamage` units).
+
+| id | name | refill/s | cost | cone | damage engine / steering | launcher | projectile |
+|---|---|---|---|---|---|---|---|
+| 0 | Blaster | 0.125 | 0.1875 | 0x145 | 1 / 1 | 0x5C3BF | 2 beams, server 0x5C481 |
+| 1 | Disrupter | 1 | 1 | 0x145 | (none, see 3) | 0x5C66C | 2 beams, server 0x5C741 |
+| 2 | Frag | 1 | 1 | 0x145 | 2 / 15 | 0x5CE0A | missile, server 0x5D24B |
+| 3 | Super Frag | 1 | 1 | 0x145 | 4 / 25 | 0x5CF17 | missile 0x5D24B |
+| 4 | Seeker | 1 | 1 | 0x145 | 15 / 2 | 0x5CBF0 | missile 0x5D24B |
+| 5 | Super Seeker | 1 | 1 | 0x145 | 25 / 4 | 0x5CCFD | missile 0x5D24B |
+| 6 | Ambler | 1 | 1 | 0x145 | 1 / 1 | 0x5C92C | missile, server 0x5CB03 |
+| 7 | Scrambler | 1 | 1 | 0x145 | 25 / 25 | 0x5D131 | missile, server 0x5D33A |
+| 8 | Hyper Neuro | 1 | 1 | 0x145 | 1 / 1 | 0x5CA24 | missile, server 0x5CB03 |
+| 9 | Smoker | 1 | 1 | 0 | - | 0x5C34D | smoke effect (0x4F79E) |
+| 10 | Bomber | 1 | 1 | 0x145 | 1 / 1 | 0x5D024 | missile 0x5D24B |
+| 11 | Mini Mines | 1 | 1 | 0 | 10 / 10 | 0x5D4C6 | 4 mines, server 0x5D453 |
+
+Boosters: table 0x5BD44, 5 items x 0x24 bytes: name, `+0x18` price, `+0x1C` speed factor (1.10, 1.15, 1.20, 1.25, 1.30), `+0x20` fuel
+burn per second (0.25, 0.1875, 0.156, 0.125, 0.0625). Item names: Delphine Injection, Corolis Dynamic, Dual Derwent, Cleric
+Quinn, Tech Tech 301.
+
+## 2. Ship state used by the weapon code (CONFIRMED, slot data = slot+0x60, record = `[slot data+0x20]`)
+* `+0x14` selected weapon: 0 blaster, 1 weapon A (record +0x32), 2 weapon B (+0x36), 3 booster (record +0x42 >= 0). Cycling (0x51248) goes
+  0 -> A -> B -> booster -> 0, skipping empty slots. Record: `+0x3A/+0x3E` rounds (negative = unlimited), `+0x46` flag 1 = pools and
+  the blaster cooldown refill twice as fast, flag 2 = lock cone doubled (the original tests that bit on the *slot* data by mistake at
+  0x51054; the port uses the record flag as intended).
+* `+0x16/+0x18/+0x1A` energy pools (blaster, A, B), full = 0x4000; refilled by `table +0x20 * dt` (0x50EF6..0x50FC4).
+* `+0x30` blaster cooldown 0x1F4 ms (0x12C with flag 1); `+0x3C/+0x3D` fire request now/previous frame; `+0x1C` lock target;
+  `+0x4C` = 0x3A98 ms at the start: a *human* ship cannot lock on with a non-blaster weapon for the first 15 s (0x50FDA).
+* Fire (executed in the draw message, 0x50C5E..0x50D99): blaster needs cooldown 0 and energy >= 0xC00, then spends it; weapons A/B need
+  energy >= cost and rounds left (0 = cannot fire), spend one round and the energy; when the last round goes the record slot is set to
+  -1, the selection moves on and the human hears cue 0. Selecting the booster and pressing fire toggles it (edge triggered, needs fuel).
+  While the countdown flag `[0x54408]` is set the control bits throttle and fire are masked for every ship (0x51165): this is the
+  original's grid hold (it replaces the earlier "INFERRED" statement).
+* Booster (0x510CB): fuel `+0x32` (0x4000 at the start if the record has a booster) falls by `item.burn * dt`; it switches itself off
+  at 0. The speed factor of `RaceSlotMove` gains `item.factor - 1` while the booster burns or the free-booster timer `+0x2E` runs.
+* Pit lane (0x50E97..): inside the refuel piece both damage counters fall by 25 points/s and the booster fuel refills at 1/s.
+* Timers on the slot data (ms): `+0x26` reversed steering and pitch, `+0x28` speed cap / 2, `+0x2A` throttle forced on, `+0x2C` steering
+  and pitch x16 clamped to +-1 (also while `+0x40`, the 0.25 s jolt of a blaster hit on a human), `+0x2E` free booster. They are read in
+  `RaceSlotMove` (0x51B10..0x51D5C): `ShipState::reverseTime/halfCapTime/forceThrottleTime/hyperTime/boosterFreeTime`.
+
+## 3. Lock-on (CONFIRMED, 0x50FC4..0x510C7 and 0x140BF)
+Only weapons with a non-zero cone. Origin = the ship's `head` reference point (ART root node), forward = ship forward. A ship is a
+candidate when, in the shooter frame (x right, y up, z forward) with `e` = the candidate's extent: `z + e >= 0x988`,
+`z*sin(a) +- x*cos(a) + e >= 0` and the same for y (a = cone angle), and its distance <= 0xEE480 (975 000). The nearest candidate wins
+(`CombatState::lockTarget`). The AI uses the same test every update.
+
+## 4. Projectiles
+Created at the launcher (`ref points`: `lasl`/`lasr` for beams, `weap` for missiles, `smok` for the Smoker; ART root node) with the
+owner's orientation; the owner's sound: effect 4 (beams), 5 (missiles, smoker), 7 (mines).
+
+* **Beams (Blaster, Disrupter)** CONFIRMED: speed 0x77240 units/s along the heading, lifetime 0x1388 ms. If the owner had a lock the
+  beam is aimed at the target when created and re-aimed every frame while the target is within 0x3400/0x4000 (cos 0.8125, ~36 degrees) of
+  the heading. Each frame the head moves along the heading and the segment is tested against the other ships (0x139AD); a hit sends
+  message 0x202 (weapon id 0/1, owner) to the victim and ends the beam. Beams ignore walls (no 0x107 handler). The drawn line colours
+  are placeholders (SPECULATIVE).
+* **Missiles** CONFIRMED: start speed = owner speed + 0x22E98 (Frag, Super Frag, Seeker, Super Seeker, Bomber), + 0x45D30 (Ambler, Hyper Neuro)
+  or + 0x1174C (Scrambler); acceleration 0x22E98 units/s^2 up to 0x9D1AC (643 500). With a target the heading turns towards it at
+  0x4000 angle units/s (0.25 turn/s = 90 degrees/s, 0x212F8). The Scrambler only homes within 0x2FA80 of its target (0x5D3C9; farther
+  away the original calls a visual routine, 0x4A4CF, and keeps flying straight). No lifetime. Hitting a ship (message 0x106) or a wall
+  (0x107) ends the missile; a wall hit spawns an explosion effect (0x4F7BC). Projectile models: AIRMINE, AMBLER, BOMBER, FRAG, HYPER,
+  SCRAMBLE, SEEKER (.SHP names at 0x5BF5E, scaled like the ships).
+* **Mini Mines** CONFIRMED: four mines at (+-4880, +-4880, -9760) in the ship frame (table 0x5D5D6), lifetime 0x2710 ms, no speed. A ship that
+  touches one takes 10/10 damage and the mine explodes (0x4F61B).
+* **Smoker**: only an effect call (0x4F79E, 4 s) in the code read so far. The port draws a smoke cloud, nothing else (INFERRED).
+* Collision of projectiles with ships: segment (beams) or sphere-swept segment (missiles, radius = half the largest model extent)
+  against the ship's collision box; the owner is excluded (INFERRED, the original's pair filter was not found; mines can hit their
+  owner after 1 s in the port); missiles also stop at track polygons using the ship sweep with a tiny box.
+
+## 5. What a hit does (victim side, CONFIRMED)
+* Message 0x202 (beams, 0x50651): human victim -> boost timer `+0x3E` cleared and `+0x40 = 0xFA` ms (slow + jittery steering).
+  Blaster: damage 1/1, effect 10 (LASERHIT), the human hears cue 0x3F. Disrupter: no damage, `+0x26 = 0x1388` (steering and pitch
+  reversed for 5 s), effect 11 (DISRUPTR).
+* Message 0x106 with a weapon slot (0x5082F..0x50A57): effect by weapon: Ambler `+0x28 = 0x2710` (10 s, effect 16), Bomber `+0x2A = 0xFA0`
+  (4 s, effect 13), Hyper Neuro `+0x2C = 0x2710` (10 s, effect 15), Scrambler effect 14, Mini Mines effect 9 (+ cue 0x40 for the human),
+  everything else effect 9 (EXPLOSN); then `RaceSlotDamage(table +0x30, +0x34)` (3 s immunity applies). When the *human* fired the weapon
+  the pilot of the victim's class answers with a line (cue 13+class, table 0x50881).
+* Not ported: the difficulty doubling of blaster damage ([0x49F04] == 2, the port uses level 1), the push along the contact normal and the
+  0.625 speed factor of the pair response for projectile contacts, screen shake and flash (0x440F3, 0x4F3A0), and the particle effects
+  (the port uses the EXPL / FIRE sprites for explosions and smoke).
+
+## 6. Bonus objects (CONFIRMED structure)
+Placement table `0x5502C` (per track 1..10: count + 16-byte entries x, y, z, type; type -1 = random, 0x42A9A picks from {0,1,3,2,5}). The
+object is a camera-facing sprite `BONUS<type>.SPR` (65x63; REPAIR, REPAIR, TURBO, a red arrow cross, $, BOOST) with a +-0x2620 collision cube; it is consumed by
+the first ship that touches it (0x42BD5). Types (0x50724..0x5082B): 0 engine damage = 0, 1 steering damage = 0, 2 booster fuel refilled, 3
+**reversed steering and pitch for 5 s** (the red icon; it affects AI ships too), 4 credits + 50 (record +4), 5 free booster for 5 s. Effects
+play sound 6 (types 0,1,2,4), 11 (type 3) or 12 (type 5). Sprite size on screen = the collision cube (INFERRED; the original stores
+a scale 0x1C98 at slot +0x34 whose unit is not decoded). Pickups are placed once, there is no respawn.
+
+## 7. AI weapon use (CONFIRMED structure, timing INFERRED)
+The AI loadout (0x58641): weapon A by ship class `{4,4,7,5,2,2,3,1,8,2}` (table 0x58675), 6 rounds (0x5869D), no B, booster item 0. Every
+update (about 30/s, the port decides every 1/30 s): with probability 0x2000/0x10000 the weapon is cycled (0x5155E), otherwise the AI fires when
+the selection is not the booster and it has a lock (0x51570..0x5157E). A finished ship does not shoot. The pilot of an AI ship that has the
+human locked says a line (cue 43+class, table 0x515A4, checked every update, rate-limited by the cue rules). The human's default loadout in the port is the original's cheat-mode
+loadout ([0x53FF8]: Seeker + Scrambler, 9 rounds each, booster 0); the real game fills it from the shop (not ported). `--weapons none`
+gives a bare ship, `--weapons seeker:5,mines:8,booster:3` anything else.
+
+## 8. Voice cues (CONFIRMED mechanism and tables)
+`VoiceCue` 0x530B8, list of mode 3 (initialised with `InitVoices(3, 0, no-repeat=1)` at race start): 85 entries `{name, ..., pilot}` (stride
+0x1C, list pointer at `[0x52EE4 + 3*4]`): 0-1 announcer/winner lines (EF93, EF104), 2-3 "breaking up" (EM38, EM41), 4-13 contact (table 0x509BA, never reached in the port:
+the original tests slot data +2 == 2 there), 14-23 victim answers when the human hits a ship, 24-43 passing lines (tables 0x50C03/0x50C2B, not triggered by the port),
+44-53 AI taunts, 54-64 weapon announcer (0x36 Disrupter .. 0x3C Scrambler, 0x3E Bomber, 0x3F "under fire", 0x40 mine hit), 65-74 EPS0-9 (position), 75-84 finish lines.
+Rules: a cue is dropped if one of the last four cues equals it, and dropped while the previous line is still playing (no queue).
+Triggers in the port: launch of the player's weapon, rounds exhausted (cue 0), hit on the player (0x3F / 0x40), player hits a ship (14+),
+an AI ship locks the player (44+), lap line (position announcement 64+rank, 0x5A5FE), finish (75+class, 0x5A6AA, dropped while the position
+line plays) and 4 s later the result line (rank 1: cue 0/1 at random, otherwise rank+1, 0x5A9A9), damage beyond 100: cue 2 or 3 at random.
+`--no-voices` silences them.
+
+## 9. Controls
+`F` fire (gamepad X/west), `X` next weapon (gamepad B/east). With the booster selected `F` switches it. HUD line: energy pools, rounds,
+booster fuel, lock, active effects. Red square = lock target.

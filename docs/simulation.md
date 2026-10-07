@@ -194,6 +194,10 @@ hits while flying: speed/2 (>= 0x1174C), bounce 22.5 deg off the surface (`0x3BD
 Port: `ShipState::wreck*`, `stepShipDynamics`, `shipHitResponse`, `updateWrecks`. Simplifications: the per-rotation collision
 revert is replaced by the normal track sweep, and a 12 s safety timeout recovers wrecks that never leave their piece.
 
+### Weapons, pickups and status effects
+See `docs/weapons.md` (full tables and confidence labels). Ship-side effects live in `ShipState` / `stepShipDynamics`: reversed steering and pitch
+(`+0x26`), speed cap / 2 (`+0x28`), throttle forced on (`+0x2A`), steering x16 (`+0x2C`, `+0x40`), booster gain (`+0x2E` / booster switch).
+
 ### Not done
-* Ship-vs-ship collision (`0x14620`, OBB solver), damage and the explosion branch of the wall-hit handler.
-* Pitch coupling to the ground, damage (`RaceSlotDamage`), boost/slow timers (+0x3E/+0x40), AI (`RaceAIControl`).
+* Pitch coupling to the ground.
+* Mode-specific start tables (0x50252 / 0x5040C), the shop and the difficulty switch.

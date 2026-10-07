@@ -40,9 +40,16 @@ A window/input/loop ✅ · B display original asset ✅ · C free-camera track v
 * DONE (oracle-verified): ship-vs-ship contact (TOI), frame re-simulation, damage model, wreck on a second hit.
 * DONE (decoded, behaviour-checked): AI ships (`ship_ai.cpp`), F9 toggle.
 * DONE (decoded, behaviour-checked): AI avoidance, doors, pit/random branches, tier speed factors, trailing boost, wreck/debris handler with recovery.
-* OPEN: effects/sound, official lap/finish logic, mode-specific tables (0x50252/0x5040C), weapons, difficulty selection (0x14620), ship-vs-door cube, damage/boost timers, AI.
+* OPEN: official lap/finish logic, mode-specific tables (0x50252/0x5040C), difficulty selection, ship-vs-door cube.
 
 
 ## Sound (this phase)
 * DONE: SDL3 audio stream + software mixer + FluidSynth MIDI with `--soundfont` (default bundled GeneralUser GS); `.SMP` = 8-bit unsigned mono 11025 Hz; `.HMP` -> SMF converter (120 ticks/s); Fx id table and positional rule from the original; engine loop, wall/contact/wreck effects, race music; `.app` bundles the soundfont and FluidSynth + dylibs.
-* OPEN: more effect triggers (weapons, pickups, water, jet-by, crowd, speech, menu), intro/win/lose music flow, second engine voice, per-track ambience, music loop points (HMI loop controllers are ignored: the whole file loops).
+* DONE: HMI loop points, race countdown with announcer + ENGSTART, water hit, ambient loops (refuel / crowd), win/lose music at the finish, laps/finish HUD.
+* DONE: weapon / pickup / hit sounds, pilot and announcer voice cues (see below). OPEN: menu sounds, the TV-camera jet-by, intro/menu music flow, start speed-bonus table 0x50252.
+
+
+## Weapons, pickups, voices (this phase; details in docs/weapons.md)
+* DONE (decoded from the original, unit-tested with synthetic ships): the 12-weapon table, energy pools / ammo / cooldown, cycling, lock-on cone, beams (Blaster, Disrupter), homing missiles (Frag, Super Frag, Seeker, Super Seeker, Ambler, Hyper Neuro, Bomber, Scrambler), Mini Mines, Smoker (cosmetic), victim damage and status effects (reversed controls, half speed cap, jammed throttle, hypersensitive steering, booster), boosters, pit repair, pickups of all six types with the per-track placement tables, AI weapon use with the original loadouts.
+* DONE: pilot / announcer voice cues with the original busy / no-repeat rules; `F` fire, `X` next weapon; HUD line, lock marker, sprites for pickups and explosions.
+* OPEN / SPECULATIVE: particle effects (sprites used instead), beam colours, owner-vs-projectile contact rule, shop / loadout selection (default = the cheat loadout), contact and passing voice lines, difficulty-dependent blaster damage.

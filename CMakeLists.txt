@@ -21,7 +21,8 @@ add_library(slipstream_core STATIC
   src/game/ship_sim.cpp
   src/game/ship_collide.cpp
   src/game/doors.cpp
-  src/game/ship_ai.cpp)
+  src/game/ship_ai.cpp
+  src/game/weapons.cpp)
 target_include_directories(slipstream_core PUBLIC src)
 target_compile_options(slipstream_core PRIVATE -Wall -Wextra)
 
@@ -69,6 +70,10 @@ add_test(NAME format_tests COMMAND slipstream_tests)
 add_executable(slipstream_physics_tests tests/physics_tests.cpp)
 target_link_libraries(slipstream_physics_tests PRIVATE slipstream_core)
 add_test(NAME physics_tests COMMAND slipstream_physics_tests)
+
+add_executable(slipstream_weapons_tests tests/weapons_tests.cpp)
+target_link_libraries(slipstream_weapons_tests PRIVATE slipstream_core)
+add_test(NAME weapons_tests COMMAND slipstream_weapons_tests)
 
 add_executable(slipstream_audio_tests tests/audio_tests.cpp)
 target_link_libraries(slipstream_audio_tests PRIVATE slipstream_audio slipstream_core)

@@ -414,6 +414,31 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     }
   }
 
+  // --- projectile models (names from the table at 0x5BF5E) ---
+  {
+    static const char* kNames[7] = {"AIRMINE.SHP", "AMBLER.SHP", "BOMBER.SHP", "FRAG.SHP", "HYPER.SHP", "SCRAMBLE.SHP", "SEEKER.SHP"};
+    for (int k = 0; k < 7; ++k) {
+      auto bytes = data.read(kNames[k]);
+      if (!bytes) continue;
+      auto sh = parseShape(*bytes);
+      if (!sh) continue;
+      float ext = 0;
+      for (auto& poly : sh->polys) {
+        std::vector<Vec3> vs;
+        bool bad = false;
+        for (uint16_t idx : poly.index) {
+          if (idx >= sh->verts.size()) { bad = true; break; }
+          const auto& v = sh->verts[idx];
+          vs.push_back({float(v.x) * s->shipScale, float(v.y) * s->shipScale, float(v.z) * s->shipScale});
+          ext = std::max({ext, std::fabs(float(v.x)), std::fabs(float(v.y)), std::fabs(float(v.z))});
+        }
+        if (bad || vs.size() < 3) continue;
+        addPoly(s->weaponMeshes[size_t(k)], vs, poly.uv, b.globalMaterial(sh->materials, poly.material), Builder::unitNormal(poly.nx, poly.ny, poly.nz));
+      }
+      s->weaponMeshRadius[size_t(k)] = ext;
+    }
+  }
+
   s->track_data = std::move(t);
   s->buildFloorIndex();
   *out = std::move(*s);

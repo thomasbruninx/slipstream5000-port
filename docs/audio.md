@@ -23,11 +23,26 @@ effects only and says so on stderr.
 Offline rendering for checks: `slipstream_audio_dump --music INGAME2.HMP --seconds 20 --out x.wav` /
 `--sfx CRASH.SMP` (no sound device needed; prints peak/RMS).
 
-## What is wired
-* Music: a random race song (INGAME2/3/4, like the original) when a track is shown; kept across track changes.
-* Effects (`Fx` ids of the original, positional rule of `0x4B4DB`): wall hit light/hard (SCRAPE1/SCRAPE2 by the 0x22E98
-  speed threshold), ship-to-ship contact (EXPLOSN), wreck (CRASH), the player's engine loop (LOW.SMP, pitch `1 + v/262144`).
-  Events come from the simulation as counters in `ShipState` (`sfxWallLight`, `sfxWallHard`, `sfxContact`, `sfxWreck`) and are
-  drained by `ViewerApp::drainSounds`.
-* Not wired (nothing to trigger them yet): weapons, pickups, water, jet-by (JETPASS1), crowd/pit loops, speech (`EM/EF`),
-  menu sounds (SELECT), the intro/win/lose jingles (the songs can be played with `--music`), the second engine voice (HIGH).
+## What is wired (as in the original)
+* **Music**: a random race song (INGAME2/3/4; like `PlayTrackIntro`/`DoGame3D`). HMI loop markers are honoured: the song plays
+  from the start to its first loop end (controller 111) and then that loop (from the matching controller 109) forever - the
+  game never issues branch commands, so later sections are unused (INGAME2: ticks 2..3595, INTRO: 6748..8545). WIN.HMP /
+  LOSE.HMP play once when the player finishes the race (position <= 3 -> WIN, else LOSE, `0x5A8D0`). INTRO.HMP is available via
+  `--music INTRO` (the port has no intro/menu flow).
+* **Race start sequence** (`DoGame3D` 0x58AD7 / 0x59010): 5 s countdown, ships held (INFERRED): the per-track announcer sample
+  at 5 (`EM01`, `EF12`, ... lists at 0x4B38F, language letter E), `ENGSTART` at 3, the second announcer sample at 1 and the
+  engine voice starts, then GO. `--no-countdown` skips it.
+* **Effects** (`Fx` ids, positional rule of `0x4B4DB`): wall hit SCRAPE1 / SCRAPE2 (slot speed threshold 0x22E98) or WATERHIT on
+  `WATE*` surfaces, ship contact EXPLOSN, wreck CRASH, engine loop `LOW.SMP` with pitch `1 + v/262144` (the original opens two
+  engine voices for the two human players, both with LOW; HIGH.SMP is never referenced by the code).
+* **Ambient loops** (`0x4B658`, selected at 0x58CB6): `PITSLP` while the player is in the refuel piece, `CROWDLP` in pieces whose
+  name starts with CROW or GRID; fade in/out about 1 s.
+* Race flow for the sounds: laps (completed circuits of the node chain), `--laps N` (default 3), "FINAL LAP!!" and "FINISHED"
+  on the HUD.
+* **Weapons, pickups, voices** (this phase, `docs/weapons.md`): BLASTER (beam launch), MISSILE (missile / smoker launch), MINEDROP, LASERHIT,
+  DISRUPTR, EXPLOSN (missile / mine hit and wall explosion), BOMBER, SCRAMBLE, HYPERNEU, AMBLER (hit sounds), BONUSCOL (pickups), ENGSTART (booster on)
+  are played positionally like every other effect. Pilot / announcer lines come from the 85-entry cue list of the executable
+  (`AudioSystem::playCue`): one voice at a time, a cue is dropped while the previous one still plays and when it equals one of the last four.
+* **Not wired** because the port has nothing to trigger them: menu sounds (SELECT), the speech samples used by menus, and
+  the **jet-by** (JETPASS1): in the original it belongs to the trackside TV camera (`0x45196` picks a camera spot, plays
+  JETPASS1 at volume 0x4000 when a ship faster than 0x2BA3E passes within 0x17D40 of it).

@@ -20,6 +20,7 @@ struct ShipHit {
   double n[3] = {0, 1, 0};
   uint16_t polyFlags = 0;
   int piece = -1;
+  int material = -1;  // Scene::materials index of the polygon that was hit
 };
 
 // pos in world coordinates, M = orientation rows (right, up, forward), lo/hi = collision box in model space.

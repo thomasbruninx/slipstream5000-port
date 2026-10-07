@@ -21,6 +21,8 @@ class MusicPlayer {
 
   // Starts a Standard MIDI File from memory; loops forever when `loop`.
   bool play(const Bytes& smf, bool loop);
+  // Plays `intro` once, then `loop` forever (empty loop: the song just ends); the loop starts when the intro reaches `switchTick`.
+  bool playSegments(const Bytes& intro, const Bytes& loop, int switchTick);
   void stop();
   bool playing() const;
   void setVolume(float v);  // 0..1 (synth gain)

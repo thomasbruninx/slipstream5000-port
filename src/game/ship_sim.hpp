@@ -30,6 +30,12 @@ struct ShipState {
   double damageA = 0, damageB = 0;  // [rec+0x2A] engine, [rec+0x2E] steering damage, 0..100 (16.16 in the original)
   double invuln = 0;            // seconds of damage immunity after damage (3 s)
   double recentHit = 0;         // ship data +0x12 (0x190 ms): a second wall hit while set wrecks the ship
+  // Status effects of weapons and pickups (ship data timers, all counted down in ms by RaceSlotControl 0x104, read by
+  // RaceSlotMove 0x51B0A..0x51D66): +0x26 reversed steering/pitch, +0x28 speed cap halved, +0x2A throttle forced on,
+  // +0x2C hypersensitive steering (x16, also while +0x40 runs), +0x2E / booster switch: speed factor + boosterGain.
+  double reverseTime = 0, halfCapTime = 0, forceThrottleTime = 0, hyperTime = 0, boosterFreeTime = 0;
+  bool boosterOn = false;       // [+0x34]: the selected booster item is burning fuel
+  double boosterGain = 0;       // table 0x5BD44 +0x1C factor - 1 of the fitted booster item (0 = none)
   // Wreck = debris handler 0x3E9F5 (installed by 0x3E8F2 after a second wall hit): the ship tumbles along the track towards the
   // next node for a while, then recovers (re-aligned to the track) once it left the wreck piece, hit something, or timed out.
   bool wrecked = false;
@@ -46,7 +52,9 @@ struct ShipState {
   double savedSpeed = 0;         // ship data speed kept for the recovery
   // sound events raised by the simulation, drained by the front end (Fx ids of the original: wall hit 0x50A64 picks
   // SCRAPE2 above 0x22E98 u/s else SCRAPE1, ship contact EXPLOSN, wreck EXPLOSN)
-  int sfxWallLight = 0, sfxWallHard = 0, sfxContact = 0, sfxWreck = 0;
+  int sfxWallLight = 0, sfxWallHard = 0, sfxContact = 0, sfxWreck = 0, sfxWater = 0;
+  int sfxOverDamage = 0;        // damage beyond 100 (0x52107..0x52189: explosion effect, the human pilot speaks cue 2/3)
+  bool hitWater = false;        // the surface of the current wall hit is a WATE* material (set by moveShip)
   int hits = 0;                 // number of wall/floor hits so far (diagnostics)
   double steerAxis = 0;         // ramped steering axis -1..1 (keyboard behaviour of the original)
   double roll = 0;              // bank in turns (derived)

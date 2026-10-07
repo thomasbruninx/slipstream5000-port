@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <vector>
 
@@ -99,9 +100,71 @@ bool AudioSystem::init(const GameData& data, const AudioConfig& cfg, std::string
     std::string err;
     if (!music_.init(rate, soundfont_, &err)) warn("audio: " + err);
   }
+  {  // announcer lists from the user's executable (4-char names, first letter = language)
+    static const char* kDefault1[10] = {"EM01", "EF12", "EM09", "EF08", "EF10", "EF06", "EM03", "EM05", "EM07", "EM11"};
+    static const char* kDefault2[10] = {"EM02", "EF13", "EM10", "EF09", "EF11", "EF07", "EM04", "EM06", "EM08", "EM12"};
+    for (int i = 0; i < 10; ++i) { speech_[0][i + 1] = kDefault1[i]; speech_[1][i + 1] = kDefault2[i]; }
+    if (auto exe = data.read("SLIPSTRM.EXE")) {
+      constexpr size_t kBase = 0x4D854 - 0x10000;
+      for (int w = 0; w < 2; ++w) {
+        const size_t va = w == 0 ? 0x4b38f : 0x4b3b7;
+        bool ok = exe->size() > kBase + va + 40;
+        for (int i = 0; ok && i < 10; ++i) {
+          const char* c = reinterpret_cast<const char*>(exe->data() + kBase + va + 4 * size_t(i));
+          ok = c[0] == 'E' && (c[1] == 'M' || c[1] == 'F') && c[2] >= '0' && c[2] <= '9';
+        }
+        if (ok)
+          for (int i = 0; i < 10; ++i) speech_[w][i + 1].assign(reinterpret_cast<const char*>(exe->data() + kBase + va + 4 * size_t(i)), 4);
+      }
+    }
+  }
+  cues_.clear();
+  if (auto exe = data.read("SLIPSTRM.EXE")) {  // cue list of mode 3: pointer table 0x52EE4, count + 0x1C byte entries (name at +0, pilot at +0x18)
+    constexpr size_t kBase = 0x4D854 - 0x10000;
+    auto rd = [&](size_t va) -> uint32_t {
+      const size_t o = kBase + va;
+      return o + 4 <= exe->size() ? uint32_t((*exe)[o]) | (uint32_t((*exe)[o + 1]) << 8) | (uint32_t((*exe)[o + 2]) << 16) | (uint32_t((*exe)[o + 3]) << 24) : 0u;
+    };
+    const uint32_t ptr = rd(0x52EE4 + 3 * 4);
+    if (ptr) {
+      const size_t list = size_t(ptr) + 0x10000;
+      const uint32_t n = rd(list);
+      if (n > 0 && n < 200 && kBase + list + 4 + size_t(n) * 0x1C <= exe->size()) {
+        for (uint32_t i = 0; i < n; ++i) {
+          const size_t e = list + 4 + size_t(i) * 0x1C;
+          const char* nm = reinterpret_cast<const char*>(exe->data() + kBase + e);
+          Cue c;
+          c.name.assign(nm, strnlen(nm, 14));
+          c.speaker = int(rd(e + 0x18));
+          cues_.push_back(std::move(c));
+        }
+      }
+    }
+  }
+  for (int& h : cueHistory_) h = -1;
+  cueVoice_ = 0;
   applyVolumes();
   if (stream_) SDL_ResumeAudioStreamDevice(stream_);
   return true;
+}
+
+const std::string& AudioSystem::cueSample(int cue) const {
+  static const std::string kEmpty;
+  return cue >= 0 && cue < int(cues_.size()) ? cues_[size_t(cue)].name : kEmpty;
+}
+
+int AudioSystem::cueSpeaker(int cue) const { return cue >= 0 && cue < int(cues_.size()) ? cues_[size_t(cue)].speaker : 0; }
+
+bool AudioSystem::playCue(int cue) {
+  if (!enabled_ || cue < 0 || cue >= int(cues_.size())) return false;
+  for (int h : cueHistory_) if (h == cue) return false;        // 0x530DC..0x53106: not one of the last four cues again
+  if (cueVoice_ && mixer_.active(cueVoice_)) return false;     // 0x53131..0x5313F: the previous line is still playing -> dropped
+  auto s = sample(cues_[size_t(cue)].name);
+  if (!s) return false;
+  cueVoice_ = mixer_.play(s, 1.0f);
+  for (int i = 3; i > 0; --i) cueHistory_[i] = cueHistory_[i - 1];  // 0x531B5..0x531E4
+  cueHistory_[0] = cue;
+  return cueVoice_ != 0;
 }
 
 void AudioSystem::shutdown() {
@@ -168,14 +231,50 @@ void AudioSystem::engineSet(int voice, double shipSpeed) {
 
 void AudioSystem::engineStop(int voice) { if (voice) mixer_.stop(voice); }
 
+std::string AudioSystem::speechName(int track, int which) const {
+  if (track < 1 || track > 10 || which < 1 || which > 2) return "";
+  return speech_[which - 1][track] + ".SMP";
+}
+
+void AudioSystem::playSpeech(int track, int which) {
+  if (!enabled_) return;
+  const std::string n = speechName(track, which);
+  if (n.empty()) return;
+  if (auto s = sample(n)) mixer_.play(s, 1.0f);
+}
+
+void AudioSystem::updateAmbient(double dt, int desired) {
+  if (!enabled_) return;
+  const float rate = float(2.0 * dt);  // 4B658: volume += 2*dt (2.14) towards 0x7FFF, i.e. a full fade in about 1 s
+  if (desired != 0) {
+    if (ambientId_ != desired) {  // new loop replaces the old one (the volume carries over)
+      if (ambientVoice_) mixer_.stop(ambientVoice_);
+      ambientVoice_ = 0;
+      if (auto s = sample(desired == 1 ? "PITSLP.SMP" : "CROWDLP.SMP")) ambientVoice_ = mixer_.play(s, ambientVol_, 0.0f, 1.0f, true);
+      ambientId_ = desired;
+    }
+    ambientVol_ = std::min(1.0f, ambientVol_ + rate);
+  } else if (ambientId_ != 0) {
+    ambientVol_ = std::max(0.0f, ambientVol_ - rate);
+    if (ambientVol_ <= 0) {
+      if (ambientVoice_) mixer_.stop(ambientVoice_);
+      ambientVoice_ = 0;
+      ambientId_ = 0;
+    }
+  }
+  if (ambientVoice_) mixer_.set(ambientVoice_, ambientVol_ * 0.8f, 0.0f, 1.0f);
+}
+
 bool AudioSystem::playMusic(const std::string& hmpName, bool loop) {
   if (!enabled_ || !music_.ready() || !data_) return false;
   auto b = data_->read(hmpName);
   if (!b) return false;
-  auto smf = hmpToSmf(*b);
-  if (!smf) return false;
+  auto seg = hmpToSegments(*b);
+  if (!seg) return false;
   musicName_ = hmpName;
-  return music_.play(*smf, loop);
+  // HMI loop markers: intro up to the first loop end, then that loop forever; songs without markers loop whole when asked
+  if (!seg->loop.empty()) return music_.playSegments(seg->intro, seg->loop, int(seg->loopEndTick));
+  return music_.play(seg->intro, loop);
 }
 
 void AudioSystem::stopMusic() {

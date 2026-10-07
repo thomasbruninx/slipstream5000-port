@@ -610,6 +610,56 @@ void SoftwareRenderer::drawLine3D(P3 a, P3 b, uint32_t col) {
   }
 }
 
+bool SoftwareRenderer::projectToScreen(const double w[3], float* x, float* y, float* z) const {
+  const float dx = float(w[0] - cam_.pos[0]), dy = float(w[1] - cam_.pos[1]), dz = float(w[2] - cam_.pos[2]);
+  const float cz = dx * fwd_[0] + dy * fwd_[1] + dz * fwd_[2];
+  if (cz <= cam_.nearPlane) return false;
+  const float cx = dx * right_[0] + dy * right_[1] + dz * right_[2], cy = dx * up_[0] + dy * up_[1] + dz * up_[2];
+  if (x) *x = float(w_) * 0.5f + cx / cz * focal_;
+  if (y) *y = float(h_) * 0.5f - cy / cz * focal_;
+  if (z) *z = cz;
+  return true;
+}
+
+void SoftwareRenderer::drawSpriteWorld(const Sprite& spr, const Palette& pal, const double world[3], double worldWidth, int transparent) {
+  float sx, sy, z;
+  if (spr.w <= 0 || spr.h <= 0 || !projectToScreen(world, &sx, &sy, &z)) return;
+  const float pw = float(worldWidth) / z * focal_;  // projected width in pixels
+  if (pw < 1.0f) return;
+  const float ph = pw * float(spr.h) / float(spr.w);
+  const int x0 = int(std::floor(sx - pw * 0.5f)), x1 = int(std::ceil(sx + pw * 0.5f));
+  const int y0 = int(std::floor(sy - ph * 0.5f)), y1 = int(std::ceil(sy + ph * 0.5f));
+  const float iz = 1.0f / z;
+  for (int y = std::max(y0, sy0_); y <= std::min(y1 - 1, sy1_); ++y) {
+    const int v = std::clamp(int((float(y) + 0.5f - (sy - ph * 0.5f)) / ph * float(spr.h)), 0, spr.h - 1);
+    for (int x = std::max(x0, sx0_); x <= std::min(x1 - 1, sx1_); ++x) {
+      const int u = std::clamp(int((float(x) + 0.5f - (sx - pw * 0.5f)) / pw * float(spr.w)), 0, spr.w - 1);
+      const uint8_t idx = spr.pixels[size_t(v) * size_t(spr.w) + size_t(u)];
+      if (int(idx) == transparent) continue;
+      const size_t o = size_t(y) * size_t(w_) + size_t(x);
+      if (iz < depth_[o] * (1.0f - 2e-2f)) continue;
+      color_[o] = 0xff000000u | pal.rgba[idx];
+    }
+  }
+}
+
+void SoftwareRenderer::drawLineWorld(const double a[3], const double b[3], uint32_t color) {
+  auto cs = [&](const double* p) {
+    const float dx = float(p[0] - cam_.pos[0]), dy = float(p[1] - cam_.pos[1]), dz = float(p[2] - cam_.pos[2]);
+    return P3{dx * right_[0] + dy * right_[1] + dz * right_[2], dx * up_[0] + dy * up_[1] + dz * up_[2], dx * fwd_[0] + dy * fwd_[1] + dz * fwd_[2]};
+  };
+  const int saved = curItem_;
+  curItem_ = -1;
+  drawLine3D(cs(a), cs(b), color);
+  curItem_ = saved;
+}
+
+void SoftwareRenderer::drawRectScreen(int x0, int y0, int x1, int y1, uint32_t color) {
+  auto put = [&](int x, int y) { if (x >= 0 && x < w_ && y >= 0 && y < h_) color_[size_t(y) * size_t(w_) + size_t(x)] = color; };
+  for (int x = x0; x <= x1; ++x) { put(x, y0); put(x, y1); }
+  for (int y = y0; y <= y1; ++y) { put(x0, y); put(x1, y); }
+}
+
 void SoftwareRenderer::drawCageLines(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat) {
   const PanelDetail& d = scene.panelDetails[p.detail];
   if (!d.valid || int(p.count) != d.nBase) return;

@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "audio/mixer.hpp"
 #include "audio/music_player.hpp"
@@ -54,6 +55,23 @@ class AudioSystem {
   void engineSet(int voice, double shipSpeed);  // pitch = 1 + speed/4/65536 (FxAddEngine 0x4B86D / 0x4B570)
   void engineStop(int voice);
 
+  // Per-track announcer samples (lists at 0x4B38F / 0x4B3B7 of the exe, language letter 'E' = English): `which` 1 plays at the
+  // start of the countdown (0x58AF3 -> 0x4B975), 2 one second before the start (0x59063 -> 0x4B99D).
+  std::string speechName(int track, int which) const;
+  void playSpeech(int track, int which);
+  // Ambient loops (0x4B96F / 0x4B658): 1 = PITSLP in the refuel piece, 2 = CROWDLP in CROW*/GRID* pieces, 0 = none. Fades in/out
+  // over about a second; a change of loop stops the old one at once.
+  void updateAmbient(double dt, int desired);
+
+  // Voice cues of the original (VoiceCue 0x530B8): pilot and announcer lines taken from the 85 entry list of mode 3 in the
+  // executable (EF*.SMP / EM*.SMP / EPS*.SMP). One voice at a time: a cue is dropped while the previous line is still playing,
+  // and a cue equal to one of the last four is dropped as well. Returns true when the line started.
+  bool playCue(int cue);
+  int cueCount() const { return int(cues_.size()); }
+  const std::string& cueSample(int cue) const;  // "EF93.SMP" ("" when out of range)
+  int cueSpeaker(int cue) const;                // pilot number 1..10 of the line (entry +0x18), 0 = announcer
+  bool cueBusy() const { return cueVoice_ && mixer_.active(cueVoice_); }
+
   // --- music ---
   bool playMusic(const std::string& hmpName, bool loop = true);
   void stopMusic();
@@ -81,6 +99,13 @@ class AudioSystem {
   std::string soundfont_, musicName_;
   bool musicOn_ = true, sfxOn_ = true, enabled_ = false;
   bool sdlAudioInit_ = false;
+  std::string speech_[2][11];
+  struct Cue { std::string name; int speaker = 0; };
+  std::vector<Cue> cues_;
+  int cueVoice_ = 0;
+  int cueHistory_[4] = {-1, -1, -1, -1};
+  int ambientId_ = 0, ambientVoice_ = 0;
+  float ambientVol_ = 0;
 };
 
 }  // namespace slip

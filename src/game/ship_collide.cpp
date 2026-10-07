@@ -81,6 +81,7 @@ ShipHit sweepShipBox(const Scene& scene, const double pos[3], const double M[9],
         best.n[0] = p.normal.x; best.n[1] = p.normal.y; best.n[2] = p.normal.z;
         best.polyFlags = p.pflags;
         best.piece = pi;
+        best.material = p.material;
       }
     }
   }

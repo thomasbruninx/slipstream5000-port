@@ -27,6 +27,7 @@ Human Machine Interfaces "HMIMIDIP013195".
 * **Delta time**: little-endian base-128, bytes with bit 7 **clear** continue, the last byte has bit 7 **set** (Standard MIDI
   Files are the other way round). Events are ordinary MIDI channel events with an explicit status byte (no running status)
   and FF meta events.
+* **Loop markers**: CC109 = loop id (value >= 128), CC110 = 255 (forever), CC111 = loop end with that id, CC113 = branch id, CC119 = beat. The game has no branch calls, so a song runs to its first loop end and then repeats that loop (`hmpToSegments`); WIN/LOSE have no markers.
 * **Controllers 108..119** carry HMI loop / branch / beat data (e.g. `B0 6E FF`, `B0 71 BE`) and are dropped. Track 1 holds
   those markers; track 0 is only an end marker that sets the length.
 * **Timing: 120 ticks per second** (CONFIRMED: longest track / 120 = header seconds for INGAME2 131, INGAME3 299, INGAME4 129,
@@ -40,3 +41,11 @@ Code: `src/original_formats/audio.{hpp,cpp}` (`hmpToSmf`), tests `tests/audio_te
 ## .BNK — instrument banks (DRUM.BNK, MELODIC.BNK)
 AdLib FM instrument banks (`ADLIB-` signature header) for the original's OPL driver. Not used: the music is rendered with a
 General MIDI SoundFont instead (see docs/audio.md).
+
+## Other sound facts (CONFIRMED by reading code)
+* Announcer samples: `E` + `M`/`F` + number; per track (1..10) list 1 {EM01, EF12, EM09, EF08, EF10, EF06, EM03, EM05, EM07, EM11}
+  at the start of the countdown, list 2 {EM02, EF13, EM10, EF09, EF11, EF07, EM04, EM06, EM08, EM12} one second before the
+  start. The first letter is replaced by the language letter table `EFG` (0x49D75).
+* Ambient loops: effect slot 0x4B280 selects PITSLP (1) / CROWDLP (2); volume ramps by `2*dt` (2.14) towards 0x7FFF.
+* Race start timers: `[0x54408]` counts 5..0 in seconds; `[0x54404] = 0x3A98` (15 s) enables the position-based speed bonus table
+  0x50252 (not ported).

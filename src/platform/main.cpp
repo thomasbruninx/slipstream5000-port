@@ -30,6 +30,10 @@ static void usage() {
       "  --bench N           headless: render N frames and report speed\n"
       "  --soundfont FILE    SoundFont for the MIDI music (default: resources/GeneralUser-GS.sf2, bundled in the app)\n"
       "  --music NAME        play this song (INGAME2/3/4/6, INTRO, WIN, LOSE .HMP) instead of a random race song\n"
+      "  --laps N            race length for the finish / result music (default 3)\n"
+      "  --no-countdown      skip the 5 s start sequence\n"
+      "  --weapons SPEC      player loadout, e.g. seeker:9,scrambler:9,booster:2 (default: the original's cheat loadout; 'none' = blaster only)\n"
+      "  --no-pickups        no bonus objects      --no-ai-weapons   the AI ships do not shoot      --no-voices   no pilot/announcer lines\n"
       "  --no-music          no music      --no-sfx   no sound effects     --no-audio   no sound at all\n"
       "  --volume V          master volume 0..1 (default 1)   --music-volume V (0.8)   --sfx-volume V (1)\n");
 }
@@ -78,6 +82,12 @@ int main(int argc, char** argv) {
     else if (a == "--bench") bench = std::atoi(next("--bench"));
     else if (a == "--soundfont") opt.audio.soundfont = next("--soundfont");
     else if (a == "--music") { opt.music = next("--music"); if (opt.music.find('.') == std::string::npos) opt.music += ".HMP"; }
+    else if (a == "--laps") opt.laps = std::max(1, std::atoi(next("--laps")));
+    else if (a == "--no-countdown") opt.countdown = false;
+    else if (a == "--weapons") opt.weapons = next("--weapons");
+    else if (a == "--no-pickups") opt.pickups = false;
+    else if (a == "--no-ai-weapons") opt.aiWeapons = false;
+    else if (a == "--no-voices") opt.voices = false;
     else if (a == "--no-music") opt.noMusic = true;
     else if (a == "--no-sfx") opt.audio.sfx = 0.0f;
     else if (a == "--no-audio") opt.audio.enabled = false;
@@ -92,6 +102,7 @@ int main(int argc, char** argv) {
     else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
   }
 
+  if (!screenshot.empty() && simSeconds > 0) opt.countdown = false;
   if (!screenshot.empty() || bench > 0) opt.audio.openDevice = false;  // headless runs stay silent (no device, nothing rendered)
   ViewerApp app;
   std::string err;
@@ -114,6 +125,7 @@ int main(int argc, char** argv) {
   if (!screenshot.empty()) {  // headless
     InputState drive;
     drive.throttle = 1;
+    drive.fire = std::getenv("SLIP_FIRE") != nullptr;  // test hook: hold the trigger during --sim
     for (double t = 0; t < simSeconds; t += 1.0 / 60.0) app.update(1.0 / 60.0, drive);
     app.update(1.0 / 60.0, simSeconds > 0 ? drive : InputState{});
     app.render();
@@ -149,7 +161,10 @@ int main(int argc, char** argv) {
   uint64_t last = SDL_GetPerformanceCounter();
   const double freq = double(SDL_GetPerformanceFrequency());
   float mouseDX = 0, mouseDY = 0;
+  const double quitAfter = std::getenv("SLIP_QUIT_AFTER") ? std::atof(std::getenv("SLIP_QUIT_AFTER")) : 0.0;  // test hook: quit cleanly after N seconds
+  const auto startTime = std::chrono::steady_clock::now();
   while (running) {
+    if (quitAfter > 0 && std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count() > quitAfter) running = false;
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
       switch (e.type) {
@@ -163,6 +178,7 @@ int main(int argc, char** argv) {
           break;
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) app.toggleDrive();
+          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) app.cycleWeapon();
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) app.nextItem(1);
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) app.nextItem(-1);
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) running = false;
@@ -186,6 +202,7 @@ int main(int argc, char** argv) {
             case SDLK_F9: app.toggleAI(); break;
             case SDLK_M: app.toggleMusic(); break;
             case SDLK_N: app.toggleSfx(); break;
+            case SDLK_X: app.cycleWeapon(); break;
             case SDLK_C:
               if (e.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) copyDebug(app);
               break;
@@ -224,6 +241,7 @@ int main(int argc, char** argv) {
       in.throttle = std::max(in.throttle, ax(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
       in.brake = std::max(in.brake, ax(SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
     }
+    in.fire = k[SDL_SCANCODE_F] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST));
     in.steer = std::clamp(in.steer, -1.0f, 1.0f);
 
     app.update(dt, in);
@@ -243,6 +261,7 @@ int main(int argc, char** argv) {
   }
 
   if (pad) SDL_CloseGamepad(pad);
+  app.audio().shutdown();  // stop the audio callback and close the device while SDL is still alive (the app object outlives SDL_Quit)
   SDL_DestroyTexture(tex);
   SDL_DestroyRenderer(ren);
   SDL_DestroyWindow(window);

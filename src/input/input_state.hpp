@@ -6,5 +6,6 @@ struct InputState {
   float lookDX = 0, lookDY = 0;                      // radians this frame
   bool fast = false;
   float throttle = 0, brake = 0, steer = 0, pitch = 0;          // drive mode
+  bool fire = false;                                            // weapon trigger (held)
 };
 }  // namespace slip

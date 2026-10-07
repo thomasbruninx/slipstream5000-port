@@ -95,6 +95,13 @@ struct Scene {
   Mesh track;                         // world coordinates minus `origin`
   std::array<double, 3> origin{};     // world = origin + mesh coordinate (keeps floats small)
   std::array<Mesh, 10> shipMeshes;    // model space, scaled by shipScale, centred on the ART origin
+  // Projectile models: AIRMINE, AMBLER, BOMBER, FRAG, HYPER, SCRAMBLE, SEEKER (the .SHP names the launchers load at 0x5BF5E),
+  // scaled like the ships. Index = Scene::weaponMeshIndex(weapon id).
+  std::array<Mesh, 7> weaponMeshes;
+  std::array<float, 7> weaponMeshRadius{};  // half the largest extent in unscaled model units (collision radius)
+  static int weaponMeshIndex(int weapon) {  // 0x5BF34 table order
+    switch (weapon) { case 11: return 0; case 6: return 1; case 10: return 2; case 2: case 3: return 3; case 8: return 4; case 7: return 5; case 4: case 5: return 6; default: return -1; }
+  }
   std::array<std::array<double, 3>, 10> startPos{};  // world coordinates of the start grid
   Track track_data;                   // raw parsed data (for tools / physics)
   float shipScale = 2.0f;             // display scale applied to ART/SHP ship models

@@ -12,7 +12,10 @@ build/bin/slipstream --data /path/to/Slipstream5000   # folder containing SLIPST
 ```
 The folder is remembered for later launches (`~/Library/Application Support/Slipstream/data_dir.txt`); it is also searched at `$SLIPSTREAM_DATA`, `.`, and `~/Downloads/slip5000`.
 
-Controls — track viewer: `WASD` move, `Q/E` down/up, mouse look, `Shift` fast, `[` `]` previous/next track, `1`–`0` choose ship, `Space` drive/fly, `Tab` toggle backface culling, `F4`/`Cmd+C` copy the debug overlay, `F5` portal/class visibility, `F6` original painter order (vs z-buffer), `F7` show all scenery, `F8` hover assist (legacy) vs original-style flight, `F9` AI ships on/off, `M` music, `N` effects, `F1/F2/F3` track/shape/sprite viewer, `Esc` quit. Drive: `W/S` throttle/brake, `A/D` steer, `E/Q` pitch (gamepad: left stick + triggers, `A`/south button toggles driving, bumpers change item, Start quits).
+Controls — track viewer: `WASD` move, `Q/E` down/up, mouse look, `Shift` fast, `[` `]` previous/next track, `1`–`0` choose ship, `Space` drive/fly, `Tab` toggle backface culling, `F4`/`Cmd+C` copy the debug overlay, `F5` portal/class visibility, `F6` original painter order (vs z-buffer), `F7` show all scenery, `F8` hover assist (legacy) vs original-style flight, `F9` AI ships on/off, `M` music, `N` effects, `F1/F2/F3` track/shape/sprite viewer, `Esc` quit. Drive: `W/S` throttle/brake, `A/D` steer, `E/Q` pitch, `F` fire, `X` next weapon (blaster / weapon A / weapon B / booster) (gamepad: left stick + triggers, `A`/south button toggles driving, bumpers change item, Start quits).
+
+Combat (docs/weapons.md): the 12 original weapons, boosters, bonus objects and AI shooting are in. `--weapons seeker:9,scrambler:9,booster:2` sets the player's loadout
+(default: the original's cheat loadout, `none` = blaster only), `--no-pickups`, `--no-ai-weapons`, `--no-voices`.
 
 Headless: `slipstream --track 3 --screenshot out.ppm`, `--bench 120`, `--models RACER0`, `--sprites MAINMENU`, `--drive --sim 4 --screenshot ...`.
 

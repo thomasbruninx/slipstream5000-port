@@ -29,6 +29,16 @@ struct HmpInfo {
   double seconds = 0;     // header field (+0x3C)
   double lengthTicks = 0; // longest track
 };
+// HMI loop markers (controller 109 = loop id before the loop starts, 111 = loop end with that id; 110 = 255 count/forever).
+// The game never issues branch commands, so playback is: from the start up to the first loop end, then that loop forever.
+// `intro` = ticks [0, loopEnd] (or the whole song when there is no loop), `loop` = [loopStart, loopEnd) with the channel
+// state (programs, volumes, pans, ...) carried over; `loop` is empty for songs without markers (WIN, LOSE).
+struct MusicSegments {
+  Bytes intro, loop;
+  double loopStartTick = 0, loopEndTick = 0;
+};
+std::optional<MusicSegments> hmpToSegments(const Bytes& hmp);
+
 // Converts an HMP file to a type-1 Standard MIDI File (division 120, tempo 1,000,000 us per quarter note, i.e. 120 ticks/s).
 std::optional<Bytes> hmpToSmf(const Bytes& hmp, HmpInfo* info = nullptr);
 

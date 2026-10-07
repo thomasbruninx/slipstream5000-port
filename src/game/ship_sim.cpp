@@ -77,6 +77,11 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
   s.invuln = std::max(0.0, s.invuln - dt);
   s.boostTime = std::max(0.0, s.boostTime - dt);
   s.slowTime = std::max(0.0, s.slowTime - dt);
+  s.reverseTime = std::max(0.0, s.reverseTime - dt);
+  s.halfCapTime = std::max(0.0, s.halfCapTime - dt);
+  s.forceThrottleTime = std::max(0.0, s.forceThrottleTime - dt);
+  s.hyperTime = std::max(0.0, s.hyperTime - dt);
+  s.boosterFreeTime = std::max(0.0, s.boosterFreeTime - dt);
   if (s.wrecked) {  // dead-ship handler 0x51293 -> 0x3E9F5 (message 0x104, 0x3EB28)
     s.wreckTime += dt;
     s.steerAxis = s.pitchAxis = 0;
@@ -115,16 +120,18 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
   // ---- speed (RaceSlotMove 0x51BB6..0x51D66) ----
   double top = double(p.topSpeed);
   double fac = s.speedFactor + (s.slowTime > 0 ? -0.25 : s.boostTime > 0 ? 0.5 : 0.0);  // 0x51CA6..0x51CC2
+  if (s.boosterFreeTime > 0 || s.boosterOn) fac += s.boosterGain;  // 0x51CDC..0x51CFD: booster item factor - 1
+  const bool forced = s.forceThrottleTime > 0;  // 0x51B1D: control flag bit 0 (throttle) forced on
   double a;
-  if (in.throttle > 0.01f) {
+  if (in.throttle > 0.01f || forced) {
     double ratio = std::clamp(s.speed / top, 0.0, 1.0);
-    a = (double(p.thrustAtRest) - double(p.thrustAtRest - p.thrustAtTop) * ratio) * in.throttle;
+    a = (double(p.thrustAtRest) - double(p.thrustAtRest - p.thrustAtTop) * ratio) * (forced ? 1.0 : in.throttle);
   } else {
     a = -double(p.coastDecel);
   }
   a -= double(p.coastDecel) * 2.0 * in.brake;  // PLACEHOLDER brake strength
   a *= fac;  // 0x51D0D: thrust * factor
-  s.speed = std::clamp(s.speed + a * dt, 0.0, top * fac);  // speed cap f3 * factor (0x51D36)
+  s.speed = std::clamp(s.speed + a * dt, 0.0, top * fac * (s.halfCapTime > 0 ? 0.5 : 1.0));  // speed cap f3 * factor (0x51D36), halved by +0x28 (0x51D55)
 
   // ---- orientation (0x51D72..0x51E59) ----
   // Keyboard steering ramp (sub_59A05): the axis moves 4.0/s towards the pressed side (reversing zeroes it first)
@@ -141,7 +148,14 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
       s.steerAxis = std::clamp(s.steerAxis + (want > 0 ? step : -step) * std::fabs(want), -1.0, 1.0);
     }
   }
-  const double steer16 = s.steerAxis * 0x4000;
+  // Status effects on the control axes (0x51B10..0x51B75): reversed (+0x26), then hypersensitive (+0x2C or the 0.25 s jolt
+  // +0x40 = slowTime): axis * 16 clamped to +-1. The pitch axis gets the same treatment below.
+  auto axisFx = [&](double a) {
+    if (s.reverseTime > 0) a = -a;
+    if (s.hyperTime > 0 || s.slowTime > 0) a = std::clamp(a * 16.0, -1.0, 1.0);
+    return a;
+  };
+  const double steer16 = axisFx(s.steerAxis) * 0x4000;
   double* m = s.m;
   double roll = std::atan2(-m[1], m[4]) / kTau;  // Atan2Matrix on the matrix snapshot
   double target = std::clamp(steer16 / 2, -double(0x7f00), double(0x7f00) - 0.0) / 65536.0;
@@ -158,7 +172,7 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
     }
   }
   // DX input +0x4000 = nose up (emulator: forward.y = m[7] rises, tests/physics_tests.cpp)
-  double pitchTerm = std::floor(dtq * (s.pitchAxis * 0x4000) / 65536.0) / 65536.0;
+  double pitchTerm = std::floor(dtq * (axisFx(s.pitchAxis) * 0x4000) / 65536.0) / 65536.0;
   // steering damage: gains lose 0x51*[rec+0x2E]>>16 (0x51 = 81 per damage point), RaceSlotMove 0x51E0D
   const double dmgGain = 81.0 * s.damageB / 16384.0;
   double yawGain = double(p.f5) / 16384.0 - dmgGain;
@@ -190,7 +204,7 @@ void shipDamage(ShipState& s, double a, double b) {  // RaceSlotDamage 0x52035 (
   if (s.invuln > 0) { a = b = 0; }
   else if (a != 0 || b != 0) s.invuln = 3.0;  // [slot+0x24] = 0xBB8 ms
   const double na = std::max(0.0, s.damageA + a), nb = std::max(0.0, s.damageB + b);
-  if (na > 100.0 || nb > 100.0) return;  // over the limit: only effects, nothing is stored (0x520F8..0x52189)
+  if (na > 100.0 || nb > 100.0) { ++s.sfxOverDamage; return; }  // over the limit: only effects, nothing is stored (0x520F8..0x52189)
   s.damageA = na;
   s.damageB = nb;
 }
@@ -231,7 +245,8 @@ void shipHitResponse(ShipState& s, const double n[3], const double heading[3]) {
   {  // 0x50A82..0x50A9B: slot speed above 0x22E98 -> effect 2 (hard), else 3
     double vv[3];
     shipVelocity(s, vv);
-    (std::sqrt(vv[0] * vv[0] + vv[1] * vv[1] + vv[2] * vv[2]) > 0x22e98 ? s.sfxWallHard : s.sfxWallLight)++;
+    if (s.hitWater) ++s.sfxWater;  // 0x50AA2..0x50AB6: material name starts with WATE -> effect 8
+    else (std::sqrt(vv[0] * vv[0] + vv[1] * vv[1] + vv[2] * vv[2]) > 0x22e98 ? s.sfxWallHard : s.sfxWallLight)++;
   }
   const double ang = 0x3000 / 65536.0 * kTau;
   const double hn = heading[0] * n[0] + heading[1] * n[1] + heading[2] * n[2];
@@ -293,6 +308,7 @@ void moveShip(ShipState& s, double dt, const Scene& scene, const ShipSimConfig& 
       if (!h.hit) break;
       ++s.hits;
       tr *= 1.0 - h.dist / l;
+      s.hitWater = h.material >= 0 && size_t(h.material) < scene.materials.size() && scene.materials[size_t(h.material)].upperName.rfind("WATE", 0) == 0;
       shipHitResponse(s, h.n, dir);  // message 0x107 on every contact event, as in CollideStep
     }
     if (insideNow && !shipBoxInsideTrack(scene, np, s.m, s.boxLo, s.boxHi)) {
