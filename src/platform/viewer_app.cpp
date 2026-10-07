@@ -29,6 +29,8 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
   params_ = loadShipParams(*data_);
   aiTables_ = loadAiTables(*data_);
   aiTables_.difficulty = opt.difficulty >= 0 ? opt.difficulty : readConfiguredDifficulty(*data_);
+  pause_.load(*data_);
+  settings_.music = opt.audio.music; settings_.sfx = opt.audio.sfx; settings_.difficulty = aiTables_.difficulty;
   weaponTable_ = loadWeaponTable(*data_);
   refPoints_ = loadShipRefPoints(*data_);
   {
@@ -195,6 +197,7 @@ void ViewerApp::drainSounds(const double listener[3]) {
   combat_.events.clear();
   if (driving_ && player_.sfxOverDamage > 0) {  // 0x52122..0x5213A: the human pilot's ship is breaking up: cue 2 or 3
     player_.sfxOverDamage = 0;
+    if (gameOverTimer_ <= 0 && !finished_) gameOverTimer_ = 4.0;  // 0x4411A: the human's ship is destroyed -> GAME OVER
     if (opt_.voices) audio_.playCue((std::rand() & 1) ? cues::shipBreaking1 : cues::shipBreaking2);
   }
   for (int i = 0; i < 10; ++i) grid_[size_t(i)].sfxOverDamage = 0;
@@ -324,6 +327,8 @@ void ViewerApp::toggleDrive() {
     lapsDone_ = 0;
     finishRank_ = 0;
     finished_ = false;
+    hudAssets_.load(*data_, opt_.ship, scene_->palette);
+    finalLapTimer_ = gameOverTimer_ = lapPopupTimer_ = shakeTimer_ = 0; lastLapShown_ = -1; prevDamage_ = 0;
     raceStatus_ = RaceStatus{};
     startPhase_ = 15.0;
     raceOverHandled_ = false;
@@ -342,6 +347,10 @@ void ViewerApp::update(double dt, const InputState& in) {
   if (dt > 0 && dt < 1.0) animSeconds_ += dt;
   if (dt > 0 && dt < 1.0 && mode_ == AppMode::Track && !driving_) doors_.step(dt);
   if (mode_ == AppMode::Track && scene_) {
+    if (driving_ && pause_.isOpen()) {  // 0x58DBB: paused, nothing advances (the camera keeps its place)
+      audio_.engineSet(engineVoice_, 0.0);
+      return;
+    }
     if (driving_) {
       const bool held = countdown_ > 0;  // ships wait on the grid during the countdown (INFERRED: the original starts the race at 0)
       if (held && dt > 0 && dt < 1.0) {
@@ -422,6 +431,10 @@ void ViewerApp::update(double dt, const InputState& in) {
         for (const RaceStatus::Event& e : raceStatus_.events) {
           if (std::getenv("SLIP_RACE_LOG")) std::fprintf(stderr, "race event ship %d kind %d  rank %d laps %d t=%.1f\n", e.ship, e.kind, ai_[size_t(e.ship)].rank, ai_[size_t(e.ship)].laps, ai_[size_t(e.ship)].raceTime);
           if (e.ship != player_.ship) continue;
+          if (e.kind == 1) {  // lap line: lap time popup (4 s), "Final Lap!!" (2 s) when the last lap starts (0x4422D / 0x44252)
+            lastLapShown_ = me.lastLap; lapPopupTimer_ = 4.0;
+            if (me.laps == opt_.laps) finalLapTimer_ = 2.0;
+          }
           if (e.kind == 1 && opt_.voices) audio_.playCue(cues::positionAnnounce(std::clamp(me.rank, 1, 10)));  // 0x5A5FE..0x5A613
           if (e.kind == 2) {
             finished_ = true;
@@ -431,6 +444,15 @@ void ViewerApp::update(double dt, const InputState& in) {
           if (e.kind == 3 && opt_.voices) audio_.playCue((std::rand() & 0x80) ? cues::passLine2(player_.ship + 1) : cues::passLine1(player_.ship + 1));  // 0x50BE7..0x50C00
         }
         raceStatus_.events.clear();
+        finalLapTimer_ = std::max(0.0, finalLapTimer_ - dt);
+        lapPopupTimer_ = std::max(0.0, lapPopupTimer_ - dt);
+        shakeTimer_ = std::max(0.0, shakeTimer_ - dt);
+        if (gameOverTimer_ > 0 && (gameOverTimer_ -= dt) <= 0) raceStatus_.over = true;  // 0x44022: GAME OVER shown for 4 s, then the race ends
+        {
+          const double dmg = player_.damageA + player_.damageB;
+          if (dmg > prevDamage_ + 1e-9) shakeTimer_ = 0.3;  // 0x440F3: [0x42DBC] = 0x12C ms
+          prevDamage_ = dmg;
+        }
         if (raceStatus_.over && !raceOverHandled_) {  // race over: results (0x5A820): LOSE.HMP below 4th, else WIN.HMP; result line
           raceOverHandled_ = true;
           if (!finished_) { finished_ = true; finishRank_ = me.rank; }
@@ -523,6 +545,19 @@ void ViewerApp::render() {
   }
   uint32_t sky = 0xff5a7fa8u, ground = 0xff2a2a2eu;
   if (mode_ == AppMode::Model) { sky = ground = 0xff20242cu; }
+  int shakeX = 0, shakeY = 0;
+  if (shakeTimer_ > 0) {  // 0x448E6: the window centre jitters by -3..+4 pixels while [0x42DBC] runs (0x12C ms after a hit)
+    shakeRng_ = shakeRng_ * 1103515245u + 12345u; shakeX = int((shakeRng_ >> 16) & 7) - 3;
+    shakeRng_ = shakeRng_ * 1103515245u + 12345u; shakeY = int((shakeRng_ >> 16) & 7) - 3;
+  }
+  hudShakeX_ = shakeX; hudShakeY_ = shakeY;
+  if (hudActive()) {
+    int x0, y0, x1, y1; float pcx, pcy;
+    Hud::viewport(renderer_.width(), renderer_.height(), HudLayout::cx + shakeX, HudLayout::cy + shakeY, &x0, &y0, &x1, &y1, &pcx, &pcy);
+    renderer_.setViewport(x0, y0, x1, y1, pcx, pcy);
+  } else {
+    renderer_.resetViewport();
+  }
   renderer_.beginFrame(cam_, sky, ground);
   if (!scene_) return;
   // The original always culls back-facing track polygons (0x3948C, 0x193FF); legacy mode only culls while driving.
@@ -601,7 +636,7 @@ void ViewerApp::drawCombatOverlay() {
     renderer_.drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, x.pos, x.kind == 1 ? 18000 + 6000 * x.age : 16000 + 26000 * u, transparent(sp));
   }
   const CombatState& c = combat_.combat[size_t(player_.ship)];
-  if (c.lockTarget >= 0) {  // lock marker
+  if (!hudActive() && c.lockTarget >= 0) {  // lock marker (the HUD draws the original's TSIGHT sprite instead)
     const ShipState& t = grid_[size_t(c.lockTarget)];
     const double tp[3] = {t.x, t.y, t.z};
     float sx, sy, z;
@@ -609,6 +644,83 @@ void ViewerApp::drawCombatOverlay() {
       const int r = std::max(8, int(t.extent * 1.3 / z * (renderer_.height() * 0.5 / std::tan(cam_.fovY * 0.5))));
       renderer_.drawRectScreen(int(sx) - r, int(sy) - r, int(sx) + r, int(sy) + r, 0xffff3030u);
     }
+  }
+  drawHud();
+}
+
+void ViewerApp::openPause() {
+  if (!pausable() || pause_.isOpen()) return;
+  pause_.open();
+  audio_.engineSet(engineVoice_, 0.0);
+}
+
+void ViewerApp::applySettings() {
+  audio_.setVolumes(opt_.audio.master, settings_.music, settings_.sfx);
+  aiTables_.difficulty = settings_.difficulty;
+  combat_.difficulty = settings_.difficulty;
+  static const float kDetail[4] = {32.0f, 20.0f, 10.0f, 5.0f};  // scenery size thresholds of the Detail option (0x350C7)
+  renderer_.minScenerySize = kDetail[std::clamp(settings_.detail, 0, 3)];
+}
+
+void ViewerApp::menuKey(PauseMenu::Key k) {
+  if (!pause_.isOpen()) return;
+  const PauseMenu::Action act = pause_.key(k, &settings_);
+  applySettings();
+  if (act == PauseMenu::Action::QuitRace) toggleDrive();   // 0x591CE: leave the race
+  else if (act == PauseMenu::Action::ExitGame) quit_ = true;
+}
+
+void ViewerApp::drawHud() {
+  if (!hudActive()) return;
+  const ShipState& me = player_;
+  const AiState& rec = ai_[size_t(player_.ship)];
+  const CombatState& cs = combat_.combat[size_t(player_.ship)];
+  const auto& tb = combat_.table();
+  HudState st;
+  st.cockpit = view_ == 0;
+  const Track& t = scene_->track_data;
+  st.consoleFrame = (rec.piece >= 0 && size_t(rec.piece) < t.pieces.size() && t.pieces[size_t(rec.piece)].light < 0x2000) ? 2 : 1;  // 0x3526C
+  st.speed = me.speed;
+  st.kph = settings_.kph;
+  st.rank = rec.rank;
+  st.lap = rec.laps;
+  st.totalLaps = opt_.laps;
+  st.lapTime = rec.lapTime;
+  st.lastLapTime = lapPopupTimer_ > 0 ? lastLapShown_ : -1;
+  st.finalLapTimer = finalLapTimer_;
+  st.gameOverTimer = gameOverTimer_;
+  st.countdown = countdown_ > 0 ? int(std::ceil(countdown_)) : 0;
+  st.finishedPosition = finished_ ? finishRank_ : 0;
+  st.damageA = me.damageA;
+  st.damageB = (me.hyperTime > 0 || me.reverseTime > 0) ? 100.0 : me.damageB;  // 0x521C5: scrambled controls read as full damage
+  st.selected = cs.selected;
+  int wid = cs.selected == 0 ? kBlaster : cs.selected == 1 ? cs.load.weaponA : cs.selected == 2 ? cs.load.weaponB : -1;
+  if (wid >= 0) {
+    st.weaponName = tb.w[size_t(wid)].name;
+    st.ammo = cs.selected == 0 ? -1 : (cs.selected == 1 ? cs.load.ammoA : cs.load.ammoB);
+    st.energy = cs.energy[std::clamp(cs.selected, 0, 2)];
+    st.canLock = tb.w[size_t(wid)].cone > 0;
+  }
+  st.boosterFuel = cs.boosterFuel;
+  st.booster = me.boosterOn || me.boosterFreeTime > 0;
+  st.time = animSeconds_;
+  st.centerX = HudLayout::cx + hudShakeX_;
+  st.centerY = HudLayout::cy + hudShakeY_;
+  if (st.canLock && cs.lockTarget >= 0) {
+    const ShipState& tg = grid_[size_t(cs.lockTarget)];
+    const double tp[3] = {tg.x, tg.y, tg.z};
+    float sx, sy, z;
+    if (renderer_.projectToScreen(tp, &sx, &sy, &z)) {
+      st.lockVisible = true;
+      st.lockX = sx * 320.0 / renderer_.width();
+      st.lockY = sy * 200.0 / renderer_.height();
+    }
+  }
+  hud_.draw(renderer_.framebuffer(), renderer_.width(), renderer_.height(), st, hudAssets_);
+  if (pause_.isOpen()) {
+    HudCanvas c;
+    c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
+    pause_.draw(c, hudAssets_, settings_);
   }
 }
 

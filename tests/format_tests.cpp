@@ -47,6 +47,23 @@ int main() {
   CHECK(!s.track.polys.empty());
   double y;
   CHECK(s.floorHeight(s.startPos[0][0], s.startPos[0][2], s.startPos[0][1], 40000, &y));
+  for (auto& n : d->list("FNT")) { auto b = d->read(n); CHECK(b && parseFont(*b)); }
+  {  // HUD fonts: TIME.FNT is 23 bytes x 7 rows per glyph, ':' advances 2; SPD.FNT digits advance 7
+    auto tf = parseFont(*d->read("TIME.FNT"));
+    CHECK(tf && tf->cellW == 23 && tf->height == 7 && tf->first == 32 && tf->advance(':') == 2 && tf->advance('5') == 6);
+    auto sf = parseFont(*d->read("SPD.FNT"));
+    CHECK(sf && sf->first == '0' && sf->last == ';' && sf->advance('1') == 7);
+  }
+  {  // string tables: the pause menu texts; HUD sprites carry their screen position; UI palette entries 248..255 come from the exe
+    auto st = parseStringTable(*d->read("PAUSED.ST0"));
+    CHECK(st.size() == 5 && st[1].first == "OPT1" && st[1].second == "Continue Race" && st[4].second == "Exit To Dos");
+    auto bn = parseSprite(*d->read("CON0_BN1.SPR"));
+    CHECK(bn && bn->w == 312 && bn->h == 26 && bn->hdr4 == 4 && bn->hdr6 == 167);
+    Track t1;
+    CHECK(loadTrack(*d, 1, &t1, &err));
+    CHECK(t1.palette.rgba[252] == 0x0000ff00 && t1.palette.rgba[254] == 0x00ffff00 && t1.palette.rgba[255] == 0x00ffffff);
+    CHECK(t1.lapPieceA >= 0 && t1.lapPieceB >= 0);
+  }
   std::printf("%s (%zu pieces over 10 tracks)\n", failures ? "FAILED" : "all tests passed", pieceTotal);
   return failures ? 1 : 0;
 }

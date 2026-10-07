@@ -62,6 +62,45 @@ void fillDefaultTail(Palette& pal) {
   if (pal.count <= 252) pal.rgba[252] = 0x0020d040;  // GreenNav ship light (colour assumed)
 }
 
+std::optional<Font> parseFont(const Bytes& b) {
+  if (b.size() < 16 || b[0] != 'F' || b[1] != 'O' || b[2] != 'N' || b[3] != 'T') return std::nullopt;
+  Rd r{b.data(), b.size()};
+  Font f;
+  f.cellW = r.u16(4);
+  f.height = r.u16(6);
+  f.first = b[8];
+  f.last = b[9];
+  const size_t table = r.u16(10);
+  if (f.cellW <= 0 || f.height <= 0 || f.last < f.first) return std::nullopt;
+  for (int c = f.first; c <= f.last; ++c) {
+    const size_t o = table + 4 * size_t(c - f.first);
+    Font::Glyph g;
+    g.offset = int(r.u16(o));
+    g.advance = int(r.u16(o + 2));
+    if (!r.ok || size_t(g.offset) + size_t(f.cellW) * size_t(f.height) > b.size()) return std::nullopt;
+    f.glyphs.push_back(g);
+  }
+  f.data = b;
+  return f;
+}
+
+std::vector<std::pair<std::string, std::string>> parseStringTable(const Bytes& b) {
+  std::vector<std::pair<std::string, std::string>> out;
+  size_t p = 0;
+  while (p + 6 <= b.size()) {
+    if (b[p] == 0xFF && b[p + 1] == 0xFF) break;
+    const std::string tag(reinterpret_cast<const char*>(b.data() + p), 4);
+    const size_t len = size_t(b[p + 4]) | (size_t(b[p + 5]) << 8);
+    p += 6;
+    if (p + len > b.size()) break;
+    std::string text(reinterpret_cast<const char*>(b.data() + p), len);
+    while (!text.empty() && text.back() == '\0') text.pop_back();
+    out.emplace_back(tag, text);
+    p += len;
+  }
+  return out;
+}
+
 std::optional<Sprite> parseSprite(const Bytes& b) {
   Rd r{b.data(), b.size()};
   Sprite s;

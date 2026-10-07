@@ -134,6 +134,13 @@ int main(int argc, char** argv) {
     drive.fire = std::getenv("SLIP_FIRE") != nullptr;  // test hook: hold the trigger during --sim
     for (double t = 0; t < simSeconds; t += 1.0 / 60.0) app.update(1.0 / 60.0, drive);
     app.update(1.0 / 60.0, simSeconds > 0 ? drive : InputState{});
+    if (const char* pk = std::getenv("SLIP_PAUSE")) {  // test hook: open the pause menu, then press the listed keys (u d l r s b)
+      app.openPause();
+      for (const char* c = pk; *c; ++c) {
+        const char k = *c;
+        app.menuKey(k == 'u' ? PauseMenu::Key::Up : k == 'd' ? PauseMenu::Key::Down : k == 'l' ? PauseMenu::Key::Left : k == 'r' ? PauseMenu::Key::Right : k == 'b' ? PauseMenu::Key::Back : PauseMenu::Key::Select);
+      }
+    }
     app.render();
     if (!writePPM(screenshot, app.renderer())) { std::fprintf(stderr, "cannot write %s\n", screenshot.c_str()); return 1; }
     for (auto& l : app.hudLines()) std::printf("%s\n", l.c_str());
@@ -183,6 +190,16 @@ int main(int argc, char** argv) {
           if (pad && SDL_GetGamepadID(pad) == e.gdevice.which) { SDL_CloseGamepad(pad); pad = nullptr; }
           break;
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+          if (app.paused()) {  // pause menu
+            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP) app.menuKey(PauseMenu::Key::Up);
+            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN) app.menuKey(PauseMenu::Key::Down);
+            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_LEFT) app.menuKey(PauseMenu::Key::Left);
+            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) app.menuKey(PauseMenu::Key::Right);
+            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) app.menuKey(PauseMenu::Key::Select);
+            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST || e.gbutton.button == SDL_GAMEPAD_BUTTON_START) app.menuKey(PauseMenu::Key::Back);
+            break;
+          }
+          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START && app.pausable()) { app.openPause(); break; }
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) app.toggleDrive();
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) app.cycleWeapon();
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_NORTH) app.toggleCamera();
@@ -191,9 +208,22 @@ int main(int argc, char** argv) {
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) running = false;
           break;
         case SDL_EVENT_KEY_DOWN:
+          if (app.paused()) {  // pause menu keys (key repeat allowed for the volume sliders)
+            switch (e.key.key) {
+              case SDLK_UP: case SDLK_W: app.menuKey(PauseMenu::Key::Up); break;
+              case SDLK_DOWN: case SDLK_S: app.menuKey(PauseMenu::Key::Down); break;
+              case SDLK_LEFT: case SDLK_A: app.menuKey(PauseMenu::Key::Left); break;
+              case SDLK_RIGHT: case SDLK_D: app.menuKey(PauseMenu::Key::Right); break;
+              case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: if (!e.key.repeat) app.menuKey(PauseMenu::Key::Select); break;
+              case SDLK_ESCAPE: if (!e.key.repeat) app.menuKey(PauseMenu::Key::Back); break;
+              default: break;
+            }
+            break;
+          }
           if (e.key.repeat) break;
           switch (e.key.key) {
-            case SDLK_ESCAPE: running = false; break;
+            case SDLK_ESCAPE: if (app.pausable()) app.openPause(); else running = false; break;
+            case SDLK_H: app.toggleHud(); break;
             case SDLK_RIGHTBRACKET: app.nextItem(1); break;
             case SDLK_LEFTBRACKET: app.nextItem(-1); break;
             case SDLK_SPACE: app.toggleDrive(); break;
@@ -222,6 +252,7 @@ int main(int argc, char** argv) {
         default: break;
       }
     }
+    if (app.wantsQuit()) running = false;
     uint64_t now = SDL_GetPerformanceCounter();
     double dt = std::min(0.1, double(now - last) / freq);
     last = now;
@@ -261,6 +292,7 @@ int main(int argc, char** argv) {
     SDL_RenderTexture(ren, tex, nullptr, nullptr);
     SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
     float y = 6;
+    if (!app.hudActive())
     for (const auto& line : app.hudLines()) {
       SDL_RenderDebugText(ren, 6, y, line.c_str());
       y += 11;

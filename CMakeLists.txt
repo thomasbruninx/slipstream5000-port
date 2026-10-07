@@ -22,7 +22,9 @@ add_library(slipstream_core STATIC
   src/game/ship_collide.cpp
   src/game/doors.cpp
   src/game/ship_ai.cpp
-  src/game/weapons.cpp)
+  src/game/weapons.cpp
+  src/game/hud.cpp
+  src/game/pause_menu.cpp)
 target_include_directories(slipstream_core PUBLIC src)
 target_compile_options(slipstream_core PRIVATE -Wall -Wextra)
 

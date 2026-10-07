@@ -54,6 +54,16 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
 
   if (auto p = parsePalette(palB->data(), palB->size())) t.palette = *p; else return fail("bad PAL");
   fillDefaultTail(t.palette);
+  if (auto exe = data.read("SLIPSTRM.EXE")) {  // static UI palette (VideoSetPalette at 0x557C7, data 0x54304): entries 248..255 = black x3, grey, green, red, yellow, white
+    constexpr size_t o = 0x4D854 + (0x54304 - 0x10000);
+    if (exe->size() > o + 4 + 24 && (*exe)[o] == 248 && (*exe)[o + 1] == 0 && (*exe)[o + 2] == 8 && (*exe)[o + 3] == 0) {
+      for (int i = 0; i < 8; ++i) {
+        auto up = [](uint32_t v) { return (v << 2) | (v >> 4); };
+        const uint32_t r = up((*exe)[o + 4 + size_t(i) * 3]), g = up((*exe)[o + 5 + size_t(i) * 3]), b = up((*exe)[o + 6 + size_t(i) * 3]);
+        t.palette.rgba[size_t(248 + i)] = (r << 16) | (g << 8) | b;
+      }
+    }
+  }
   if (auto m = parseMaterials(*matB)) t.materials = *m; else return fail("bad MAT");
   if (auto cars = data.read("CARS.MAT")) if (auto m = parseMaterials(*cars)) t.materials.append(*m);
 
@@ -150,6 +160,7 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
           tp.record = ri;
           tp.pos = {r.s32(e + 0x12), r.s32(e + 0x16), r.s32(e + 0x1a)};
           tp.group = g;
+          tp.light = r.u16(e + 0x20);
           pieceNodeOff.push_back(r.u16(e + 0x1e));
           t.pieces.push_back(tp);
         }

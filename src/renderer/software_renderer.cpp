@@ -35,12 +35,16 @@ void SoftwareRenderer::beginFrame(const Camera& cam, uint32_t sky, uint32_t grou
       up_[k] = u0 * cr + r0 * sr;
     }
   }
-  focal_ = (float(h_) * 0.5f) / std::tan(cam.fovY * 0.5f);
+  if (vp_.x1 < vp_.x0) { vp_.x0 = 0; vp_.y0 = 0; vp_.x1 = w_ - 1; vp_.y1 = h_ - 1; vp_.cx = -1; }
+  if (vp_.cx < 0) { vp_.cx = float(vp_.x0 + vp_.x1 + 1) * 0.5f; vp_.cy = float(vp_.y0 + vp_.y1 + 1) * 0.5f; }
+  cx_ = vp_.cx; cy_ = vp_.cy;
+  focal_ = (float(vp_.y1 - vp_.y0 + 1) * 0.5f) / std::tan(cam.fovY * 0.5f);
   // two-colour backdrop split at the horizon: a pixel is sky when its view ray points above the horizontal plane
-  for (int y = 0; y < h_; ++y) {
-    const float a = fwd_[1] * focal_ + up_[1] * (float(h_) * 0.5f - (float(y) + 0.5f)), b = right_[1];
+  if (vp_.x0 > 0 || vp_.y0 > 0 || vp_.x1 < w_ - 1 || vp_.y1 < h_ - 1) std::fill(color_.begin(), color_.end(), 0xff000000u);
+  for (int y = vp_.y0; y <= vp_.y1; ++y) {
+    const float a = fwd_[1] * focal_ + up_[1] * (cy_ - (float(y) + 0.5f)), b = right_[1];
     uint32_t* row = &color_[size_t(y) * size_t(w_)];
-    for (int x = 0; x < w_; ++x) row[x] = (a + b * (float(x) + 0.5f - float(w_) * 0.5f)) > 0 ? sky : ground;
+    for (int x = vp_.x0; x <= vp_.x1; ++x) row[x] = (a + b * (float(x) + 0.5f - cx_)) > 0 ? sky : ground;
   }
   std::fill(depth_.begin(), depth_.end(), 0.0f);
   std::fill(backdrop_.begin(), backdrop_.end(), uint8_t(0));
@@ -96,15 +100,15 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
       const VV& v = tv[p.first + k];
       allNear &= v.z < nearZ;
       allFar &= v.z > farPlane;
-      allLeft &= v.x < -v.z * (float(w_) * 0.5f / focal_);
-      allRight &= v.x > v.z * (float(w_) * 0.5f / focal_);
-      allUp &= v.y > v.z * (float(h_) * 0.5f / focal_);
-      allDown &= v.y < -v.z * (float(h_) * 0.5f / focal_);
+      allLeft &= v.x < -v.z * ((cx_ - float(vp_.x0)) / focal_);
+      allRight &= v.x > v.z * ((float(vp_.x1 + 1) - cx_) / focal_);
+      allUp &= v.y > v.z * ((cy_ - float(vp_.y0)) / focal_);
+      allDown &= v.y < -v.z * ((float(vp_.y1 + 1) - cy_) / focal_);
     }
     if (allNear || allFar || allLeft || allRight || allUp || allDown) continue;
 
     if (p.hidden) continue;
-    sx0_ = 0; sy0_ = 0; sx1_ = w_ - 1; sy1_ = h_ - 1;
+    sx0_ = vp_.x0; sy0_ = vp_.y0; sx1_ = vp_.x1; sy1_ = vp_.y1;
     if (p.piece >= 0 && !pieceWin_.empty() && size_t(p.piece) < pieceWin_.size()) {
       const WinRect& wr = pieceWin_[size_t(p.piece)];
       if (!wr.vis) continue;
@@ -191,8 +195,8 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
   const VV* v[3] = {&a, &b, &c};
   for (int i = 0; i < 3; ++i) {
     float invz = 1.0f / v[i]->z;
-    sx[i] = float(w_) * 0.5f + v[i]->x * invz * focal_;
-    sy[i] = float(h_) * 0.5f - v[i]->y * invz * focal_;
+    sx[i] = cx_ + v[i]->x * invz * focal_;
+    sy[i] = cy_ - v[i]->y * invz * focal_;
     iw[i] = invz;
     uw[i] = v[i]->u * invz;
     vw[i] = v[i]->v * invz;
@@ -291,7 +295,7 @@ void SoftwareRenderer::computePortalVisibility(const Scene& scene) {
   if (start < 0) return;  // camera outside every piece: draw everything (the original also has no cell then)
   pieceWin_.assign(scene.pieceBoxes.size(), WinRect{});
   for (size_t i = 0; i < pieceWin_.size(); ++i)
-    if (!inGraph[i]) pieceWin_[i] = WinRect{0, 0, w_ - 1, h_ - 1, true};
+    if (!inGraph[i]) pieceWin_[i] = fullWin();
   union_ = WinRect{w_, h_, -1, -1, false};
   struct Rec {
     const Scene& sc; SoftwareRenderer& r; const float* cp;
@@ -321,7 +325,7 @@ void SoftwareRenderer::computePortalVisibility(const Scene& scene) {
       }
     }
   } rec{scene, *this, cp};
-  rec.visit(start, WinRect{0, 0, w_ - 1, h_ - 1, true}, -1, 0);
+  rec.visit(start, fullWin(), -1, 0);
   if (!union_.vis) {
     // The code only validates the window ([0x33EB0]) through extent polygons (flag 0x08 after the load-time rewrite: cages and
     // chase-light floors, transparent slopes); tracks such as Chicago have none. We then use the union of the portal windows
@@ -361,7 +365,7 @@ bool SoftwareRenderer::polyRect(const Scene& scene, const MeshPoly& p, const flo
   }
   if (cl.size() < 3) return false;
   std::vector<P2> poly;
-  for (const V3& v : cl) poly.push_back({float(w_) * 0.5f + v.x / v.z * focal_, float(h_) * 0.5f - v.y / v.z * focal_});
+  for (const V3& v : cl) poly.push_back({cx_ + v.x / v.z * focal_, cy_ - v.y / v.z * focal_});
   // clip against the window rectangle, one edge at a time
   auto clipEdge = [&](int axis, float bound, bool keepGreater) {
     std::vector<P2> o;
@@ -578,8 +582,8 @@ void SoftwareRenderer::drawLine3D(P3 a, P3 b, uint32_t col) {
   if (a.z < n && b.z < n) return;
   if (a.z < n) { float t = (n - a.z) / (b.z - a.z); a = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, n}; }
   else if (b.z < n) { float t = (n - b.z) / (a.z - b.z); b = {b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t, n}; }
-  const float x0 = float(w_) * 0.5f + a.x / a.z * focal_, y0 = float(h_) * 0.5f - a.y / a.z * focal_;
-  const float x1 = float(w_) * 0.5f + b.x / b.z * focal_, y1 = float(h_) * 0.5f - b.y / b.z * focal_;
+  const float x0 = cx_ + a.x / a.z * focal_, y0 = cy_ - a.y / a.z * focal_;
+  const float x1 = cx_ + b.x / b.z * focal_, y1 = cy_ - b.y / b.z * focal_;
   float iz0 = 1.0f / a.z, iz1 = 1.0f / b.z;
   // clip to the scissor rectangle (Liang-Barsky) so very long lines keep one sample per pixel
   float cx0 = x0, cy0 = y0, cx1 = x1, cy1 = y1, ta = 0.0f, tb = 1.0f;
@@ -622,8 +626,8 @@ bool SoftwareRenderer::projectToScreen(const double w[3], float* x, float* y, fl
   const float cz = dx * fwd_[0] + dy * fwd_[1] + dz * fwd_[2];
   if (cz <= cam_.nearPlane) return false;
   const float cx = dx * right_[0] + dy * right_[1] + dz * right_[2], cy = dx * up_[0] + dy * up_[1] + dz * up_[2];
-  if (x) *x = float(w_) * 0.5f + cx / cz * focal_;
-  if (y) *y = float(h_) * 0.5f - cy / cz * focal_;
+  if (x) *x = cx_ + cx / cz * focal_;
+  if (y) *y = cy_ - cy / cz * focal_;
   if (z) *z = cz;
   return true;
 }
@@ -771,7 +775,7 @@ void SoftwareRenderer::addExtent(const Scene& scene, size_t piece, const float c
     const Vec3& v0 = scene.track.verts[p.first];
     if (p.normal.x * (cp[0] - v0.x) + p.normal.y * (cp[1] - v0.y) + p.normal.z * (cp[2] - v0.z) <= 0) continue;  // facing away
     WinRect r;
-    if (!polyRect(scene, p, cp, WinRect{0, 0, w_ - 1, h_ - 1, true}, &r)) continue;
+    if (!polyRect(scene, p, cp, fullWin(), &r)) continue;
     union_.x0 = std::min(union_.x0, r.x0); union_.y0 = std::min(union_.y0, r.y0);
     union_.x1 = std::max(union_.x1, r.x1); union_.y1 = std::max(union_.y1, r.y1);
     union_.vis = true;

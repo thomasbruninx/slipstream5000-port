@@ -315,3 +315,6 @@ Decoded RaceUpdate (0x5A4EC), the lap line (TRD header +4/+6, pieces A/B, `34C32
 
 ## Session: ship-vs-door cube
 Read the door slot server 0x3BF86 fully (0x106 contact -> open at 0x6FB8; 0x104: overlap at frame start -> open at 0x37DC, move via 0x3C17B with the overlap test 0x13474, a closing door that would overlap reverts and reopens) and TrackInitDoors 0x3C813 (cube = panel rectangle, thickness +-0x7A0, collider class 2). Port: `Doors::step(dt, ships)`, `proxy()`, `touch()`; doors enter `resolveShipPairs` as static boxes carrying the panel velocity; missiles stop at doors (`CombatContext::obstacles`). Headless 1-lap AI races on the door tracks (1, 2, 3, 9) still finish with the same lap times, so the AI is not blocked.
+
+## Session: HUD and pause menu
+Decoded the HUD init (0x43B4A: TIME.FNT, SPD.FNT, POS*, NSIGHT, TSIGHT*, CON?_T?* / CON?_B?*, CONS_EXT, TURBO_?), the frame draw 0x4429D, the timer / speed / position block 0x453B8, messages 0x44654, bars 0x572F2 / 0x5733B, weapon panel 0x5C12D / 0x5BE65, sights 0x5C234, the 3D window 0x44812, the camera pane table 0x42CAB (F1..F10 scancodes -> callbacks), the `.FNT` format and the static UI palette (0x54304). Sprite headers hold the screen position of the console parts. Findings and layout in docs/hud.md. Also: human damage beyond 100 ends the race via GAME OVER.

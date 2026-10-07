@@ -35,6 +35,24 @@ struct Sprite {
 };
 std::optional<Sprite> parseSprite(const Bytes& b);
 
+// ---- .FNT bitmap fonts (CONFIRMED by the glyph blitter 0x32B94 / metrics 0x2A66A, 0x2A6A3) ----
+// "FONT", u16 cell width (bytes per glyph row), u16 height, u8 first char, u8 last char, u16 offset of the glyph table; table entry
+// per char: u16 offset of the bitmap (height rows x cell width bytes, non-zero = ink) and u16 advance.
+struct Font {
+  int cellW = 0, height = 0, first = 0, last = -1;
+  struct Glyph { int offset = 0, advance = 0; };
+  std::vector<Glyph> glyphs;
+  std::vector<uint8_t> data;  // the whole file (glyph offsets are absolute)
+  bool has(int ch) const { return ch >= first && ch <= last; }
+  int advance(int ch) const { return has(ch) ? glyphs[size_t(ch - first)].advance : 0; }
+  int textWidth(const std::string& s) const { int w = 0; for (unsigned char c : s) w += advance(c); return w; }
+  const uint8_t* bitmap(int ch) const { return has(ch) ? data.data() + glyphs[size_t(ch - first)].offset : nullptr; }
+};
+std::optional<Font> parseFont(const Bytes& b);
+
+// ---- .ST0/.ST1/.ST2 string tables: records "TAG4" u16 length text\0 (length includes the terminator), ended by 0xFFFFFFFF ----
+std::vector<std::pair<std::string, std::string>> parseStringTable(const Bytes& b);
+
 // ---- .MAT (CONFIRMED structure) ---------------------------------------------------------------
 struct Material {
   std::string name;     // as stored (trimmed)

@@ -41,6 +41,11 @@ class SoftwareRenderer {
   void resize(int w, int h);
   int width() const { return w_; }
   int height() const { return h_; }
+  // 3D viewport inside the framebuffer (the original's cockpit view: x 4..315, y 0..166 of 320x200, projection centre (160, 87), 0x44812).
+  // Everything outside stays black. Call before beginFrame(); reset() restores the full frame.
+  struct Viewport { int x0 = 0, y0 = 0, x1 = -1, y1 = -1; float cx = -1, cy = -1; };
+  void setViewport(int x0, int y0, int x1, int y1, float cx, float cy) { vp_ = {x0, y0, x1, y1, cx, cy}; }
+  void resetViewport() { vp_ = Viewport{}; }
   void beginFrame(const Camera& cam, uint32_t skyColor, uint32_t groundColor);
   // `only` restricts drawing to the listed polygon indices. `item` >= 0 selects painter's mode: fragments of a
   // new item overwrite earlier items unconditionally (items are drawn far-to-near) and are depth-tested only
@@ -107,6 +112,9 @@ class SoftwareRenderer {
   void drawPanelLines(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat, int flatIdx);
   void addExtent(const Scene& scene, size_t piece, const float cp[3]);
   const WinRect* sceneryWin_ = nullptr;
+  Viewport vp_;
+  float cx_ = 0, cy_ = 0;  // projection centre of the current frame
+  WinRect fullWin() const { return WinRect{vp_.x0, vp_.y0, vp_.x1, vp_.y1, true}; }
   std::vector<WinRect> pieceWin_;  // empty = no portal culling this frame
   int sx0_ = 0, sy0_ = 0, sx1_ = 0, sy1_ = 0;  // raster scissor (inclusive)
   int w_ = 0, h_ = 0;

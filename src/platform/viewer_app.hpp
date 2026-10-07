@@ -12,6 +12,8 @@
 #include "game/ship_ai.hpp"
 #include "game/ship_sim.hpp"
 #include "game/weapons.hpp"
+#include "game/hud.hpp"
+#include "game/pause_menu.hpp"
 #include "input/input_state.hpp"
 #include "original_formats/game_data.hpp"
 #include "renderer/software_renderer.hpp"
@@ -66,6 +68,14 @@ class ViewerApp {
   AudioSystem& audio() { return audio_; }
   void cycleWeapon() { cyclePending_ = true; }
   void toggleCamera() { view_ = (view_ + 1) % 3; }
+  // pause menu (Esc while driving): the race stands still, the menu is the original's PAUSED / CONFIG entries
+  bool pausable() const { return mode_ == AppMode::Track && driving_; }
+  bool paused() const { return pause_.isOpen(); }
+  void openPause();
+  void menuKey(PauseMenu::Key k);
+  bool wantsQuit() const { return quit_; }
+  void toggleHud() { hudOn_ = !hudOn_; }
+  bool hudActive() const { return hudOn_ && driving_ && mode_ == AppMode::Track && hudAssets_.loaded; }
   void toggleAssist() { simCfg_.assist = !simCfg_.assist; }
   void togglePainter() { painter_ = !painter_; }
   void toggleVisibility() { useVisMask_ = !useVisMask_; }
@@ -110,6 +120,16 @@ class ViewerApp {
   CombatWorld combat_;
   Loadout playerLoadout_;
   bool cyclePending_ = false;
+  HudAssets hudAssets_;
+  Hud hud_;
+  PauseMenu pause_;
+  GameSettings settings_;
+  bool hudOn_ = true, quit_ = false;
+  double finalLapTimer_ = 0, gameOverTimer_ = 0, lapPopupTimer_ = 0, shakeTimer_ = 0, prevDamage_ = 0, lastLapShown_ = -1;
+  unsigned shakeRng_ = 1;
+  int hudShakeX_ = 0, hudShakeY_ = 0;
+  void drawHud();
+  void applySettings();
   int view_ = 0;  // 0 cockpit, 1 cockpit + own ship, 2 chase
   bool cockpit() const { return view_ != 2; }
   int lastLap_ = 0;

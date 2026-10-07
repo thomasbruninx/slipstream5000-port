@@ -53,3 +53,8 @@ A window/input/loop ✅ · B display original asset ✅ · C free-camera track v
 * DONE (decoded from the original, unit-tested with synthetic ships): the 12-weapon table, energy pools / ammo / cooldown, cycling, lock-on cone, beams (Blaster, Disrupter), homing missiles (Frag, Super Frag, Seeker, Super Seeker, Ambler, Hyper Neuro, Bomber, Scrambler), Mini Mines, Smoker (cosmetic), victim damage and status effects (reversed controls, half speed cap, jammed throttle, hypersensitive steering, booster), boosters, pit repair, pickups of all six types with the per-track placement tables, AI weapon use with the original loadouts.
 * DONE: pilot / announcer voice cues with the original busy / no-repeat rules; `F` fire, `X` next weapon; HUD line, lock marker, sprites for pickups and explosions.
 * OPEN / SPECULATIVE: particle effects (sprites used instead), beam colours, owner-vs-projectile contact rule, shop / loadout selection (default = the cheat loadout), contact and passing voice lines, difficulty-dependent blaster damage.
+
+
+## HUD and pause menu (this phase; docs/hud.md)
+* DONE: the original's cockpit console (CON<ship>_TN/BN, dark frame by piece light) and the external-view bar, frame, 3D window and hit shake, speed / position / lap time / lap / messages / damage bars / weapon and turbo panels / sights, `.FNT` and `.ST*` parsers, UI palette 248..255, pause menu with the original's texts (Esc no longer quits a race).
+* OPEN: pilot portraits with the voice cues, two-player layout, the original's camera keys F1..F5, the menu zone engine (the pause menu is the port's own layout).

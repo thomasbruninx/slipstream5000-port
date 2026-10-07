@@ -42,6 +42,7 @@ struct TrackNode {  // path node of the racing line (TRD node list, header +8; 0
   uint16_t straight = 0x8000;        // +8: 0x8000 = no turn ahead (0x351A4 sums 0x8000 - this)
 };
 struct TrackPiece {
+  uint16_t light = 0x4000;     // TRD entry +0x20 (TrackSlotGetLight 0x3526C): below 0x2000 the cockpit console switches to its dark frame
   int node = -1;               // TRD entry +0x1E: path node of this piece
   uint32_t trdOffset = 0;
   PieceLink links[3];
