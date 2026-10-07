@@ -156,7 +156,7 @@ void ViewerApp::selectShip(int i) {
 void ViewerApp::toggleDrive() {
   if (mode_ != AppMode::Track || !scene_) return;
   driving_ = !driving_;
-  renderer_.cullBackfaces = driving_;  // roofs seen from outside disappear while driving
+  cullOverride_ = -1;
   if (driving_) {
     player_ = grid_[size_t(std::clamp(opt_.ship, 0, 9))];
     player_.speed = 0;
@@ -241,11 +241,31 @@ void ViewerApp::render() {
   if (mode_ == AppMode::Model) { sky = ground = 0xff20242cu; }
   renderer_.beginFrame(cam_, sky, ground);
   if (!scene_) return;
+  // The original always culls back-facing track polygons (0x3948C, 0x193FF); legacy mode only culls while driving.
+  if (std::getenv("SLIP_NOCULL")) cullOverride_ = 0;
+  renderer_.cullBackfaces = cullOverride_ >= 0 ? cullOverride_ != 0 : (mode_ == AppMode::Track && (painter_ || driving_));
+  renderer_.portalCulling = useVisMask_ && !std::getenv("SLIP_NOPORTAL");
+  if (mode_ == AppMode::Track) renderer_.computePortalVisibility(*scene_); else renderer_.portalCulling = false;
   renderer_.visMask = (mode_ == AppMode::Track && useVisMask_) ? scene_->visMaskAt(cam_.pos[0], cam_.pos[1], cam_.pos[2]) : 0xFFFF;
   MeshTransform xf;
   if (mode_ == AppMode::Track) {
     xf.pos[0] = scene_->origin[0]; xf.pos[1] = scene_->origin[1]; xf.pos[2] = scene_->origin[2];
+    if (painter_ && !scene_->bsp.empty()) { renderTrackPainter(xf); return; }
     renderer_.drawMesh(*scene_, scene_->track, xf);
+    // Camera-facing scenery: orientation is a yaw towards the camera (CONFIRMED 0x379C9: rows (b,0,-a),(0,1,0),(a,0,b)
+    // applied as v*M, with (a,b) = normalised (object - camera) in x/z). Stored here as R = M^T.
+    for (const Billboard& bb : scene_->billboards) {
+      if (!renderer_.visAllows(bb.vis)) continue;
+      MeshTransform bx;
+      for (int k = 0; k < 3; ++k) bx.pos[k] = scene_->origin[size_t(k)] + double(k == 0 ? bb.pos.x : k == 1 ? bb.pos.y : bb.pos.z);
+      if (!renderer_.sceneryBigEnough(bx.pos, bb.radius)) continue;
+      double dx = bx.pos[0] - cam_.pos[0], dz = bx.pos[2] - cam_.pos[2];
+      double len = std::sqrt(dx * dx + dz * dz);
+      float a = len > 1e-3 ? float(dx / len) : 0.0f, b = len > 1e-3 ? float(dz / len) : 1.0f;
+      const float R[9] = {b, 0, a, 0, 1, 0, -a, 0, b};
+      for (int k = 0; k < 9; ++k) bx.R[k] = R[k];
+      renderer_.drawMesh(*scene_, bb.mesh, bx);
+    }
     for (int i = 0; i < 10; ++i) {
       const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
       if (scene_->shipMeshes[size_t(i)].polys.empty()) continue;
@@ -257,6 +277,151 @@ void ViewerApp::render() {
   } else {
     renderer_.drawMesh(*scene_, scene_->track, xf);
   }
+}
+
+// Track draw in the original's order (CONFIRMED structure, docs/research-log.md). The frame (0x3924F) is:
+//  1. portal walk from the camera piece (0x39C58) -> windows of the reached pieces, union window;
+//  2. unless the track is portal-only (TRK +0x9E): a plain far-to-near BSP traversal (0x3AA60 -> 0x375E3 with the
+//     default callbacks) that draws EVERY frustum-visible piece and scenery item inside the union window;
+//  3. the collected list (0x3A491): reached pieces in their own windows, scenery only from the first leaf (far-to-near)
+//     that holds a reached piece (flag [0x33EEC]), and the ships standing on reached pieces (drawn with their piece).
+// Items are painted over each other; only inside an item is depth tested.
+void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
+  const Scene& sc = *scene_;
+  const auto& win = renderer_.pieceWindows();
+  const bool havePortals = !win.empty();
+  std::vector<int> order;
+  sc.bspOrder(cam_.pos, &order);
+
+  struct Item { int kind; size_t idx; double dist; };  // 0 piece, 1 scenery instance, 2 billboard
+  std::vector<std::vector<Item>> byGroup(size_t(std::max(sc.groupCount, 1)));
+  const double cx = cam_.pos[0] - sc.origin[0], cy = cam_.pos[1] - sc.origin[1], cz = cam_.pos[2] - sc.origin[2];
+  auto dist = [&](double x, double y, double z) { return std::sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy) + (z - cz) * (z - cz)); };
+  for (size_t i = 0; i < sc.pieceBoxes.size(); ++i) {
+    const auto& b = sc.pieceBoxes[i];
+    if (b.empty || sc.piecePolys[i].empty()) continue;
+    int g = sc.pieceGroup[i];
+    if (g < 0 || size_t(g) >= byGroup.size()) continue;
+    byGroup[size_t(g)].push_back({0, i, dist((b.lo[0] + b.hi[0]) * 0.5, (b.lo[1] + b.hi[1]) * 0.5, (b.lo[2] + b.hi[2]) * 0.5)});
+  }
+  for (size_t i = 0; i < sc.track.instances.size(); ++i) {
+    const auto& in = sc.track.instances[i];
+    if (in.group < 0 || size_t(in.group) >= byGroup.size() || sc.instPolys[i].empty()) continue;
+    byGroup[size_t(in.group)].push_back({1, i, dist(in.center.x, in.center.y, in.center.z)});
+  }
+  for (size_t i = 0; i < sc.billboards.size(); ++i) {
+    const auto& bb = sc.billboards[i];
+    if (bb.group < 0 || size_t(bb.group) >= byGroup.size()) continue;
+    byGroup[size_t(bb.group)].push_back({2, i, dist(bb.pos.x, bb.pos.y, bb.pos.z)});
+  }
+  // order inside each leaf: the group's draw-order tree (far side first); items it does not list stay in front, by distance
+  for (size_t g = 0; g < byGroup.size(); ++g) {
+    auto& items = byGroup[g];
+    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.dist > b.dist; });
+    std::vector<Scene::ItemRef> tord;
+    sc.groupOrder(int(g), cam_.pos, &tord);
+    std::vector<Item> ordered, listed;
+    std::vector<uint8_t> used(items.size(), 0);
+    for (const auto& r : tord)
+      for (size_t k = 0; k < items.size(); ++k)
+        if (!used[k] && items[k].kind == r.kind && items[k].idx == r.idx) { used[k] = 1; listed.push_back(items[k]); break; }
+    for (size_t k = 0; k < items.size(); ++k) if (!used[k]) ordered.push_back(items[k]);
+    ordered.insert(ordered.end(), listed.begin(), listed.end());
+    items = std::move(ordered);
+  }
+  // ship -> piece it stands on (smallest containing portal-graph piece)
+  std::vector<std::vector<int>> shipsOnPiece(sc.pieceBoxes.size());
+  std::vector<int> looseShips;
+  for (int i = 0; i < 10; ++i) {
+    if (sc.shipMeshes[size_t(i)].polys.empty()) continue;
+    const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
+    const float p[3] = {float(s.x - sc.origin[0]), float(s.y - sc.origin[1]), float(s.z - sc.origin[2])};
+    int best = -1;
+    double bestVol = 1e300;
+    for (size_t k = 0; k < sc.pieceBoxes.size(); ++k) {
+      const auto& b = sc.pieceBoxes[k];
+      if (!b.graph || !sc.pieceContains(k, p)) continue;
+      double vol = double(b.hi[0] - b.lo[0]) * double(b.hi[1] - b.lo[1]) * double(b.hi[2] - b.lo[2]);
+      if (vol < bestVol) { bestVol = vol; best = int(k); }
+    }
+    if (best >= 0) shipsOnPiece[size_t(best)].push_back(i); else looseShips.push_back(i);
+  }
+
+  int itemId = 0;
+  auto drawShip = [&](int i, int item) {
+    const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
+    MeshTransform sx;
+    sx.pos[0] = s.x; sx.pos[1] = s.y; sx.pos[2] = s.z;
+    yawMatrix(s.yaw, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
+    renderer_.drawMesh(sc, sc.shipMeshes[size_t(i)], sx, nullptr, item);
+  };
+  auto drawScenery = [&](const Item& it) {
+    if (it.kind == 1) {
+      const auto& in = sc.track.instances[it.idx];
+      const double c[3] = {sc.origin[0] + in.center.x, sc.origin[1] + in.center.y, sc.origin[2] + in.center.z};
+      if (!renderer_.sceneryBigEnough(c, in.radius)) return;
+      renderer_.drawMesh(sc, sc.track, xf, &sc.instPolys[it.idx], itemId++);
+    } else {
+      const Billboard& bb = sc.billboards[it.idx];
+      if (!renderer_.visAllows(bb.vis)) return;
+      MeshTransform bx;
+      for (int k = 0; k < 3; ++k) bx.pos[k] = sc.origin[size_t(k)] + double(k == 0 ? bb.pos.x : k == 1 ? bb.pos.y : bb.pos.z);
+      if (!renderer_.sceneryBigEnough(bx.pos, bb.radius)) return;
+      double dx = bx.pos[0] - cam_.pos[0], dz = bx.pos[2] - cam_.pos[2];
+      double len = std::sqrt(dx * dx + dz * dz);
+      float a = len > 1e-3 ? float(dx / len) : 0.0f, b = len > 1e-3 ? float(dz / len) : 1.0f;
+      const float R[9] = {b, 0, a, 0, 1, 0, -a, 0, b};
+      for (int k = 0; k < 9; ++k) bx.R[k] = R[k];
+      renderer_.drawMesh(sc, bb.mesh, bx, nullptr, itemId++);
+    }
+  };
+
+  const auto uni = renderer_.unionWindow();
+  const bool twoPass = havePortals && !sc.portalOnly && uni.vis;
+  if (twoPass) {
+    // pass 2 of the frame: everything in the frustum, clipped to the union window of the reached pieces
+    std::vector<SoftwareRenderer::WinRect> saved = win;
+    for (int g : order) {
+      for (const Item& it : byGroup[size_t(g)]) {
+        if (it.kind == 0) {
+          const auto& pb = sc.pieceBoxes[it.idx];
+          if (!renderer_.boxInFrustum(sc, pb.lo, pb.hi)) continue;
+          renderer_.setPieceWindow(it.idx, uni);
+          renderer_.drawMesh(sc, sc.track, xf, &sc.piecePolys[it.idx], itemId++);
+        } else {
+          renderer_.setSceneryWindow(&uni);
+          drawScenery(it);
+          renderer_.setSceneryWindow(nullptr);
+        }
+      }
+    }
+    for (size_t i = 0; i < saved.size(); ++i) renderer_.setPieceWindow(i, saved[i]);
+  }
+
+  bool allowed = !havePortals || showAllScenery_;  // [0x33EEC]
+  for (int g : order) {
+    auto& items = byGroup[size_t(g)];
+    if (!allowed && havePortals)
+      for (const Item& it : items)
+        if (it.kind == 0 && sc.pieceBoxes[it.idx].graph && win[it.idx].vis) allowed = true;
+    for (const Item& it : items) {
+      if (it.kind == 0) {
+        const auto& pb = sc.pieceBoxes[it.idx];
+        const bool reached = !havePortals || (pb.graph ? win[it.idx].vis : allowed);
+        if (!reached) continue;
+        const int item = itemId++;
+        renderer_.drawMesh(sc, sc.track, xf, &sc.piecePolys[it.idx], item);
+        for (int sh : shipsOnPiece[it.idx]) drawShip(sh, item);  // entities of a piece are drawn with it (0x39B9C)
+      } else if (allowed) {
+        drawScenery(it);
+      }
+    }
+  }
+  for (int i : looseShips) drawShip(i, itemId++);
+  // ships on pieces that were not drawn this frame are not drawn (slot draw only runs for visited pieces)
+  if (!havePortals)
+    for (size_t k = 0; k < shipsOnPiece.size(); ++k)
+      for (int sh : shipsOnPiece[k]) drawShip(sh, itemId++);
 }
 
 std::vector<std::string> ViewerApp::hudLines() const {
@@ -271,6 +436,10 @@ std::vector<std::string> ViewerApp::hudLines() const {
                   cam_.pos[0], cam_.pos[1], cam_.pos[2], cam_.yaw, cam_.pitch);
     l.push_back(buf);
     std::snprintf(buf, sizeof buf, "visibility mask 0x%02X %s (F5 toggles)", renderer_.visMask & 0xFFFF, useVisMask_ ? "on" : "off");
+    l.push_back(buf);
+    std::snprintf(buf, sizeof buf, "draw order: %s (F6)  scenery: %s (F7)  culling: %s (Tab)",
+                  painter_ ? "painter/BSP" : "z-buffer", showAllScenery_ ? "all" : "original cull",
+                  renderer_.cullBackfaces ? "on" : "off");
     l.push_back(buf);
     if (driving_) {
       std::snprintf(buf, sizeof buf, "DRIVE ship %d  speed %.0f u/s  pos %.0f %.0f %.0f  [W/S throttle/brake, A/D steer, Space = free cam]", player_.ship, player_.speed, player_.x, player_.y, player_.z);

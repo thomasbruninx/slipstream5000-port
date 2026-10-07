@@ -44,8 +44,10 @@ class ViewerApp {
   void setMode(AppMode m);
   void toggleDrive();
   void selectShip(int i);
+  void toggleAllScenery() { showAllScenery_ = !showAllScenery_; }
+  void togglePainter() { painter_ = !painter_; }
   void toggleVisibility() { useVisMask_ = !useVisMask_; }
-  void toggleCulling() { renderer_.cullBackfaces = !renderer_.cullBackfaces; }
+  void toggleCulling() { cullOverride_ = renderer_.cullBackfaces ? 0 : 1; }
   AppMode mode() const { return mode_; }
   bool driving() const { return driving_; }
 
@@ -73,6 +75,10 @@ class ViewerApp {
   std::vector<std::string> shapes_, sprites_;
   int shapeIdx_ = 0, spriteIdx_ = 0;
   std::string status_;
+  bool showAllScenery_ = std::getenv("SLIP_ALLSCENERY") != nullptr;  // ignore the [0x33EEC] far-scenery cull (F7)
+  int cullOverride_ = -1;  // -1 automatic, 0/1 forced by Tab
+  bool painter_ = !std::getenv("SLIP_NOPAINTER");  // original back-to-front BSP/painter order (F6 toggles)
+  void renderTrackPainter(const MeshTransform& xf);
   bool useVisMask_ = !std::getenv("SLIP_NOVIS");  // original per-record visibility classes (F5 toggles)
   double orbitDist_ = 10000, orbitYaw_ = 0.6, orbitPitch_ = 0.25;
   double modelCenter_[3] = {0, 0, 0};

@@ -13,6 +13,7 @@ void SoftwareRenderer::resize(int w, int h) {
   color_.assign(size_t(w) * size_t(h), 0xff000000u);
   depth_.assign(size_t(w) * size_t(h), 0.0f);
   backdrop_.assign(size_t(w) * size_t(h), 0);
+  itemBuf_.assign(size_t(w) * size_t(h), -1);
 }
 
 void SoftwareRenderer::beginFrame(const Camera& cam, uint32_t sky, uint32_t ground) {
@@ -35,9 +36,26 @@ void SoftwareRenderer::beginFrame(const Camera& cam, uint32_t sky, uint32_t grou
   }
   std::fill(depth_.begin(), depth_.end(), 0.0f);
   std::fill(backdrop_.begin(), backdrop_.end(), uint8_t(0));
+  std::fill(itemBuf_.begin(), itemBuf_.end(), -1);
 }
 
-void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const MeshTransform& xf) {
+bool SoftwareRenderer::visAllows(uint16_t vis) const {
+  if (vis == 0xFFFF || visMask == 0xFFFF) return true;
+  if ((vis & visMask) == 0) return false;
+  if (!(visMask & 8) && (vis & 8)) return false;  // class 8 only visible from class-8 records (0x39A89)
+  return true;
+}
+
+bool SoftwareRenderer::sceneryBigEnough(const double c[3], float radius) const {
+  if (minScenerySize <= 0 || radius <= 0) return true;
+  const double dx = c[0] - cam_.pos[0], dy = c[1] - cam_.pos[1], dz = c[2] - cam_.pos[2];
+  const double z = dx * fwd_[0] + dy * fwd_[1] + dz * fwd_[2];
+  if (z <= cam_.nearPlane) return true;
+  return double(radius) * 256.0 / z > double(minScenerySize);
+}
+
+void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const MeshTransform& xf, const std::vector<uint32_t>* only, int item) {
+  curItem_ = item;
   // camera-relative translation computed in double (world coordinates reach ~7e6)
   const double dx = xf.pos[0] - cam_.pos[0], dy = xf.pos[1] - cam_.pos[1], dz = xf.pos[2] - cam_.pos[2];
   // transform all vertices once
@@ -51,10 +69,17 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
     tv[i] = {rx * right_[0] + ry * right_[1] + rz * right_[2], rx * up_[0] + ry * up_[1] + rz * up_[2],
              rx * fwd_[0] + ry * fwd_[1] + rz * fwd_[2], mesh.uv[2 * i], mesh.uv[2 * i + 1]};
   }
+  std::vector<uint8_t> instOk(mesh.instances.size(), 1);
+  for (size_t i = 0; i < mesh.instances.size(); ++i) {
+    const double c[3] = {xf.pos[0] + mesh.instances[i].center.x, xf.pos[1] + mesh.instances[i].center.y, xf.pos[2] + mesh.instances[i].center.z};
+    instOk[i] = sceneryBigEnough(c, mesh.instances[i].radius) ? 1 : 0;
+  }
   static const float L[3] = {0.35f, 0.85f, 0.40f};
   const float nearZ = cam_.nearPlane;
   std::vector<VV> poly, clipped;
-  for (const MeshPoly& p : mesh.polys) {
+  const size_t npol = only ? only->size() : mesh.polys.size();
+  for (size_t pi_ = 0; pi_ < npol; ++pi_) {
+    const MeshPoly& p = only ? mesh.polys[(*only)[pi_]] : mesh.polys[pi_];
     stats_.polysSubmitted++;
     // trivial rejects
     bool allNear = true, allFar = true, allLeft = true, allRight = true, allUp = true, allDown = true;
@@ -70,10 +95,16 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
     if (allNear || allFar || allLeft || allRight || allUp || allDown) continue;
 
     if (p.hidden) continue;
-    if (p.vis != 0xFFFF && visMask != 0xFFFF) {
-      if ((p.vis & visMask) == 0) continue;
-      if (!(visMask & 8) && (p.vis & 8)) continue;  // class 8 only visible from class-8 records (0x39A89)
+    sx0_ = 0; sy0_ = 0; sx1_ = w_ - 1; sy1_ = h_ - 1;
+    if (p.piece >= 0 && !pieceWin_.empty() && size_t(p.piece) < pieceWin_.size()) {
+      const WinRect& wr = pieceWin_[size_t(p.piece)];
+      if (!wr.vis) continue;
+      sx0_ = wr.x0; sy0_ = wr.y0; sx1_ = wr.x1; sy1_ = wr.y1;
+    } else if (sceneryWin_) {
+      sx0_ = sceneryWin_->x0; sy0_ = sceneryWin_->y0; sx1_ = sceneryWin_->x1; sy1_ = sceneryWin_->y1;
     }
+    if (!visAllows(p.vis)) continue;
+    if (p.instance >= 0 && !instOk[size_t(p.instance)]) continue;
     if (p.material >= 0 && size_t(p.material) < scene.materials.size() && scene.materials[size_t(p.material)].invisible) continue;
     // shading
     float nx = xf.R[0] * p.normal.x + xf.R[1] * p.normal.y + xf.R[2] * p.normal.z;
@@ -105,8 +136,14 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
     }
     if (clipped.size() < 3) continue;
     stats_.polysDrawn++;
+    if (p.detail >= 8 && mat && !p.hasUV) {
+      // floor types (0x86..0x8B) are drawn only by their procedural routine (0x39640 -> 0x3F2C8): no base polygon
+      drawFloorDetail(scene, p, tv, mat);
+      continue;
+    }
     for (size_t k = 1; k + 1 < clipped.size(); ++k)
-      rasterTri(scene, clipped[0], clipped[k], clipped[k + 1], mat, p.hasUV, light, uint8_t(p.backdrop ? 2 : p.scenery ? 1 : 0));
+      rasterTri(scene, clipped[0], clipped[k], clipped[k + 1], mat, p.hasUV, light, int(std::clamp(ny, 0.0f, 1.0f) * 16384.0f), uint8_t(p.backdrop ? 2 : p.scenery ? 1 : 0));
+    if (p.detail && p.detail < 8 && mat && !p.hasUV) drawPanelLines(scene, p, tv, mat, flatIndex(mat, int(std::clamp(ny, 0.0f, 1.0f) * 16384.0f)));
   }
 }
 
@@ -117,7 +154,7 @@ inline uint32_t shade(uint32_t rgb, float f) {
 }
 }  // namespace
 
-void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, const VV& c, const SurfaceMaterial* mat, bool useTexture, float light, uint8_t layer) {
+void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, const VV& c, const SurfaceMaterial* mat, bool useTexture, float light, int upLight, uint8_t layer, int forceIdx) {
   float sx[3], sy[3], iw[3], uw[3], vw[3];
   const VV* v[3] = {&a, &b, &c};
   for (int i = 0; i < 3; ++i) {
@@ -131,17 +168,18 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
   float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
   if (std::fabs(area) < 1e-4f) return;
   stats_.trisRastered++;
-  int minx = std::max(0, int(std::floor(std::min({sx[0], sx[1], sx[2]}))));
-  int maxx = std::min(w_ - 1, int(std::ceil(std::max({sx[0], sx[1], sx[2]}))));
-  int miny = std::max(0, int(std::floor(std::min({sy[0], sy[1], sy[2]}))));
-  int maxy = std::min(h_ - 1, int(std::ceil(std::max({sy[0], sy[1], sy[2]}))));
+  int minx = std::max(sx0_, int(std::floor(std::min({sx[0], sx[1], sx[2]}))));
+  int maxx = std::min(sx1_, int(std::ceil(std::max({sx[0], sx[1], sx[2]}))));
+  int miny = std::max(sy0_, int(std::floor(std::min({sy[0], sy[1], sy[2]}))));
+  int maxy = std::min(sy1_, int(std::ceil(std::max({sy[0], sy[1], sy[2]}))));
   if (minx > maxx || miny > maxy) return;
-  const Texture* tex = (useTexture && mat && mat->texture >= 0) ? &scene.textures[size_t(mat->texture)] : nullptr;
+  const Texture* tex = (forceIdx < 0 && useTexture && mat && mat->texture >= 0) ? &scene.textures[size_t(mat->texture)] : nullptr;
   uint32_t flat = 0xff808080u;
   {
-    int lo = mat ? mat->palStart : 0, hi = mat ? mat->palEnd : 0;
-    int idx = lo + int(std::lround(float(hi - lo) * light));
-    flat = shade(scene.palette.rgba[size_t(std::clamp(idx, 0, 255))], mat ? 1.0f : light);
+    // Flat polygon colour = ramp position from the original lighting law (see flatIndex).
+    if (forceIdx >= 0) flat = shade(scene.palette.rgba[size_t(std::clamp(forceIdx, 0, 255))], 1.0f);
+    else if (mat) flat = shade(scene.palette.rgba[size_t(std::clamp(flatIndex(mat, upLight), 0, 255))], 1.0f);
+    else flat = shade(scene.palette.rgba[0], light);
   }
   float inv = 1.0f / area;
   for (int y = miny; y <= maxy; ++y) {
@@ -158,15 +196,19 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
       // cover it (near-ties and slight intrusions of building volumes into tunnel walls resolve to the road);
       // backdrop scenery never covers road. Among equal layers a later-drawn near-tie wins (coplanar decals).
       const float cur = depth_[o];
-      const uint8_t curLayer = backdrop_[o];
-      if (cur > 0) {
-        if (layer == 0) {
-          if (curLayer == 0) { if (z < cur * (1.0f - 2e-5f)) continue; }
-          else if (curLayer == 2) { /* road always covers backdrop */ }
-          else if (z < cur / 1.3f) continue;  // scenery clearly nearer than this road fragment
-        } else {
-          if (curLayer == 0) { if (layer == 2 || z < cur * 1.3f) continue; }
-          else if (z < cur * (1.0f - 2e-5f)) continue;
+      if (curItem_ >= 0) {
+        if (itemBuf_[o] == curItem_ && z < cur * (1.0f - 2e-5f)) continue;
+      } else {
+        const uint8_t curLayer = backdrop_[o];
+        if (cur > 0) {
+          if (layer == 0) {
+            if (curLayer == 0) { if (z < cur * (1.0f - 2e-5f)) continue; }
+            else if (curLayer == 2) { /* road always covers backdrop */ }
+            else if (z < cur / 1.3f) continue;  // scenery clearly nearer than this road fragment
+          } else {
+            if (curLayer == 0) { if (layer == 2 || z < cur * 1.3f) continue; }
+            else if (z < cur * (1.0f - 2e-5f)) continue;
+          }
         }
       }
       uint32_t col = flat;
@@ -183,9 +225,272 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
       }
       depth_[o] = z;
       backdrop_[o] = layer;
+      itemBuf_[o] = curItem_;
       color_[o] = col;
     }
   }
 }
 
+}  // namespace slip
+
+namespace slip {
+void SoftwareRenderer::computePortalVisibility(const Scene& scene) {
+  pieceWin_.clear();
+  if (!portalCulling || scene.pieceBoxes.empty()) return;
+  const float cp[3] = {float(cam_.pos[0] - scene.origin[0]), float(cam_.pos[1] - scene.origin[1]), float(cam_.pos[2] - scene.origin[2])};
+  // Only pieces that take part in the portal graph can be the camera cell; other pieces (decor, crowd, grid
+  // markers) are always drawn.
+  std::vector<uint8_t> inGraph(scene.pieceBoxes.size(), 0);
+  for (size_t i = 0; i < inGraph.size(); ++i) inGraph[i] = scene.pieceBoxes[i].graph ? 1 : 0;
+  int start = -1;
+  double bestVol = 1e300;
+  for (size_t i = 0; i < scene.pieceBoxes.size(); ++i) {
+    const auto& b = scene.pieceBoxes[i];
+    if (b.empty || !inGraph[i]) continue;
+    const bool in = scene.pieceContains(i, cp);
+    double vol = double(b.hi[0] - b.lo[0]) * double(b.hi[1] - b.lo[1]) * double(b.hi[2] - b.lo[2]);
+    if (in && vol < bestVol) { bestVol = vol; start = int(i); }
+  }
+  if (start < 0) return;  // camera outside every piece: draw everything (the original also has no cell then)
+  pieceWin_.assign(scene.pieceBoxes.size(), WinRect{});
+  for (size_t i = 0; i < pieceWin_.size(); ++i)
+    if (!inGraph[i]) pieceWin_[i] = WinRect{0, 0, w_ - 1, h_ - 1, true};
+  union_ = WinRect{w_, h_, -1, -1, false};
+  struct Rec {
+    const Scene& sc; SoftwareRenderer& r; const float* cp;
+    void visit(int i, WinRect rect, int from, int depth) {
+      WinRect& w = r.pieceWin_[size_t(i)];
+      if (w.vis) {
+        WinRect u{std::min(w.x0, rect.x0), std::min(w.y0, rect.y0), std::max(w.x1, rect.x1), std::max(w.y1, rect.y1), true};
+        if (u.x0 == w.x0 && u.y0 == w.y0 && u.x1 == w.x1 && u.y1 == w.y1) return;
+        w = u;
+        rect = u;
+      } else {
+        w = rect;
+        w.vis = true;
+      }
+      r.addExtent(sc, size_t(i), cp);
+      if (depth > 0x300) return;
+      const auto& box = sc.pieceBoxes[size_t(i)];
+      for (int j = 0; j < 3; ++j) {
+        if (box.link[j] < 0 || box.link[j] == from) continue;
+        const MeshPoly& p = sc.track.polys[size_t(box.linkPoly[j])];
+        const Vec3& v0 = sc.track.verts[p.first];
+        // portal normals point back into the piece that owns them (verified on all tracks), so the camera must be on that side
+        if (p.normal.x * (cp[0] - v0.x) + p.normal.y * (cp[1] - v0.y) + p.normal.z * (cp[2] - v0.z) <= 0) continue;
+        WinRect pr;
+        if (!r.polyRect(sc, p, cp, rect, &pr)) continue;
+        visit(box.link[j], pr, i, depth + 1);
+      }
+    }
+  } rec{scene, *this, cp};
+  rec.visit(start, WinRect{0, 0, w_ - 1, h_ - 1, true}, -1, 0);
+}
+}  // namespace slip
+
+namespace slip {
+bool SoftwareRenderer::polyRect(const Scene& scene, const MeshPoly& p, const float cp[3], const WinRect& win, WinRect* out) const {
+  struct P2 { float x, y; };
+  struct V3 { float x, y, z; };
+  std::vector<V3> in;
+  for (uint16_t k = 0; k < p.count; ++k) {
+    const Vec3& v = scene.track.verts[p.first + k];
+    float rx = v.x - cp[0], ry = v.y - cp[1], rz = v.z - cp[2];
+    in.push_back({rx * right_[0] + ry * right_[1] + rz * right_[2], rx * up_[0] + ry * up_[1] + rz * up_[2],
+                  rx * fwd_[0] + ry * fwd_[1] + rz * fwd_[2]});
+  }
+  std::vector<V3> cl;  // near-plane clip
+  for (size_t i = 0; i < in.size(); ++i) {
+    const V3& a = in[i];
+    const V3& b = in[(i + 1) % in.size()];
+    const bool ain = a.z >= cam_.nearPlane, bin = b.z >= cam_.nearPlane;
+    if (ain) cl.push_back(a);
+    if (ain != bin) {
+      float t = (cam_.nearPlane - a.z) / (b.z - a.z);
+      cl.push_back({a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, cam_.nearPlane});
+    }
+  }
+  if (cl.size() < 3) return false;
+  std::vector<P2> poly;
+  for (const V3& v : cl) poly.push_back({float(w_) * 0.5f + v.x / v.z * focal_, float(h_) * 0.5f - v.y / v.z * focal_});
+  // clip against the window rectangle, one edge at a time
+  auto clipEdge = [&](int axis, float bound, bool keepGreater) {
+    std::vector<P2> o;
+    for (size_t i = 0; i < poly.size(); ++i) {
+      const P2& a = poly[i];
+      const P2& b = poly[(i + 1) % poly.size()];
+      const float av = axis == 0 ? a.x : a.y, bv = axis == 0 ? b.x : b.y;
+      const bool ain = keepGreater ? av >= bound : av <= bound, bin = keepGreater ? bv >= bound : bv <= bound;
+      if (ain) o.push_back(a);
+      if (ain != bin) {
+        float t = (bound - av) / (bv - av);
+        o.push_back({a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t});
+      }
+    }
+    poly.swap(o);
+  };
+  clipEdge(0, float(win.x0), true);
+  if (!poly.empty()) clipEdge(0, float(win.x1) + 1.0f, false);
+  if (!poly.empty()) clipEdge(1, float(win.y0), true);
+  if (!poly.empty()) clipEdge(1, float(win.y1) + 1.0f, false);
+  if (poly.size() < 3) return false;
+  float mnx = 1e30f, mny = 1e30f, mxx = -1e30f, mxy = -1e30f;
+  for (const P2& q : poly) { mnx = std::min(mnx, q.x); mxx = std::max(mxx, q.x); mny = std::min(mny, q.y); mxy = std::max(mxy, q.y); }
+  out->x0 = std::max(win.x0, int(std::floor(mnx)) - 1); out->x1 = std::min(win.x1, int(std::ceil(mxx)) + 1);
+  out->y0 = std::max(win.y0, int(std::floor(mny)) - 1); out->y1 = std::min(win.y1, int(std::ceil(mxy)) + 1);
+  out->vis = true;
+  return out->x0 <= out->x1 && out->y0 <= out->y1;
+}
+
+int SoftwareRenderer::flatIndex(const SurfaceMaterial* mat, int upLight) const {
+  // CONFIRMED lighting law (0x1CCE9, 0x1C4B6, 0x1958F, track setup 0x595DD..0x595ED): light direction (0,-1,0) in
+  // world space, diffuse level 0x3333 and ambient 0x0CCC (level 1.0 / ambient 0.25 normalised to a sum of 1.0), no fog.
+  const int kLevel = 0x3333, kAmbient = 0x0CCC;
+  int s;
+  if (mat->fixedLight) s = mat->fixedLight;
+  else if (!mat->ambientCoef && !mat->diffuseCoef && !mat->specularCoef) s = kLevel + kAmbient;
+  else {
+    const int diffuse = (upLight * kLevel) >> 14;
+    s = ((kAmbient * mat->ambientCoef) >> 14) + ((diffuse * mat->diffuseCoef) >> 14);
+  }
+  s = std::clamp(s, 0, 0x4000);
+  return int(mat->palStart) + (((int(mat->palEnd) - int(mat->palStart)) * s) >> 14);
+}
+
+void SoftwareRenderer::drawFloorDetail(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat) {
+  const PanelDetail& d = scene.panelDetails[p.detail];
+  auto ramp80 = [](const SurfaceMaterial& m) { return int(m.palStart) + (((int(m.palEnd) - int(m.palStart)) * 0x3333) >> 14); };  // 0x1A1C8, fog off
+  const int lane = ramp80(*mat);
+  auto fan = [&](const std::vector<VV>& poly, int idx) {
+    std::vector<VV> cl;
+    for (size_t i = 0; i < poly.size(); ++i) {
+      const VV &a = poly[i], &b = poly[(i + 1) % poly.size()];
+      const bool ain = a.z >= cam_.nearPlane, bin = b.z >= cam_.nearPlane;
+      if (ain) cl.push_back(a);
+      if (ain != bin) {
+        float t = (cam_.nearPlane - a.z) / (b.z - a.z);
+        cl.push_back({a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, cam_.nearPlane, 0, 0});
+      }
+    }
+    for (size_t k = 1; k + 1 < cl.size(); ++k) rasterTri(scene, cl[0], cl[k], cl[k + 1], mat, false, 1.0f, 0, 0, idx);
+  };
+  float nearest = 1e30f;
+  for (uint16_t k = 0; k < p.count; ++k) nearest = std::min(nearest, tv[p.first + k].z);
+  bool near = nearest >= cam_.nearPlane;
+  if (!d.valid || int(p.count) != d.nBase || !near || nearest > float(d.gate)) {
+    // far branch (0x40B84): the polygon in the 80 % lane colour
+    std::vector<VV> poly(tv.begin() + p.first, tv.begin() + p.first + p.count);
+    fan(poly, lane);
+    return;
+  }
+  std::vector<VV> pts(d.mid.size());
+  for (size_t k = 0; k < pts.size(); ++k) {
+    if (int(k) < d.nBase) pts[k] = tv[p.first + k];
+    else {
+      const VV &a = pts[d.mid[k][0] % pts.size()], &b = pts[d.mid[k][1] % pts.size()];
+      pts[k] = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f, 0, 0};
+    }
+  }
+  int yellow = lane;
+  if (scene.sdYellowMaterial >= 0) yellow = ramp80(scene.materials[size_t(scene.sdYellowMaterial)]);
+  for (const auto& pl : d.polys) {
+    std::vector<VV> poly;
+    for (uint16_t i : pl.idx) poly.push_back(pts[i % pts.size()]);
+    fan(poly, pl.yellow ? yellow : lane);
+  }
+  const int cPlus = std::min(lane + 1, int(mat->palEnd));
+  int cMinus = lane - 1;
+  if (cMinus < int(mat->palStart)) cMinus = mat->fallbackColor;
+  for (const auto& ln : d.lines) {
+    if (ln.a >= pts.size() || ln.b >= pts.size()) continue;
+    const VV &a = pts[ln.a], &b = pts[ln.b];
+    const float x0 = float(w_) * 0.5f + a.x / a.z * focal_, y0 = float(h_) * 0.5f - a.y / a.z * focal_;
+    const float x1 = float(w_) * 0.5f + b.x / b.z * focal_, y1 = float(h_) * 0.5f - b.y / b.z * focal_;
+    const float iz0 = 1.0f / a.z, iz1 = 1.0f / b.z;
+    const int steps = int(std::max(std::fabs(x1 - x0), std::fabs(y1 - y0))) + 1;
+    const uint32_t col = 0xff000000u | (scene.palette.rgba[size_t(std::clamp(ln.darker ? cMinus : cPlus, 0, 255))] & 0xffffffu);
+    for (int i = 0; i <= steps; ++i) {
+      const float t = float(i) / float(steps);
+      const int x = int(std::floor(x0 + (x1 - x0) * t)), y = int(std::floor(y0 + (y1 - y0) * t));
+      if (x < sx0_ || x > sx1_ || y < sy0_ || y > sy1_) continue;
+      const size_t o = size_t(y) * size_t(w_) + size_t(x);
+      const float z = iz0 + (iz1 - iz0) * t;
+      if (curItem_ >= 0 ? (itemBuf_[o] != curItem_ || z < depth_[o] * (1.0f - 1e-3f)) : z < depth_[o] * (1.0f - 1e-3f)) continue;
+      color_[o] = col;
+    }
+  }
+}
+
+void SoftwareRenderer::drawPanelLines(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat, int flatIdx) {
+  const PanelDetail& d = scene.panelDetails[p.detail];
+  if (!d.valid || int(p.count) != d.nBase || !mat) return;
+  float nearest = 1e30f;
+  for (uint16_t k = 0; k < p.count; ++k) nearest = std::min(nearest, tv[p.first + k].z);
+  if (nearest < cam_.nearPlane || (d.gate && nearest > float(d.gate))) return;
+  struct P3 { float x, y, z; };
+  std::vector<P3> pts(d.mid.size());
+  for (size_t k = 0; k < pts.size(); ++k) {
+    if (int(k) < d.nBase) { const VV& v = tv[p.first + k]; pts[k] = {v.x, v.y, v.z}; }
+    else {
+      const P3 &a = pts[d.mid[k][0] % pts.size()], &b = pts[d.mid[k][1] % pts.size()];
+      pts[k] = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f};
+    }
+  }
+  const int cPlus = flatIdx + 1;
+  int cMinus = flatIdx - 1;
+  if (cMinus < int(mat->palStart)) cMinus = mat->fallbackColor;  // 0x1A98C
+  const uint32_t colPlus = 0xff000000u | (scene.palette.rgba[size_t(std::clamp(cPlus, 0, 255))] & 0xffffffu);
+  const uint32_t colMinus = 0xff000000u | (scene.palette.rgba[size_t(std::clamp(cMinus, 0, 255))] & 0xffffffu);
+  for (const auto& ln : d.lines) {
+    if (ln.a >= pts.size() || ln.b >= pts.size()) continue;
+    P3 a = pts[ln.a], b = pts[ln.b];
+    const float x0 = float(w_) * 0.5f + a.x / a.z * focal_, y0 = float(h_) * 0.5f - a.y / a.z * focal_;
+    const float x1 = float(w_) * 0.5f + b.x / b.z * focal_, y1 = float(h_) * 0.5f - b.y / b.z * focal_;
+    const float iz0 = 1.0f / a.z, iz1 = 1.0f / b.z;
+    const int steps = int(std::max(std::fabs(x1 - x0), std::fabs(y1 - y0))) + 1;
+    const uint32_t col = ln.darker ? colMinus : colPlus;
+    for (int i = 0; i <= steps; ++i) {
+      const float t = float(i) / float(steps);
+      const int x = int(std::floor(x0 + (x1 - x0) * t)), y = int(std::floor(y0 + (y1 - y0) * t));
+      if (x < sx0_ || x > sx1_ || y < sy0_ || y > sy1_) continue;
+      const size_t o = size_t(y) * size_t(w_) + size_t(x);
+      const float z = iz0 + (iz1 - iz0) * t;
+      if (curItem_ >= 0 ? (itemBuf_[o] != curItem_ || z < depth_[o] * (1.0f - 1e-3f)) : z < depth_[o] * (1.0f - 1e-3f)) continue;
+      color_[o] = col;
+    }
+  }
+}
+
+void SoftwareRenderer::addExtent(const Scene& scene, size_t piece, const float cp[3]) {
+  if (piece >= scene.piecePolys.size()) return;
+  for (uint32_t pi : scene.piecePolys[piece]) {
+    const MeshPoly& p = scene.track.polys[pi];
+    if (!(p.pflags & 8) || p.count < 3) continue;
+    const Vec3& v0 = scene.track.verts[p.first];
+    if (p.normal.x * (cp[0] - v0.x) + p.normal.y * (cp[1] - v0.y) + p.normal.z * (cp[2] - v0.z) <= 0) continue;  // facing away
+    WinRect r;
+    if (!polyRect(scene, p, cp, WinRect{0, 0, w_ - 1, h_ - 1, true}, &r)) continue;
+    union_.x0 = std::min(union_.x0, r.x0); union_.y0 = std::min(union_.y0, r.y0);
+    union_.x1 = std::max(union_.x1, r.x1); union_.y1 = std::max(union_.y1, r.y1);
+    union_.vis = true;
+  }
+}
+
+bool SoftwareRenderer::boxInFrustum(const Scene& scene, const float lo[3], const float hi[3]) const {
+  const double cp[3] = {cam_.pos[0] - scene.origin[0], cam_.pos[1] - scene.origin[1], cam_.pos[2] - scene.origin[2]};
+  const double hx = double(w_) * 0.5 / double(focal_), hy = double(h_) * 0.5 / double(focal_);
+  bool allBehind = true, allL = true, allR = true, allU = true, allD = true;
+  for (int c = 0; c < 8; ++c) {
+    const double rx = ((c & 1) ? hi[0] : lo[0]) - cp[0], ry = ((c & 2) ? hi[1] : lo[1]) - cp[1], rz = ((c & 4) ? hi[2] : lo[2]) - cp[2];
+    const double x = rx * right_[0] + ry * right_[1] + rz * right_[2];
+    const double y = rx * up_[0] + ry * up_[1] + rz * up_[2];
+    const double z = rx * fwd_[0] + ry * fwd_[1] + rz * fwd_[2];
+    allBehind &= z < cam_.nearPlane;
+    allL &= x < -z * hx;
+    allR &= x > z * hx;
+    allU &= y > z * hy;
+    allD &= y < -z * hy;
+  }
+  return !(allBehind || allL || allR || allU || allD);
+}
 }  // namespace slip

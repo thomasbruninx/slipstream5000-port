@@ -49,7 +49,18 @@ struct Builder {
       SurfaceMaterial sm;
       sm.name = m.name;
       sm.palStart = m.palStart;
-      sm.palEnd = m.palEnd;
+      {
+        // Draw3DSetMaterials: end = start + min(end-start, 0x70) - ((1 << shift) - 1)
+        const int shift = m.raw[0x1E] | (m.raw[0x1F] << 8);
+        int range = std::min(int(m.palEnd) - int(m.palStart), 0x70);
+        int end = int(m.palStart) + range - ((1 << std::min(shift, 15)) - 1);
+        sm.palEnd = uint8_t(std::clamp(end, 0, 255));
+        sm.fallbackColor = m.raw[0x12];
+        sm.fixedLight = m.raw[0x16] | (m.raw[0x17] << 8);
+        sm.ambientCoef = m.raw[0x18] | (m.raw[0x19] << 8);
+        sm.diffuseCoef = m.raw[0x1A] | (m.raw[0x1B] << 8);
+        sm.specularCoef = m.raw[0x1C] | (m.raw[0x1D] << 8);
+      }
       {
         std::string ln = m.name;
         for (auto& ch : ln) ch = char(std::tolower(static_cast<unsigned char>(ch)));
@@ -113,7 +124,14 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
   };
 
   // --- track pieces ---
-  for (auto& pc : t.pieces) {
+  s->piecePolys.assign(t.pieces.size(), {});
+  for (auto& pc : t.pieces) s->pieceGroup.push_back(pc.group);
+  s->groupCount = t.groupCount;
+  s->portalOnly = t.portalOnly;
+  for (const BspNode& n : t.bsp) s->bsp.push_back({n.axis, n.point, n.hi, n.lo, n.group});
+  std::vector<std::map<uint32_t, int>> polyOf(t.pieces.size());  // per piece: TRC polygon offset -> track.polys index
+  for (size_t pi = 0; pi < t.pieces.size(); ++pi) {
+    const TrackPiece& pc = t.pieces[pi];
     const TrackRecord& rec = t.records[size_t(pc.record)];
     Vec3 base{float(double(pc.pos.x) - s->origin[0]), float(double(pc.pos.y) - s->origin[1]), float(double(pc.pos.z) - s->origin[2])};
     for (auto& poly : rec.polys) {
@@ -127,6 +145,14 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
       if (bad || vs.size() < 3) continue;
       addPoly(s->track, vs, poly.uv, b.globalMaterial(t.trcMaterials, poly.material), Builder::unitNormal(poly.nx, poly.ny, poly.nz));
       s->track.polys.back().vis = rec.visFlags;
+      s->track.polys.back().piece = int32_t(pi);
+      s->track.polys.back().pflags = poly.flags;
+      if (poly.uv.empty() && panelIndex(poly.flags >> 8)) s->track.polys.back().detail = uint8_t(panelIndex(poly.flags >> 8));
+      s->track.polys.back().portal = (poly.flags & 1) != 0;
+      // list A: flags 0x1 (portal) / 0x4 are skipped (0x3948C: test al,5); list B: 0x1/0x4/0x10 (0x3872C: test al,0x15)
+      s->track.polys.back().hidden = s->track.polys.back().portal || (poly.flags & 4) != 0 || (poly.list == 1 && (poly.flags & 0x10) != 0);
+      polyOf[pi][poly.offset] = int(s->track.polys.size()) - 1;
+      s->piecePolys[pi].push_back(uint32_t(s->track.polys.size() - 1));
     }
   }
 
@@ -135,9 +161,18 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
   // through has the part inside these boxes cut away: buildings cannot occupy the drivable corridor.
   struct Box { Vec3 lo, hi; };
   std::vector<Box> roadBoxes;
-  for (auto& pc : t.pieces) {
+  std::map<uint32_t, int> pieceByTrd;
+  for (size_t pi = 0; pi < t.pieces.size(); ++pi) { pieceByTrd[t.pieces[pi].trdOffset] = int(pi); s->entryItem[t.pieces[pi].trdOffset] = {0, pi}; }
+  for (size_t pi = 0; pi < t.pieces.size(); ++pi) {
+    const TrackPiece& pc = t.pieces[pi];
     const TrackRecord& rec = t.records[size_t(pc.record)];
-    if (rec.verts.empty()) continue;
+    if (rec.verts.empty()) {
+      Scene::PieceBox pb{};
+      pb.empty = true;
+      for (int j = 0; j < 3; ++j) pb.link[j] = pb.linkPoly[j] = -1;
+      s->pieceBoxes.push_back(pb);
+      continue;
+    }
     Box bx{{1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
     for (const Vec3i& v : rec.verts) {
       float x = float(double(pc.pos.x) - s->origin[0] + v.x), y = float(double(pc.pos.y) - s->origin[1] + v.y), z = float(double(pc.pos.z) - s->origin[2] + v.z);
@@ -151,15 +186,38 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     {
       Scene::PieceBox pb{};
       pb.flags = rec.visFlags;
+      for (int k = 0; k < 3; ++k) {
+        const double o = k == 0 ? double(pc.pos.x) - s->origin[0] : k == 1 ? double(pc.pos.y) - s->origin[1] : double(pc.pos.z) - s->origin[2];
+        pb.bb[2 * k] = float(o + rec.bbox[2 * k] * 64.0);
+        pb.bb[2 * k + 1] = float(o + rec.bbox[2 * k + 1] * 64.0);
+      }
+      for (int j = 0; j < 3; ++j) {
+        pb.link[j] = pb.linkPoly[j] = -1;
+        auto it = pieceByTrd.find(pc.links[j].pieceOffset);
+        auto pt = polyOf[pi].find(pc.links[j].portalOffset);
+        if (pc.links[j].pieceOffset && it != pieceByTrd.end() && pt != polyOf[pi].end()) { pb.link[j] = it->second; pb.linkPoly[j] = pt->second; }
+      }
       float lx = 1e30f, ly = 1e30f, lz = 1e30f, hx = -1e30f, hy = -1e30f, hz = -1e30f;
       for (const Vec3i& v : rec.verts) {
         float x = float(double(pc.pos.x) - s->origin[0] + v.x), y = float(double(pc.pos.y) - s->origin[1] + v.y), z = float(double(pc.pos.z) - s->origin[2] + v.z);
         lx = std::min(lx, x); ly = std::min(ly, y); lz = std::min(lz, z); hx = std::max(hx, x); hy = std::max(hy, y); hz = std::max(hz, z);
       }
       pb.lo[0] = lx; pb.lo[1] = ly; pb.lo[2] = lz; pb.hi[0] = hx; pb.hi[1] = hy; pb.hi[2] = hz;
+      for (const TrackPolygon& tp : rec.polys) {
+        if (tp.list != 0 || (tp.flags & 0x40)) continue;
+        auto it = polyOf[pi].find(tp.offset);
+        if (it == polyOf[pi].end()) continue;
+        const MeshPoly& mp = s->track.polys[size_t(it->second)];
+        const Vec3& v0 = s->track.verts[mp.first];
+        if (mp.normal.x == 0 && mp.normal.y == 0 && mp.normal.z == 0) continue;
+        pb.planes.push_back({mp.normal.x, mp.normal.y, mp.normal.z, -(mp.normal.x * v0.x + mp.normal.y * v0.y + mp.normal.z * v0.z)});
+      }
       s->pieceBoxes.push_back(pb);
     }
   }
+  for (size_t i = 0; i < s->pieceBoxes.size(); ++i)
+    for (int j = 0; j < 3; ++j)
+      if (s->pieceBoxes[i].link[j] >= 0) { s->pieceBoxes[i].graph = true; s->pieceBoxes[size_t(s->pieceBoxes[i].link[j])].graph = true; }
   std::map<std::string, std::optional<Shape>> shapeCache;
   for (auto& inst : t.scenery) {
     auto it = shapeCache.find(inst.shape);
@@ -172,6 +230,25 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     const Shape& sh = *it->second;
     Vec3 base{float(double(inst.pos.x) - s->origin[0]), float(double(inst.pos.y) - s->origin[1]), float(double(inst.pos.z) - s->origin[2])};
     const int16_t* m = inst.matrix;
+    if (inst.billboard) {
+      Billboard bb;
+      bb.pos = base;
+      bb.radius = float(inst.radius);
+      bb.vis = inst.visMask;
+      bb.group = inst.group;
+      for (auto& poly : sh.polys) {
+        std::vector<Vec3> vs;
+        bool bad = false;
+        for (uint16_t i : poly.index) {
+          if (i >= sh.verts.size()) { bad = true; break; }
+          vs.push_back({float(sh.verts[i].x), float(sh.verts[i].y), float(sh.verts[i].z)});
+        }
+        if (bad || vs.size() < 3) continue;
+        addPoly(bb.mesh, vs, poly.uv, b.globalMaterial(sh.materials, poly.material), Builder::unitNormal(poly.nx, poly.ny, poly.nz));
+      }
+      if (!bb.mesh.polys.empty()) { s->entryItem[inst.entryOffset] = {2, s->billboards.size()}; s->billboards.push_back(std::move(bb)); }
+      continue;
+    }
     struct SPoly { std::vector<Vec3> v; std::vector<std::array<float, 2>> uv; int mat; Vec3 n; };
     std::vector<SPoly> sps;
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
@@ -188,7 +265,13 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
       }
       if (bad || sp.v.size() < 3) continue;
       sp.mat = b.globalMaterial(sh.materials, poly.material);
-      sp.n = Builder::unitNormal(poly.nx, poly.ny, poly.nz);
+      {
+        // the stored normal is in model space: rotate it with the instance matrix like the vertices (v * M)
+        const Vec3 n0 = Builder::unitNormal(poly.nx, poly.ny, poly.nz);
+        Vec3 n{(n0.x * m[0] + n0.y * m[3] + n0.z * m[6]) * kFix14, (n0.x * m[1] + n0.y * m[4] + n0.z * m[7]) * kFix14,
+               (n0.x * m[2] + n0.y * m[5] + n0.z * m[8]) * kFix14};
+        sp.n = n;
+      }
       for (auto& v : sp.v) {
         lo.x = std::min(lo.x, v.x); lo.y = std::min(lo.y, v.y); lo.z = std::min(lo.z, v.z);
         hi.x = std::max(hi.x, v.x); hi.y = std::max(hi.y, v.y); hi.z = std::max(hi.z, v.z);
@@ -198,16 +281,22 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     // Only tall volumes (towers); flat spans such as bridges legitimately pass over the road.
     const bool tall = (hi.y - lo.y) > 0.6f * std::max(hi.x - lo.x, hi.z - lo.z);
     std::vector<const Box*> cut;
-    if (tall)
+    if (tall && std::getenv("SLIP_CUT"))  // legacy z-buffer workaround, unnecessary in painter mode
       for (const Box& bx : roadBoxes)
         if (bx.lo.x < hi.x && bx.hi.x > lo.x && bx.lo.y < hi.y && bx.hi.y > lo.y && bx.lo.z < hi.z && bx.hi.z > lo.z) cut.push_back(&bx);
 
+    const int32_t instIndex = int32_t(s->track.instances.size());
+    s->track.instances.push_back({inst.group, base, float(inst.radius)});
+    s->instPolys.emplace_back();
+    s->entryItem[inst.entryOffset] = {1, size_t(instIndex)};
     auto emit = [&](const SPoly& sp) {
       std::vector<std::array<uint16_t, 2>> uv;
       for (auto& q : sp.uv) uv.push_back({uint16_t(std::clamp(std::lround(q[0]), 0L, 65535L)), uint16_t(std::clamp(std::lround(q[1]), 0L, 65535L))});
       addPoly(s->track, sp.v, uv, sp.mat, sp.n);
       s->track.polys.back().scenery = true;
       s->track.polys.back().vis = inst.visMask;
+      s->track.polys.back().instance = instIndex;
+      s->instPolys.back().push_back(uint32_t(s->track.polys.size() - 1));
       s->track.polys.back().backdrop = !cut.empty();
     };
     // Subtract a box from a convex polygon: emit the parts outside each slab in turn.
@@ -243,6 +332,10 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     };
     for (auto& sp : sps) subtract(sp, 0);
   }
+
+  s->panelDetails = loadPanelDetails(data);
+  s->sdYellowMaterial = b.mats.find("SDYellow");
+  s->groupTrees = t.groupTrees;  // planes come straight from the group points (see track.cpp)
 
   // --- ship models (10 ART files): body shape of the root node plus first shape of each child ---
   for (int i = 0; i < 10; ++i) {
@@ -284,7 +377,6 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
 
   s->track_data = std::move(t);
   s->buildFloorIndex();
-  s->hidePortalPolys();
   *out = std::move(*s);
   return true;
 }
@@ -381,57 +473,70 @@ bool Scene::floorHeight(double wx, double wz, double yHint, double margin, doubl
 
 }  // namespace slip
 
+
 namespace slip {
-// A flat (untextured), vertical polygon whose plane the road passes straight through (drivable floor at about
-// the same height on both sides, polygon spanning from the floor upwards) cannot be a solid wall: the ships
-// would have to drive through it. Such polygons are sector-boundary caps/portals ("Trench Ent" in Chicago);
-// INFERRED, the original's rule for skipping them is unknown.
-void Scene::hidePortalPolys() {
-  for (auto& p : track.polys) {
-    if (p.scenery || p.count < 3 || std::fabs(p.normal.y) > 0.35f) continue;
-    if (p.material < 0 || size_t(p.material) >= materials.size()) continue;
-    // Name gate: only entrance caps ("... Ent"). Other flat vertical surfaces that cross the road (start cages,
-    // walls of other tracks) are real geometry as far as we can tell.
-    std::string ln = materials[size_t(p.material)].name;
-    while (!ln.empty() && ln.back() == ' ') ln.pop_back();
-    for (auto& ch : ln) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-    if (ln.size() < 4 || ln.compare(ln.size() - 4, 4, " ent") != 0) continue;
-    float hx = p.normal.x, hz = p.normal.z, hl = std::sqrt(hx * hx + hz * hz);
-    if (hl < 0.5f) continue;
-    hx /= hl; hz /= hl;
-    Vec3 c{0, 0, 0};
-    float lo = 1e30f, hi = -1e30f;
-    for (uint16_t k = 0; k < p.count; ++k) {
-      const Vec3& v = track.verts[p.first + k];
-      c = c + v * (1.0f / float(p.count));
-      lo = std::min(lo, v.y); hi = std::max(hi, v.y);
-    }
-    double yf, yb;
-    const double wx = double(c.x) + origin[0], wz = double(c.z) + origin[2], hint = double(lo) + origin[1];
-    if (!floorHeight(wx + hx * 4000, wz + hz * 4000, hint, 25000, &yf)) continue;
-    if (!floorHeight(wx - hx * 4000, wz - hz * 4000, hint, 25000, &yb)) continue;
-    const double fl = std::max(yf, yb) - origin[1];
-    if (std::fabs(yf - yb) < 30000 && double(lo) <= fl + 20000 && double(hi) > fl + 25000) p.hidden = true;
+bool Scene::pieceContains(size_t i, const float p[3]) const {
+  const PieceBox& b = pieceBoxes[i];
+  if (b.empty) return false;
+  for (int k = 0; k < 3; ++k)
+    if (p[k] < b.bb[2 * k] || p[k] > b.bb[2 * k + 1]) return false;
+  for (const auto& pl : b.planes)
+    if (pl[0] * p[0] + pl[1] * p[1] + pl[2] * p[2] + pl[3] < -256.0f) return false;
+  return true;
+}
+
+uint16_t Scene::visMaskAt(double wx, double wy, double wz) const {
+  const float p[3] = {float(wx - origin[0]), float(wy - origin[1]), float(wz - origin[2])};
+  double bestVol = 1e300;
+  uint16_t flags = 0xFFFF;
+  for (const PieceBox& b : pieceBoxes) {
+    if (b.empty || !b.graph) continue;
+    const bool in = pieceContains(size_t(&b - pieceBoxes.data()), p);
+    double vol = double(b.hi[0] - b.lo[0]) * double(b.hi[1] - b.lo[1]) * double(b.hi[2] - b.lo[2]);
+    if (in && vol < bestVol) { bestVol = vol; flags = b.flags; }
   }
+  const uint16_t m = uint16_t(flags & 0x5F);
+  return m ? m : uint16_t(0xFFFF);  // no cell (or empty class set): draw everything, as the original does without a cell
 }
 }  // namespace slip
 
 namespace slip {
-uint16_t Scene::visMaskAt(double wx, double wy, double wz) const {
-  if (pieceBoxes.empty()) return 0xFFFF;
-  const float p[3] = {float(wx - origin[0]), float(wy - origin[1]), float(wz - origin[2])};
-  double best = 1e300, bestVol = 1e300;
-  uint16_t flags = 0xFFFF;
-  for (const PieceBox& b : pieceBoxes) {
-    double d2 = 0;
-    for (int k = 0; k < 3; ++k) {
-      double d = p[k] < b.lo[k] ? b.lo[k] - p[k] : p[k] > b.hi[k] ? p[k] - b.hi[k] : 0.0;
-      d2 += d * d;
-    }
-    double vol = double(b.hi[0] - b.lo[0]) * double(b.hi[1] - b.lo[1]) * double(b.hi[2] - b.lo[2]);
-    if (d2 < best || (d2 == best && vol < bestVol)) { best = d2; bestVol = vol; flags = b.flags; }
-  }
-  const uint16_t m = uint16_t(flags & 0x5F);
-  return m ? m : uint16_t(0xFFFF);  // empty class set: draw everything (INFERRED safety)
+void Scene::bspOrder(const double cam[3], std::vector<int>* groups) const {
+  groups->clear();
+  if (bsp.empty()) return;
+  const double p[3] = {cam[0] - origin[0] + origin[0], cam[1], cam[2]};  // planes are in absolute world units
+  std::vector<int> stack{0};
+  // iterative far-first walk: visit the side that does not contain the camera first
+  std::function<void(int, int)> walk = [&](int n, int depth) {
+    if (n < 0 || depth > 64) return;
+    const BspNodeS& nd = bsp[size_t(n)];
+    if (nd.axis < 0) { if (nd.group >= 0) groups->push_back(nd.group); return; }
+    const double plane = double(nd.point) * 1048576.0;
+    if (p[nd.axis] >= plane) { walk(nd.lo, depth + 1); walk(nd.hi, depth + 1); }  // camera on the high side: low side is far
+    else { walk(nd.hi, depth + 1); walk(nd.lo, depth + 1); }
+  };
+  walk(0, 0);
+}
+}  // namespace slip
+
+namespace slip {
+void Scene::groupOrder(int g, const double cam[3], std::vector<ItemRef>* out) const {
+  out->clear();
+  if (g < 0 || size_t(g) >= groupTrees.size() || groupTrees[size_t(g)].empty()) return;
+  const auto& tree = groupTrees[size_t(g)];
+  std::function<void(int, int)> emit = [&](int n, int depth) {
+    if (n < 0 || size_t(n) >= tree.size() || depth > 64) return;
+    const GroupTreeNode& nd = tree[size_t(n)];
+    auto item = [&]() {
+      if (!nd.item) return;
+      auto it = entryItem.find(nd.item);
+      if (it != entryItem.end()) out->push_back(it->second);
+    };
+    if (nd.leaf) { item(); return; }
+    const double side = double(nd.n[0]) * cam[0] + double(nd.n[1]) * cam[1] + double(nd.n[2]) * cam[2] - double(nd.plane);
+    if (side >= 0) { emit(nd.b, depth + 1); item(); emit(nd.a, depth + 1); }   // camera on the A side: B is far
+    else { emit(nd.a, depth + 1); item(); emit(nd.b, depth + 1); }
+  };
+  emit(0, 0);
 }
 }  // namespace slip

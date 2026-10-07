@@ -5,6 +5,7 @@
 * Reads the user's original installation (`SLIPSTRM.RES`/`SLIPCD.RES`, loose-file fallback); **no original assets are in the source tree or the app**.
 * **Track viewer** (all 10 tracks): original geometry, textures, palette, scenery shapes, ships on the start grid. Free camera (WASD/QE, mouse look, Shift fast, `[` `]` change track, Esc quits). Gamepad: sticks move/look.
 * **Shape viewer** (F2): all 280 `.SHP` files, orbit camera. **Sprite viewer** (F3): all 886 `.SPR`.
+* **Track rendering follows the original's structure**: portal visibility walk, per-record class masks, BSP back-to-front painter order with per-group draw-order trees, billboards, size cull, back-face culling, polygon flags (portal/hidden). See `docs/research-log.md` (latest sessions) and `docs/formats/trk.md`. F5/F6/F7 toggle the parts for comparison.
 * **Drive demo** (Space or `--drive`): any of the 10 ships hovers on the track surface with placeholder handling (original thrust law, everything else invented).
 * Tools: `slipstream_inspect`, `tools/re/` (disassembly workbench, `validate_assets.py` 30 checks), CTest `slipstream_tests` (skipped without game data).
 

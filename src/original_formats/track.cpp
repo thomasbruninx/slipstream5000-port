@@ -1,3 +1,5 @@
+#include <cmath>
+#include <map>
 #include "original_formats/track.hpp"
 
 namespace slip {
@@ -59,6 +61,7 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
     R r{*trkB};
     t.trkVersion = r.u16(2);
     if (r.u16(0) != trkB->size() || t.trkVersion != 0x2b) return fail("unexpected TRK header");
+    t.portalOnly = r.s16(0x9E) != 0;
     for (int i = 0; i < 10; ++i) t.start[size_t(i)] = {r.s32(0x18 + 12 * size_t(i)), r.s32(0x1c + 12 * size_t(i)), r.s32(0x20 + 12 * size_t(i))};
     if (!r.ok) return fail("truncated TRK");
   }
@@ -88,7 +91,9 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
       for (int k = 0; k < 6; ++k) rec.bbox[k] = r.s16(p + 8 + 2 * size_t(k));
       if (r.u16(p + 0x18)) rec.name = cstr(*trcB, p + 0x1a, 8);
       size_t lists[2] = {r.u16(p + 4), r.u16(p + 6)};
+      int listNo = -1;
       for (size_t lo : lists) {
+        ++listNo;
         if (!lo) continue;
         uint16_t np = r.u16(lo);
         size_t q = lo + 2;
@@ -99,6 +104,9 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
           poly.nx = r.s16(q + 2);
           poly.ny = r.s16(q + 4);
           poly.nz = r.s16(q + 6);
+          poly.flags = r.u16(q + 8);
+          poly.offset = uint32_t(q);
+          poly.list = uint8_t(listNo);
           poly.material = uint16_t(r.u16(q + 10) & 0x7fff);
           for (size_t j = 0; j < N; ++j) poly.index.push_back(r.u16(q + 12 + 2 * j));
           if (info & 0x8000)
@@ -114,6 +122,7 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
     if (!r.ok) return fail("truncated TRC");
   }
 
+  std::vector<uint32_t> groupOffsets;
   // ---- TRD: pieces (placement of TRC records) and scenery shape instances ----
   {
     R r{*trdB};
@@ -133,7 +142,13 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
           for (size_t i = 0; i < recOffsets.size(); ++i)
             if (recOffsets[i] == recOff) { ri = int(i); break; }
           if (ri < 0) continue;
-          t.pieces.push_back({ri, {r.s32(e + 0x12), r.s32(e + 0x16), r.s32(e + 0x1a)}, g});
+          TrackPiece tp;
+          tp.trdOffset = uint32_t(e);
+          for (int j = 0; j < 3; ++j) tp.links[j] = {r.u16(e + 4 + 4 * size_t(j)), r.u16(e + 6 + 4 * size_t(j))};
+          tp.record = ri;
+          tp.pos = {r.s32(e + 0x12), r.s32(e + 0x16), r.s32(e + 0x1a)};
+          tp.group = g;
+          t.pieces.push_back(tp);
         }
       }
       if (sh) {
@@ -143,14 +158,83 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
           SceneryInstance s;
           s.shape = cstr(*trdB, e, 12);
           s.pos = {r.s32(e + 0x10), r.s32(e + 0x14), r.s32(e + 0x18)};
+          s.group = g;
+          s.entryOffset = uint32_t(e);
           s.visMask = r.u16(e + 0x36);
+          s.radius = uint32_t(r.s32(e + 0x1C));
+          s.billboard = r.u16(e + 0x38) != 0;
           for (int m = 0; m < 9; ++m) s.matrix[m] = r.s16(e + 0x24 + 2 * size_t(m));
           if (!s.shape.empty()) t.scenery.push_back(s);
         }
       }
+      groupOffsets.push_back(uint32_t(p));
+      {
+        std::vector<GroupTreeNode> tree;
+        size_t tb = r.u16(p + 6);
+        if (tb) {
+          size_t nn = r.u16(tb);
+          for (size_t k = 0; k < nn && r.ok; ++k) {
+            size_t o = tb + 2 + 24 * k;
+            GroupTreeNode nd;
+            uint32_t ca = uint32_t(r.s32(o)), cb = uint32_t(r.s32(o + 4));
+            nd.a = ca ? int((ca - 2) / 24) : -1;
+            nd.b = cb ? int((cb - 2) / 24) : -1;
+            nd.item = uint32_t(r.s32(o + 8));
+            nd.type = r.u16(o + 0xC);
+            nd.leaf = r.s16(o + 0x10) == -1;
+            nd.point = nd.leaf ? -1 : int(r.u16(o + 0x10));
+            float len = 0;
+            for (int j = 0; j < 3; ++j) { nd.n[j] = float(r.s16(o + 0x12 + 2 * size_t(j))); len += nd.n[j] * nd.n[j]; }
+            len = std::sqrt(len);
+            if (len > 0) for (int j = 0; j < 3; ++j) nd.n[j] /= len;
+            tree.push_back(nd);
+          }
+          // plane through group point `point`: points are u16 x,y,z (<<6) relative to the group origin (+0xA,+0xE,+0x12)
+          size_t pl = r.u16(p + 2);
+          if (pl) {
+            const double org[3] = {double(r.s32(p + 0xA)), double(r.s32(p + 0xE)), double(r.s32(p + 0x12))};
+            for (auto& nd : tree) {
+              if (nd.leaf || nd.point < 0) continue;
+              size_t q = pl + 2 + 8 * size_t(nd.point);
+              double P[3];
+              for (int j = 0; j < 3; ++j) P[j] = org[j] + double(r.u16(q + 2 * size_t(j))) * 64.0;
+              nd.plane = float(nd.n[0] * P[0] + nd.n[1] * P[1] + nd.n[2] * P[2]);
+            }
+          }
+        }
+        t.groupTrees.push_back(std::move(tree));
+      }
       p += sz;
     }
+    t.groupCount = int(ng);
     if (!r.ok) return fail("truncated TRD");
+  }
+  // ---- TRK BSP (needs TRD group offsets) ----
+  {
+    R r{*trkB};
+    size_t ct = r.u16(0xC);
+    size_t n = ct ? r.u16(ct) : 0;
+    std::map<uint32_t, int> nodeAt;
+    for (size_t i = 0; i < n; ++i) nodeAt[uint32_t(ct + 2 + 24 * i)] = int(i);
+    t.bsp.resize(n);
+    for (size_t i = 0; i < n && r.ok; ++i) {
+      size_t o = ct + 2 + 24 * i;
+      uint16_t kind = r.u16(o);
+      BspNode& nd = t.bsp[i];
+      if (kind == 0xFFFF) {
+        uint16_t trdOff = r.u16(o + 6);
+        for (size_t g = 0; g < groupOffsets.size(); ++g)
+          if (groupOffsets[g] == trdOff) nd.group = int(g);
+        continue;
+      }
+      if (kind < 22) { nd.axis = 0; nd.point = kind / 2 + 1; }
+      else if (kind < 28) { nd.axis = 1; nd.point = (kind - 22) / 2 + 1; }
+      else { nd.axis = 2; nd.point = (kind - 28) / 2 + 1; }
+      auto hi = nodeAt.find(r.u16(o + 2)), lo = nodeAt.find(r.u16(o + 4));
+      nd.hi = hi == nodeAt.end() ? -1 : hi->second;
+      nd.lo = lo == nodeAt.end() ? -1 : lo->second;
+    }
+    if (!r.ok) t.bsp.clear();
   }
   *out = std::move(t);
   return true;

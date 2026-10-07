@@ -16,6 +16,7 @@ add_library(slipstream_core STATIC
   src/original_formats/track.cpp
   src/game/scene.cpp
   src/game/ship_params.cpp
+  src/game/panel_detail.cpp
   src/game/ship_sim.cpp)
 target_include_directories(slipstream_core PUBLIC src)
 target_compile_options(slipstream_core PRIVATE -Wall -Wextra)

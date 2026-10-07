@@ -167,6 +167,8 @@ int main(int argc, char** argv) {
             case SDLK_TAB: app.toggleCulling(); break;
             case SDLK_F4: copyDebug(app); break;
             case SDLK_F5: app.toggleVisibility(); break;
+            case SDLK_F6: app.togglePainter(); break;
+            case SDLK_F7: app.toggleAllScenery(); break;
             case SDLK_C:
               if (e.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) copyDebug(app);
               break;
