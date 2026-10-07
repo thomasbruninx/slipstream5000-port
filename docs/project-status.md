@@ -31,3 +31,10 @@
 
 ## Milestones (docs/ task list)
 A window/input/loop ✅ · B display original asset ✅ · C free-camera track viewer ✅ · D vehicles on track ✅ (static grid) · E basic movement ✅ (placeholder) · F original physics ⏳ · G collision ⏳ · H full race ⏳
+
+
+## Physics / collision / doors (this phase)
+* DONE (oracle-checked): ship speed, steering/bank/yaw, pitch, drag, speed->velocity (`ship_sim.cpp`, `tests/physics_tests.cpp`).
+* DONE (geometry and response decoded and ported; damage/explosion not): ship-vs-track polygon sweep (`ship_collide.cpp`), controls E/Q pitch, F8 = hover assist.
+* DONE (decoded, visual only): sliding doors (`doors.cpp`).
+* OPEN: damage + explosion branch, ship-vs-ship (0x14620), ship-vs-door cube, damage/boost timers, AI.

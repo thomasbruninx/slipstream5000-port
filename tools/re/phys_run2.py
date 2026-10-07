@@ -11,5 +11,5 @@ def run(btn, steer, pitch, frames, step):
             print(f, 'spd',s32(m.r32(d+0xC)),'head',[s16(m.r16(base+0x5a+2*k)) for k in range(3)],
                   'mat',[s16(m.r16(base+0x48+2*k)) for k in range(9)],
                   'vel',[s32(m.r32(d+4*k)) for k in range(3)])
-print('steer +0x4000/16'); run(1, 0x400, 0, 61, 10)
-print('steer full'); run(1, 0x4000>>4, 0, 61, 10)
+print('full right'); run(1, 0x4000, 0, 61, 10)
+print('half'); run(1, 0x2000, 0, 61, 10)

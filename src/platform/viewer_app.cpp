@@ -8,11 +8,6 @@ namespace slip {
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
-void yawMatrix(double yaw, float* R) {
-  float c = float(std::cos(yaw)), s = float(std::sin(yaw));
-  float m[9] = {c, 0, s, 0, 1, 0, -s, 0, c};
-  std::copy(m, m + 9, R);
-}
 }  // namespace
 
 bool ViewerApp::init(const AppOptions& opt, std::string* error) {
@@ -60,6 +55,7 @@ bool ViewerApp::loadTrack(int idx, std::string* err) {
   auto sc = std::make_unique<Scene>();
   if (!buildScene(*data_, idx, sc.get(), err, opt_.shipScale)) return false;
   scene_ = std::move(sc);
+  doors_.build(*scene_);
   track_ = idx;
   const auto& st = scene_->startPos;
   double hx = st[0][0] - st[1][0], hz = st[0][2] - st[1][2];
@@ -160,6 +156,7 @@ void ViewerApp::toggleDrive() {
   if (driving_) {
     player_ = grid_[size_t(std::clamp(opt_.ship, 0, 9))];
     player_.speed = 0;
+    setShipBoxFromMesh(player_, scene_->shipMeshes[size_t(std::clamp(opt_.ship, 0, 9))]);
     simAccum_ = 0;
   } else {
     placeCameraAtStart();
@@ -169,13 +166,14 @@ void ViewerApp::toggleDrive() {
 void ViewerApp::update(double dt, const InputState& in) {
   if (dt > 0) fpsAvg_ = fpsAvg_ * 0.9 + (1.0 / dt) * 0.1;
   if (dt > 0 && dt < 1.0) animSeconds_ += dt;
+  if (dt > 0 && dt < 1.0 && mode_ == AppMode::Track) doors_.step(dt);
   if (mode_ == AppMode::Track && scene_) {
     if (driving_) {
       simAccum_ += dt;
       const double step = 1.0 / 120.0;
       int guard = 0;
       while (simAccum_ >= step && guard++ < 16) {
-        stepShip(player_, ShipInput{in.throttle, in.brake, in.steer}, step, params_[size_t(player_.ship)], *scene_, simCfg_);
+        stepShip(player_, ShipInput{in.throttle, in.brake, in.steer, in.pitch}, step, params_[size_t(player_.ship)], *scene_, simCfg_);
         simAccum_ -= step;
       }
       // chase camera
@@ -275,8 +273,13 @@ void ViewerApp::render() {
       if (scene_->shipMeshes[size_t(i)].polys.empty()) continue;
       MeshTransform sx;
       sx.pos[0] = s.x; sx.pos[1] = s.y; sx.pos[2] = s.z;
-      yawMatrix(s.yaw, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
+      shipRenderMatrix(s, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
       renderer_.drawMesh(*scene_, scene_->shipMeshes[size_t(i)], sx);
+    }
+    for (const Door& d : doors_.list) {
+      MeshTransform dx;
+      for (int k = 0; k < 3; ++k) dx.pos[k] = d.pos[k];
+      renderer_.drawMesh(*scene_, d.mesh, dx);
     }
   } else {
     renderer_.drawMesh(*scene_, scene_->track, xf);
@@ -356,8 +359,13 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
     const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
     MeshTransform sx;
     sx.pos[0] = s.x; sx.pos[1] = s.y; sx.pos[2] = s.z;
-    yawMatrix(s.yaw, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
+    shipRenderMatrix(s, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
     renderer_.drawMesh(sc, sc.shipMeshes[size_t(i)], sx, nullptr, item);
+  };
+  auto drawDoor = [&](const Door& d, int item) {
+    MeshTransform dx;
+    for (int k = 0; k < 3; ++k) dx.pos[k] = d.pos[k];
+    renderer_.drawMesh(sc, d.mesh, dx, nullptr, item);
   };
   auto drawScenery = [&](const Item& it) {
     if (it.kind == 1) {
@@ -416,6 +424,7 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
         const int item = itemId++;
         renderer_.drawMesh(sc, sc.track, xf, &sc.piecePolys[it.idx], item);
         for (int sh : shipsOnPiece[it.idx]) drawShip(sh, item);  // entities of a piece are drawn with it (0x39B9C)
+        for (const Door& d : doors_.list) if (d.piece == int(it.idx)) drawDoor(d, item);
       } else if (allowed) {
         drawScenery(it);
       }
@@ -439,7 +448,7 @@ void ViewerApp::buildShadowCasters() {
     ShadowCaster c;
     c.mesh = &sc.shipMeshes[size_t(i)];
     c.xf.pos[0] = s.x; c.xf.pos[1] = s.y; c.xf.pos[2] = s.z;
-    yawMatrix(s.yaw, c.xf.R);
+    shipRenderMatrix(s, c.xf.R);
     const float p[3] = {float(s.x - sc.origin[0]), float(s.y - sc.origin[1]), float(s.z - sc.origin[2])};
     double bestVol = 1e300;
     for (size_t k = 0; k < sc.pieceBoxes.size(); ++k) {
@@ -470,9 +479,10 @@ std::vector<std::string> ViewerApp::hudLines() const {
                   renderer_.cullBackfaces ? "on" : "off");
     l.push_back(buf);
     if (driving_) {
-      std::snprintf(buf, sizeof buf, "DRIVE ship %d  speed %.0f u/s  pos %.0f %.0f %.0f  [W/S throttle/brake, A/D steer, Space = free cam]", player_.ship, player_.speed, player_.x, player_.y, player_.z);
+      std::snprintf(buf, sizeof buf, "DRIVE ship %d  speed %.0f u/s  pos %.0f %.0f %.0f  hits %d", player_.ship, player_.speed, player_.x, player_.y, player_.z, player_.hits);
       l.push_back(buf);
-      l.push_back("(placeholder handling - not the original physics)");
+      l.push_back("W/S throttle/brake, A/D steer, E/Q nose up/down, Space = free cam");
+      l.push_back(simCfg_.assist ? "hover assist ON (F8): legacy floor following, no collision" : "original-style flight model (F8 = hover assist): manual pitch, polygon collision");
     } else {
       l.push_back("WASD move, Q/E down/up, mouse look, Shift fast | [ ] track | Space drive | 1-0 ship | F2 models F3 sprites | F4 or Cmd+C copy debug | Esc quit");
     }

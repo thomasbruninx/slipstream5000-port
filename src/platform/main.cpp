@@ -169,6 +169,7 @@ int main(int argc, char** argv) {
             case SDLK_F5: app.toggleVisibility(); break;
             case SDLK_F6: app.togglePainter(); break;
             case SDLK_F7: app.toggleAllScenery(); break;
+            case SDLK_F8: app.toggleAssist(); break;
             case SDLK_C:
               if (e.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) copyDebug(app);
               break;
@@ -195,6 +196,7 @@ int main(int argc, char** argv) {
     mouseDX = mouseDY = 0;
     in.throttle = float(k[SDL_SCANCODE_W] || k[SDL_SCANCODE_UP]);
     in.brake = float(k[SDL_SCANCODE_S] || k[SDL_SCANCODE_DOWN]);
+    in.pitch = float(k[SDL_SCANCODE_E]) - float(k[SDL_SCANCODE_Q]);  // nose up / down (drive mode)
     in.steer = float(k[SDL_SCANCODE_D] || k[SDL_SCANCODE_RIGHT]) - float(k[SDL_SCANCODE_A] || k[SDL_SCANCODE_LEFT]);
     if (pad) {
       auto ax = [&](SDL_GamepadAxis a) { float v = float(SDL_GetGamepadAxis(pad, a)) / 32767.0f; return std::fabs(v) < 0.12f ? 0.0f : v; };

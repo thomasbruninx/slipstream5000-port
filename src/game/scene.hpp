@@ -118,7 +118,8 @@ struct Scene {
     float bb[6];      // record bounding box in world-minus-origin coordinates (CONFIRMED cell test, 0x38524)
     std::vector<std::array<float, 4>> planes;  // unit normal + offset: inside if n.p + d >= -256 (list-A polygons without flag 0x40)
   };
-  bool pieceContains(size_t i, const float p[3]) const;
+  // Cell test of 0x38524 (camera, slack 256) / 0x37FCC (slots, slack 512): bbox + inner side of every list-A polygon without flag 0x40.
+  bool pieceContains(size_t i, const float p[3], float slack = 256.0f) const;
   std::vector<PieceBox> pieceBoxes;  // same order as Track::pieces
   // Painter's-order data (CONFIRMED structure, see research-log): TRD groups are the BSP leaves; each piece and
   // scenery instance belongs to one group.

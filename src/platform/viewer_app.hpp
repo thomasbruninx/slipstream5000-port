@@ -7,6 +7,7 @@
 
 #include "game/scene.hpp"
 #include "game/ship_params.hpp"
+#include "game/doors.hpp"
 #include "game/ship_sim.hpp"
 #include "input/input_state.hpp"
 #include "original_formats/game_data.hpp"
@@ -45,6 +46,7 @@ class ViewerApp {
   void toggleDrive();
   void selectShip(int i);
   void toggleAllScenery() { showAllScenery_ = !showAllScenery_; }
+  void toggleAssist() { simCfg_.assist = !simCfg_.assist; }
   void togglePainter() { painter_ = !painter_; }
   void toggleVisibility() { useVisMask_ = !useVisMask_; }
   void toggleCulling() { cullOverride_ = renderer_.cullBackfaces ? 0 : 1; }
@@ -69,6 +71,7 @@ class ViewerApp {
   bool driving_ = false;
   ShipState player_;
   ShipSimConfig simCfg_;
+  Doors doors_;
   double simAccum_ = 0;
   ShipInput lastDriveInput_;
 

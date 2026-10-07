@@ -1,0 +1,57 @@
+// Ship dynamics vs. the x86 emulator oracle (tools/re/phys_run2.py: RaceSlotMove with full throttle and full right steer,
+// 61 frames of dt = 262/16384 s, ship parameters of ship 1). Needs no game data.
+#include <cmath>
+#include <cstdio>
+
+#include "game/doors.hpp"
+#include "game/ship_sim.hpp"
+
+using namespace slip;
+static int failures = 0;
+#define NEAR(v, ref, tol) do { double a_ = (v), r_ = (ref); if (std::fabs(a_ - r_) > (tol)) { std::printf("FAIL %s:%d %s = %g, oracle %g\n", __FILE__, __LINE__, #v, a_, r_); ++failures; } } while (0)
+
+int main() {
+  ShipParams p;  // defaults = ship 1
+  ShipState s;
+  s.steerAxis = 1;  // oracle input is already at full deflection
+  double dt = 262.0 / 16384.0, v[3];
+  for (int f = 0; f <= 60; ++f) stepShipDynamics(s, ShipInput{1, 0, 1}, dt, p, v);
+  NEAR(s.speed, 65756, 700);
+  // oracle matrix @ frame 60 (2.14): {9845,-11404,-6438, 9545,11763,-6242, 8967,0,13712}
+  const double ref[9] = {9845, -11404, -6438, 9545, 11763, -6242, 8967, 0, 13712};
+  for (int i = 0; i < 9; ++i) NEAR(s.m[i] * 16384.0, ref[i], 160);
+  NEAR(std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]), 62268, 300);  // slot +0x2c after RaceSlotHover
+  {  // full pitch input for 31 frames (oracle: m[4..8] = 15993,-3556, 3556,15993)
+    ShipState q;
+    q.pitchAxis = 1;
+    for (int f = 0; f <= 29; ++f) stepShipDynamics(q, ShipInput{1, 0, 0, 1}, dt, p, v);
+    NEAR(q.m[7] * 16384.0, 3556, 120);
+    NEAR(q.m[8] * 16384.0, 15993, 120);
+  }
+  {  // door state machine (0x3BF86): closed -> open at 14300 u/s, flips at the ends, never leaves [closed, open]
+    Doors ds;
+    Door d;
+    d.s[0] = 1;
+    d.closed[0] = 0; d.open[0] = 28600;  // 2 s of travel
+    ds.list.push_back(d);
+    ds.step(1.0);  // flips at once (starts at the closed stop), then moves towards the open stop
+    NEAR(ds.list[0].pos[0], 14300, 1);
+    ds.step(1.5);  // reaches the open stop after 1 s and turns back for 0.5 s
+    NEAR(ds.list[0].pos[0], 28600 - 7150, 1);
+    NEAR(ds.list[0].state, -1, 0);
+    for (int i = 0; i < 1000; ++i) { ds.step(0.016); NEAR(std::fabs(ds.list[0].pos[0] - 14300), 14300, 14300.5); }
+  }
+  {  // hit response vs the 0x3BD82 oracle: floor normal, heading (0,-0.25,0.97) -> bounce (0, 15137, 6269)/16384
+    ShipState q;
+    q.speed = 100000;
+    const double n[3] = {0, 1, 0}, h[3] = {0, -0.25 * 1.0, 0.968};
+    shipHitResponse(q, n, h);
+    NEAR(q.speed, 75000, 1e-6);
+    NEAR(q.slide[1], 75000.0 * 15137 / 16384, 150);
+    NEAR(q.slide[2], 75000.0 * 6269 / 16384, 150);
+  }
+  std::printf(failures ? "physics: %d failure(s)\n" : "physics ok\n", failures);
+  for (int i = 0; i < 9; ++i) std::printf("%g ", s.m[i] * 16384.0);
+  std::printf("\n");
+  return failures ? 1 : 0;
+}

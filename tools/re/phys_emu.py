@@ -14,10 +14,10 @@ def make_cpu():
     maths = F['MATHS.BIN']
     MB = 0x00400000
     m.write(MB, maths)
-    m.w32(0x21198, MB + 6)        # g_SinTable
-    m.w32(0x2119c, MB + 0x4008)   # g_AsinTable
-    # atan table pointer: find the variable by reading MathsInstall later; set the third plausible one
-    m.w32(0x211a0, MB + 0x800A)
+    hdr = lambda o: maths[o] | (maths[o + 1] << 8)
+    m.w32(0x21198, MB + hdr(0))   # g_SinTable   (MathsInstall 0x211ce: header words +0 sin, +2 asin, +4 atan)
+    m.w32(0x2119c, MB + hdr(2))   # g_AsinTable
+    m.w32(0x21194, MB + hdr(4))   # g_AtanTable
     m.w32(0x26628, SLOTS)         # g_SlotsBase
     m.w16(0x26632, 4)             # g_SlotCount
     return cpu

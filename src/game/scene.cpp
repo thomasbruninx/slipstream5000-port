@@ -514,13 +514,13 @@ bool Scene::floorHeight(double wx, double wz, double yHint, double margin, doubl
 
 
 namespace slip {
-bool Scene::pieceContains(size_t i, const float p[3]) const {
+bool Scene::pieceContains(size_t i, const float p[3], float slack) const {
   const PieceBox& b = pieceBoxes[i];
   if (b.empty) return false;
   for (int k = 0; k < 3; ++k)
     if (p[k] < b.bb[2 * k] || p[k] > b.bb[2 * k + 1]) return false;
   for (const auto& pl : b.planes)
-    if (pl[0] * p[0] + pl[1] * p[1] + pl[2] * p[2] + pl[3] < -256.0f) return false;
+    if (pl[0] * p[0] + pl[1] * p[1] + pl[2] * p[2] + pl[3] < -slack) return false;
   return true;
 }
 

@@ -17,7 +17,9 @@ add_library(slipstream_core STATIC
   src/game/scene.cpp
   src/game/ship_params.cpp
   src/game/panel_detail.cpp
-  src/game/ship_sim.cpp)
+  src/game/ship_sim.cpp
+  src/game/ship_collide.cpp
+  src/game/doors.cpp)
 target_include_directories(slipstream_core PUBLIC src)
 target_compile_options(slipstream_core PRIVATE -Wall -Wextra)
 
@@ -40,3 +42,7 @@ enable_testing()
 add_executable(slipstream_tests tests/format_tests.cpp)
 target_link_libraries(slipstream_tests PRIVATE slipstream_core)
 add_test(NAME format_tests COMMAND slipstream_tests)
+
+add_executable(slipstream_physics_tests tests/physics_tests.cpp)
+target_link_libraries(slipstream_physics_tests PRIVATE slipstream_core)
+add_test(NAME physics_tests COMMAND slipstream_physics_tests)
