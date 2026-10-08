@@ -17,6 +17,10 @@ Controls — track viewer: `WASD` move, `Q/E` down/up, mouse look, `Shift` fast,
 Combat (docs/weapons.md): the 12 original weapons, boosters, bonus objects and AI shooting are in. `--weapons seeker:9,scrambler:9,booster:2` sets the player's loadout
 (default: the original's cheat loadout, `none` = blaster only), `--no-pickups`, `--no-ai-weapons`, `--no-voices`, `--difficulty 0..2` (default: the setting in your `SLIPSTRM.CFG`).
 
+Multiplayer (docs/multiplayer.md): up to 10 players, peer to peer over TCP in the same subnet. `F10` opens the menu (host, browse LAN games, join by address) or start with
+`slipstream --host --name Alice` / `slipstream --join 192.168.1.20 --name Bob`. Everybody needs the same game files; empty seats are AI ships flown by the host.
+`tools/net_race_test.sh 10` runs a ten-process headless race as a smoke test.
+
 Headless: `slipstream --track 3 --screenshot out.ppm`, `--bench 120`, `--models RACER0`, `--sprites MAINMENU`, `--drive --sim 4 --screenshot ...`.
 
 ## Layout

@@ -71,6 +71,7 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
   } else {
     loadSprite(spriteIdx_);
   }
+  netInit();
   if (opt.haveCam) {
     cam_.pos[0] = opt.cam[0]; cam_.pos[1] = opt.cam[1]; cam_.pos[2] = opt.cam[2];
     cam_.yaw = opt.camYaw; cam_.pitch = opt.camPitch;
@@ -131,7 +132,7 @@ int ViewerApp::ambientForPlayer() const {  // 0x58CB6..0x58CED
 void ViewerApp::setupCombat() {
   std::vector<PickupSpot> spots;
   if (opt_.pickups) spots = loadPickupSpots(*data_, track_);
-  combat_.init(weaponTable_, refPoints_, track_, spots, unsigned(std::rand()) | 1u);
+  combat_.init(weaponTable_, refPoints_, track_, spots, netSeed_ ? netSeed_ : (unsigned(std::rand()) | 1u));
   combat_.difficulty = aiTables_.difficulty;
   for (int k = 0; k < kWeaponCount; ++k) {
     const int mi = Scene::weaponMeshIndex(k);
@@ -152,8 +153,9 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
   cc.humanShip = player_.ship;
   cc.controls.assign(10, CombatControls{});
   for (int i = 0; i < 10; ++i) {
-    cc.ships.push_back(i == player_.ship ? &player_ : &grid_[size_t(i)]);
+    cc.ships.push_back(netplay_ && !netplay_->present(i) ? nullptr : i == player_.ship ? &player_ : &grid_[size_t(i)]);
     cc.human.push_back(i == player_.ship);
+    cc.remote.push_back(netplay_ && netplay_->remote(i));
     cc.finished.push_back(held || !aiEnabled_ || ai_[size_t(i)].finished || raceStatus_.over);  // the AI holds its fire on the grid and after the finish
     cc.shipClass.push_back(i + 1);
   }
@@ -166,6 +168,7 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
     static int lastIn[10] = {0};
     for (int i = 0; i < 10; ++i) {
       bool in = false;
+      if (!cc.ships[size_t(i)]) continue;
       if (scene_->track_data.refuelPiece >= 0) {
         const ShipState& sh = *cc.ships[size_t(i)];
         const float q[3] = {float(sh.x - scene_->origin[0]), float(sh.y - scene_->origin[1]), float(sh.z - scene_->origin[2])};
@@ -359,18 +362,22 @@ void ViewerApp::toggleDrive() {
   }
 }
 
-void ViewerApp::update(double dt, const InputState& in) {
+void ViewerApp::update(double dt, const InputState& in0) {
+  if (session_) updateNet(dt);
+  showList_ = in0.showList;
+  const InputState in = ((netplay_ && pause_.isOpen()) || (netUi_ != NetUi::None && !driving_)) ? InputState{} : in0;  // the multiplayer race goes on behind the pause menu
   if (dt > 0) fpsAvg_ = fpsAvg_ * 0.9 + (1.0 / dt) * 0.1;
   if (dt > 0 && dt < 1.0) animSeconds_ += dt;
   if (dt > 0 && dt < 1.0 && mode_ == AppMode::Track && !driving_) doors_.step(dt);
   if (mode_ == AppMode::Track && scene_) {
-    if (driving_ && pause_.isOpen()) {  // 0x58DBB: paused, nothing advances (the camera keeps its place)
+    if (driving_ && pause_.isOpen() && !netplay_) {  // 0x58DBB: paused, nothing advances (the camera keeps its place)
       audio_.engineSet(engineVoice_, 0.0);
       return;
     }
     if (driving_) {
-      const bool held = countdown_ > 0;  // ships wait on the grid during the countdown (INFERRED: the original starts the race at 0)
-      if (held && dt > 0 && dt < 1.0) {
+      const bool netWait = netStartWaiting();  // multiplayer: everybody's countdown starts at the host's start time
+      const bool held = countdown_ > 0 || netWait;  // ships wait on the grid during the countdown (INFERRED: the original starts the race at 0)
+      if (countdown_ > 0 && !netWait && dt > 0 && dt < 1.0) {
         if (countdownStage_ == 0) { countdownStage_ = 1; audio_.playSpeech(track_, 1); }  // 0x58AF3
         countdown_ -= dt;
         if (countdownStage_ == 1 && countdown_ <= 3.0) { countdownStage_ = 2; audio_.playFx(Fx::EngineStart); }  // 0x59048: effect 0xC
@@ -382,6 +389,13 @@ void ViewerApp::update(double dt, const InputState& in) {
         if (countdown_ <= 0) { countdown_ = 0; countdownStage_ = 4; }
       }
       simAccum_ += dt;
+      if (netplay_) {
+        Netplay::Bind nb;
+        for (int i = 0; i < 10; ++i) { nb.ship[size_t(i)] = i == player_.ship ? &player_ : &grid_[size_t(i)]; nb.ai[size_t(i)] = &ai_[size_t(i)]; }
+        nb.combat = &combat_; nb.race = &raceStatus_;
+        netplay_->update(dt, nb);
+        netClock_ = double(session_->nowMs()) / 1000.0 - simAccum_;  // session time of the first simulation step of this frame
+      }
       const double step = 1.0 / 120.0;
       int guard = 0;
       while (simAccum_ >= step && guard++ < 16) {
@@ -392,14 +406,20 @@ void ViewerApp::update(double dt, const InputState& in) {
           ctx.ships.push_back(i == player_.ship ? &player_ : &grid_[size_t(i)]);
           ctx.state.push_back(&ai_[size_t(i)]);
           ctx.params.push_back(&params_[size_t(i)]);
-          ai_[size_t(i)].human = i == player_.ship;
+          ai_[size_t(i)].human = i == player_.ship || (netplay_ && netplay_->humanSlot(i));
+          if (netplay_) { ctx.remote.push_back(netplay_->remote(i)); ctx.absent.push_back(!netplay_->present(i)); }
         }
+        if (netplay_) { ctx.multiplayer = true; ctx.authoritativeEnd = netplay_->isHost(); }
         std::vector<ShipState*> all;
         std::vector<std::array<double, 3>> start;
         all.push_back(&player_);
         for (int i = 0; i < 10; ++i)
-          if (i != player_.ship) all.push_back(&grid_[size_t(i)]);
+          if (i != player_.ship && shipShown(i)) all.push_back(&grid_[size_t(i)]);
         for (ShipState* s : all) start.push_back({s->x, s->y, s->z});
+        if (netplay_) {  // the other peers' ships: pose from their snapshots at this instant
+          netClock_ += step;
+          for (ShipState* s : all) if (netplay_->remote(s->ship)) netplay_->applyRemote(s->ship, *s, ai_[size_t(s->ship)], netClock_);
+        }
         ctx.status = &raceStatus_;
         ctx.dt = step;
         ctx.running = !held && !raceStatus_.over;
@@ -409,6 +429,12 @@ void ViewerApp::update(double dt, const InputState& in) {
           ctx.ships[size_t(i)]->startBonus = startPhase_ > 0 ? startBonusForRank(ai_[size_t(i)].rank) : 0.0;
         doors_.step(step, all);  // door slots update before the ships move (0x3C00E)
         updateRace(ctx);
+        if (netplay_) {
+          Netplay::Bind nb;
+          for (int i = 0; i < 10; ++i) nb.ai[size_t(i)] = &ai_[size_t(i)];
+          netplay_->reconcileFinishRanks(nb);
+          if (finished_ && !ai_[size_t(player_.ship)].projected) finishRank_ = ai_[size_t(player_.ship)].finishRank;
+        }
         updateWrecks(ctx);
         applyTrailingBoost(ctx, size_t(player_.ship));
         // a finished ship is steered by the autopilot, the player's too (0x51111: record +0xD set -> RaceAIControl)
@@ -418,6 +444,7 @@ void ViewerApp::update(double dt, const InputState& in) {
         stepShip(player_, pin, step, params_[size_t(player_.ship)], *scene_, simCfg_);
         for (size_t k = 1; k < all.size(); ++k) {
           const int id = all[k]->ship;
+          if (netplay_ && !netplay_->localAi(id)) continue;  // a remote ship: the owner steers it
           ShipInput ci = !held && aiEnabled_ && !simCfg_.assist ? aiControl(ctx, size_t(id), step) : ShipInput{};
           stepShip(*all[k], ci, step, params_[size_t(id)], *scene_, simCfg_);
         }
@@ -425,7 +452,13 @@ void ViewerApp::update(double dt, const InputState& in) {
           // doors take part in the contact pass as static boxes that move with the panel (message 0x106 opens the door at 0x6FB8)
           std::vector<ShipState> proxies;
           for (size_t d = 0; d < doors_.list.size(); ++d) proxies.push_back(doors_.proxy(d));
-          std::vector<ShipState*> withDoors = all;
+          std::vector<ShipState> remoteCopies;  // the other peers' ships take part in the contacts as moving boxes: only our ships react
+          remoteCopies.reserve(all.size());
+          std::vector<ShipState*> withDoors;
+          for (ShipState* sp : all) {
+            if (netplay_ && netplay_->remote(sp->ship)) { remoteCopies.push_back(*sp); withDoors.push_back(&remoteCopies.back()); }
+            else withDoors.push_back(sp);
+          }
           std::vector<std::array<double, 3>> startDoors = start;
           for (size_t d = 0; d < proxies.size(); ++d) {
             withDoors.push_back(&proxies[d]);
@@ -433,6 +466,9 @@ void ViewerApp::update(double dt, const InputState& in) {
           }
           resolveShipPairs(withDoors, startDoors, step, *scene_, simCfg_);
           for (size_t d = 0; d < proxies.size(); ++d) if (proxies[d].sfxContact > 0) doors_.touch(d);
+          size_t rc = 0;
+          for (ShipState* sp : all)
+            if (netplay_ && netplay_->remote(sp->ship)) { sp->sfxContact += remoteCopies[rc].sfxContact; sp->cueContact += remoteCopies[rc].cueContact; ++rc; }
         }
         stepCombat(step, in, held);
         simAccum_ -= step;
@@ -464,7 +500,14 @@ void ViewerApp::update(double dt, const InputState& in) {
         finalLapTimer_ = std::max(0.0, finalLapTimer_ - dt);
         lapPopupTimer_ = std::max(0.0, lapPopupTimer_ - dt);
         shakeTimer_ = std::max(0.0, shakeTimer_ - dt);
-        if (gameOverTimer_ > 0 && (gameOverTimer_ -= dt) <= 0) raceStatus_.over = true;  // 0x44022: GAME OVER shown for 4 s, then the race ends
+        if (gameOverTimer_ > 0 && (gameOverTimer_ -= dt) <= 0) {  // 0x44022: GAME OVER shown for 4 s, then the race ends
+          if (!netplay_) raceStatus_.over = true;
+          else {  // multiplayer: the others race on; this ship retires with its current place
+            AiState& r = ai_[size_t(player_.ship)];
+            r.finished = r.projected = true; r.finishRank = r.rank;
+            finished_ = true; finishRank_ = r.rank;
+          }
+        }
         {
           const double dmg = player_.damageA + player_.damageB;
           if (dmg > prevDamage_ + 1e-9) shakeTimer_ = 0.3;  // 0x440F3: [0x42DBC] = 0x12C ms
@@ -555,6 +598,11 @@ void ViewerApp::drawSprite() {
 }
 
 void ViewerApp::render() {
+  renderFrame();
+  if (netUi_ != NetUi::None && !driving_ && mode_ == AppMode::Track) drawNetUi();
+}
+
+void ViewerApp::renderFrame() {
   if (mode_ == AppMode::Sprite) {
     renderer_.beginFrame(cam_, 0, 0);
     drawSprite();
@@ -608,7 +656,7 @@ void ViewerApp::render() {
     }
     for (int i = 0; i < 10; ++i) {
       const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
-      if (scene_->shipMeshes[size_t(i)].polys.empty() || (driving_ && view_ == 0 && i == player_.ship)) continue;
+      if (scene_->shipMeshes[size_t(i)].polys.empty() || !shipShown(i) || (driving_ && view_ == 0 && i == player_.ship)) continue;
       MeshTransform sx;
       sx.pos[0] = s.x; sx.pos[1] = s.y; sx.pos[2] = s.z;
       shipRenderMatrix(s, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
@@ -705,7 +753,7 @@ void ViewerApp::menuKey(PauseMenu::Key k) {
   if (!pause_.isOpen()) return;
   const PauseMenu::Action act = pause_.key(k, &settings_);
   applySettings();
-  if (act == PauseMenu::Action::QuitRace) toggleDrive();   // 0x591CE: leave the race
+  if (act == PauseMenu::Action::QuitRace) { if (netplay_) netLeaveRace(); else toggleDrive(); }   // 0x591CE: leave the race
   else if (act == PauseMenu::Action::ExitGame) quit_ = true;
 }
 
@@ -755,7 +803,18 @@ void ViewerApp::drawHud() {
       st.lockY = sy * 200.0 / renderer_.height();
     }
   }
+  static const int forced = std::getenv("SLIP_PORTRAIT") ? std::atoi(std::getenv("SLIP_PORTRAIT")) : 0;  // test hook
+  if (const int sp = forced ? forced : audio_.currentSpeaker(); sp >= 1 && sp <= 10) {  // GetSpeaker 0x53061 -> portrait of pilot class sp
+    st.portraitPilot = sp;
+    const AiState& pr = ai_[size_t(sp - 1)];
+    st.portraitText = pr.finished ? "FINISHED" : std::to_string(pr.rank);
+  }
   hud_.draw(renderer_.framebuffer(), renderer_.width(), renderer_.height(), st, hudAssets_);
+  if (netplay_) {
+    HudCanvas c;
+    c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
+    drawPlayerList(c);
+  }
   if (pause_.isOpen()) {
     HudCanvas c;
     c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
@@ -817,7 +876,7 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
   std::vector<std::vector<int>> shipsOnPiece(sc.pieceBoxes.size());
   std::vector<int> looseShips;
   for (int i = 0; i < 10; ++i) {
-    if (sc.shipMeshes[size_t(i)].polys.empty() || (driving_ && view_ == 0 && i == player_.ship)) continue;  // no own ship from inside the cockpit
+    if (sc.shipMeshes[size_t(i)].polys.empty() || !shipShown(i) || (driving_ && view_ == 0 && i == player_.ship)) continue;  // no own ship from inside the cockpit
     const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
     const float p[3] = {float(s.x - sc.origin[0]), float(s.y - sc.origin[1]), float(s.z - sc.origin[2])};
     int best = -1;
@@ -920,7 +979,7 @@ void ViewerApp::buildShadowCasters() {
   if (!scene_) return;
   const Scene& sc = *scene_;
   for (int i = 0; i < 10; ++i) {
-    if (sc.shipMeshes[size_t(i)].polys.empty()) continue;
+    if (sc.shipMeshes[size_t(i)].polys.empty() || !shipShown(i)) continue;
     const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
     ShadowCaster c;
     c.mesh = &sc.shipMeshes[size_t(i)];
@@ -986,6 +1045,350 @@ std::vector<std::string> ViewerApp::hudLines() const {
     l.push_back("[ ] prev/next sprite | F1 track F2 models | Esc quit");
   }
   return l;
+}
+
+
+// ---- multiplayer -------------------------------------------------------------------------------------------------------------
+
+void ViewerApp::netInit() {
+  uint32_t h = 2166136261u;  // identifies the game data set: every player needs the same files (same tracks, tables, ship data)
+  auto mix = [&](uint32_t v) { h = (h ^ v) * 16777619u; };
+  mix(uint32_t(data_->entryCount()));
+  if (auto exe = data_->read("SLIPSTRM.EXE")) { mix(uint32_t(exe->size())); for (size_t i = 0; i < exe->size(); i += 509) mix((*exe)[i]); }
+  netDataHash_ = h;
+  if (opt_.netName.empty()) {
+    const char* u = std::getenv("USER");
+    opt_.netName = u && *u ? u : "Pilot";
+  }
+  if (opt_.netName.size() > 16) opt_.netName.resize(16);
+  if (mode_ == AppMode::Track && scene_ && !hudAssets_.loaded) hudAssets_.load(*data_, 0, scene_->palette);  // fonts for the menu
+  if (opt_.netRole == "host") netHostGame();
+  else if (opt_.netRole == "join") netJoinGame(opt_.netHost, opt_.netPort);
+}
+
+void ViewerApp::openNetMenu() {
+  if (mode_ != AppMode::Track || !scene_ || driving_) return;
+  if (!hudAssets_.loaded) hudAssets_.load(*data_, 0, scene_->palette);
+  if (netUi_ == NetUi::None) { netUi_ = session_ ? NetUi::Lobby : NetUi::Main; netSel_ = 0; }
+}
+
+void ViewerApp::netLeaveSession() {
+  if (session_) session_->leave();
+  netplay_.reset();
+  session_.reset();
+  browse_.reset();
+  netSeed_ = 0;
+}
+
+void ViewerApp::netHostGame() {
+  netLeaveSession();
+  session_ = std::make_unique<net::Session>();
+  std::string err;
+  if (!session_->host(opt_.netName, netDataHash_, uint16_t(opt_.netPort), &err)) { netMsg_ = err; session_.reset(); netUi_ = NetUi::Main; return; }
+  session_->hostSettings(track_, opt_.laps, aiTables_.difficulty, true);
+  session_->setIntent(opt_.ship, true);
+  netUi_ = NetUi::Lobby; netSel_ = 0; netMsg_.clear();
+  netAutoReady_ = true;
+  if (opt_.netHeadless) netUi_ = NetUi::None;
+  std::fprintf(stderr, "multiplayer: hosting on TCP port %u as %s\n", unsigned(session_->listenPort()), opt_.netName.c_str());
+}
+
+void ViewerApp::netJoinGame(const std::string& host, int port) {
+  netLeaveSession();
+  session_ = std::make_unique<net::Session>();
+  std::string err;
+  if (!session_->join(host, uint16_t(port), opt_.netName, netDataHash_, &err)) { netMsg_ = err; session_.reset(); netUi_ = NetUi::Main; return; }
+  netUi_ = NetUi::Lobby; netSel_ = 0; netMsg_ = "Connecting to " + host + "...";
+  netAutoReady_ = opt_.netHeadless;
+  if (opt_.netHeadless) netUi_ = NetUi::None;
+}
+
+void ViewerApp::netLeaveRace() {
+  netLeaveSession();
+  if (driving_) toggleDrive();
+  netUi_ = NetUi::Main; netSel_ = 0;
+}
+
+void ViewerApp::startNetRace(const net::Start& st, uint32_t startLocal) {
+  netplay_ = std::make_unique<Netplay>(session_.get(), st);
+  opt_.laps = st.laps;
+  settings_.difficulty = aiTables_.difficulty = st.difficulty;
+  netSeed_ = st.seed ? st.seed : 1;
+  opt_.ship = netplay_->mySlot();
+  opt_.countdown = true;
+  std::string err;
+  if (st.track != track_ || !scene_) loadTrack(st.track, &err);
+  driving_ = false;
+  toggleDrive();
+  applySettings();
+  netStartLocal_ = startLocal;
+  netEndTimer_ = 0;
+  netUi_ = NetUi::None;
+  for (int i = 0; i < 10; ++i) {  // empty seats: no ship on the grid
+    grid_[size_t(i)].hasBox = grid_[size_t(i)].hasBox && netplay_->present(i);
+    ai_[size_t(i)].human = netplay_->humanSlot(i);
+    if (!netplay_->present(i)) ai_[size_t(i)].finished = true;
+  }
+  ai_[size_t(opt_.ship)].human = true;
+  std::fprintf(stderr, "multiplayer: race starts on track %d, %d laps, I am ship %d (player %d), %d humans\n", st.track, st.laps, opt_.ship, netplay_->myId(), netplay_->humans());
+}
+
+void ViewerApp::updateNet(double dt) {
+  if (browse_) browse_->update(dt);
+  session_->update(dt);
+  using S = net::Session::State;
+  if (session_->state() == S::Closed) {
+    netMsg_ = session_->error().empty() ? "Session closed" : session_->error();
+    std::fprintf(stderr, "multiplayer: %s\n", netMsg_.c_str());
+    if (opt_.netHeadless) { quit_ = true; return; }  // keep the race state for the summary
+    const bool wasRacing = driving_ && netplay_;
+    netLeaveSession();
+    if (wasRacing) { toggleDrive(); }
+    netUi_ = opt_.netHeadless ? NetUi::None : NetUi::Main;
+    if (opt_.netHeadless) quit_ = true;
+    return;
+  }
+  if (netplay_ && netplay_->sessionClosed()) return;
+  if (session_->state() == S::Lobby) {
+    const net::Lobby& lb = session_->lobby();
+    if (netAutoReady_ && !lb.players.empty() && session_->myId() >= 0) {  // headless / command line: ready as soon as the lobby is joined
+      session_->setIntent(opt_.ship, true);
+      netAutoReady_ = false;
+    }
+    if (session_->isHost() && opt_.netPlayers > 0 && int(lb.players.size()) >= opt_.netPlayers && session_->hostCanStart()) {
+      session_->hostSettings(opt_.track, opt_.laps, aiTables_.difficulty, true);
+      session_->hostStart(unsigned(std::rand()) | 1u);
+    }
+  }
+  net::Start st;
+  uint32_t at = 0;
+  if (session_->state() == S::Racing && !netplay_ && session_->takeStart(&st, &at)) startNetRace(st, at);
+  if (opt_.netHeadless && netplay_ && driving_) {  // progress log of the test runs
+    static double acc = 0;
+    acc += dt;
+    if (acc >= 10.0) {
+      acc = 0;
+      const AiState& me = ai_[size_t(player_.ship)];
+      std::fprintf(stderr, "t=%.0f ship %d speed %.0f laps %d rank %d hits %d damage %.0f/%.0f wrecked %d pos %.0f %.0f %.0f ping %.1f ms\n", me.raceTime, player_.ship, player_.speed, me.laps, me.rank, player_.hits, player_.damageA,
+                   player_.damageB, player_.wrecked ? 1 : 0, player_.x, player_.y, player_.z, netplay_->pingMs());
+    }
+  }
+  if (opt_.netHeadless && raceOverHandled_ && netplay_) {
+    netEndTimer_ += dt;
+    if (netEndTimer_ > 3.0) quit_ = true;
+  }
+}
+
+std::string ViewerApp::netSummary() const {
+  std::string out;
+  char buf[200];
+  for (int i = 0; i < 10; ++i) {
+    const AiState& a = ai_[size_t(i)];
+    if (netplay_ && !netplay_->present(i)) continue;
+    std::snprintf(buf, sizeof buf, "slot %d  %-10s owner %d  laps %d  finished %d  rank %d  finishRank %d%s\n", i, netplay_ ? netplay_->name(i).c_str() : "-", netplay_ ? netplay_->owner(i) : 0, a.laps,
+                  a.finished ? 1 : 0, a.rank, a.finishRank, a.projected ? " (projected)" : "");
+    out += buf;
+  }
+  std::snprintf(buf, sizeof buf, "race over %d  my ship %d  rank %d", raceStatus_.over ? 1 : 0, player_.ship, finishRank_);
+  out += buf;
+  if (netplay_) {
+    const auto& st = netplay_->stats;
+    std::snprintf(buf, sizeof buf, "\nnet: states in %d  projectiles out/in %d/%d  hits out/in %d/%d  pickups out/in %d/%d  damage %.0f/%.0f", st.states, st.spawnsOut, st.spawnsIn, st.hitsOut, st.hitsIn, st.pickupsOut, st.pickupsIn, player_.damageA, player_.damageB);
+    out += buf;
+  }
+  return out;
+}
+
+// Tab: names, places and pings of everybody in the race (ping = round trip to the player who simulates the ship; AI ships show the host's).
+void ViewerApp::drawPlayerList(const HudCanvas& c) {
+  const Font& sm = hudAssets_.small.height > 0 ? hudAssets_.small : hudAssets_.time;
+  if (netplay_->notice().empty() == false && netplay_->noticeAge() < 6.0) c.textCentered(sm, netplay_->notice(), 4, 315, 12, 0xFE);
+  if (!showList_) return;
+  std::vector<int> order;
+  for (int i = 0; i < 10; ++i) if (netplay_->present(i)) order.push_back(i);
+  std::sort(order.begin(), order.end(), [&](int a, int b) { return ai_[size_t(a)].rank < ai_[size_t(b)].rank; });
+  const int rh = sm.height + 3, h = int(order.size()) * rh + sm.height + 14, y0 = 90 - h / 2;
+  c.darken(40, y0 - 4, 279, y0 + h, 70);
+  c.fillIndex(40, y0 - 5, 279, y0 - 5, 7); c.fillIndex(40, y0 + h + 1, 279, y0 + h + 1, 7);
+  c.text(sm, "POS  PILOT", 48, y0, 0xFE); c.text(sm, "LAP", 170, y0, 0xFE); c.text(sm, "PING", 222, y0, 0xFE);
+  int y = y0 + sm.height + 6;
+  for (int i : order) {
+    const AiState& a = ai_[size_t(i)];
+    const bool me = i == player_.ship;
+    const int idx = me ? 0xFF : 0xFB;
+    char b[64];
+    std::snprintf(b, sizeof b, "%2d   %s%s", a.rank, netplay_->name(i).c_str(), netplay_->owner(i) == netplay_->hostId() && netplay_->humanSlot(i) ? " (host)" : "");
+    c.text(sm, b, 48, y, idx);
+    std::snprintf(b, sizeof b, "%d/%d", std::clamp(a.laps, 1, opt_.laps), opt_.laps);
+    c.text(sm, a.finished ? "END" : b, 170, y, idx);
+    const double ping = netplay_->slotPing(i);
+    if (me) c.text(sm, "-", 222, y, idx);
+    else if (ping < 0) c.text(sm, "...", 222, y, idx);
+    else { std::snprintf(b, sizeof b, "%.0f ms", ping); c.text(sm, b, 222, y, idx); }
+    y += rh;
+  }
+}
+
+void ViewerApp::netKey(PauseMenu::Key k) {
+  using K = PauseMenu::Key;
+  auto trackName = [](int t) { return std::string(trackDisplayNames()[size_t(std::clamp(t, 1, 10) - 1)]); };
+  (void)trackName;
+  switch (netUi_) {
+    case NetUi::None: return;
+    case NetUi::Main: {
+      if (k == K::Up) netSel_ = (netSel_ + 3) % 4;
+      else if (k == K::Down) netSel_ = (netSel_ + 1) % 4;
+      else if (k == K::Back) netUi_ = NetUi::None;
+      else if (k == K::Select) {
+        if (netSel_ == 0) netHostGame();
+        else if (netSel_ == 1) { browse_ = net::makeLanDiscovery(net::kDiscoveryPort); browse_->startBrowse(); netUi_ = NetUi::Browse; netSel_ = 0; netMsg_.clear(); }
+        else if (netSel_ == 2) { netUi_ = NetUi::Address; if (netAddr_.empty()) netAddr_ = "192.168.0."; netMsg_.clear(); }
+        else netUi_ = NetUi::None;
+      }
+      return;
+    }
+    case NetUi::Browse: {
+      const auto list = browse_ ? browse_->sessions() : std::vector<net::SessionInfo>{};
+      const int n = int(list.size());
+      if (k == K::Up && n) netSel_ = (netSel_ + n - 1) % n;
+      else if (k == K::Down && n) netSel_ = (netSel_ + 1) % n;
+      else if (k == K::Back) { browse_.reset(); netUi_ = NetUi::Main; netSel_ = 1; }
+      else if (k == K::Select && n) {
+        const net::SessionInfo& si = list[size_t(std::clamp(netSel_, 0, n - 1))];
+        const std::string host = si.host;
+        const int port = si.port;
+        browse_.reset();
+        netJoinGame(host, port);
+      }
+      return;
+    }
+    case NetUi::Address: {
+      if (k == K::Back) { netUi_ = NetUi::Main; netSel_ = 2; }
+      else if (k == K::Select && !netAddr_.empty()) {
+        std::string host = netAddr_;
+        int port = opt_.netPort;
+        const size_t c = host.rfind(':');
+        if (c != std::string::npos) { port = std::atoi(host.c_str() + c + 1); host.resize(c); }
+        netJoinGame(host, port);
+      }
+      return;
+    }
+    case NetUi::Lobby: {
+      if (!session_) { netUi_ = NetUi::Main; return; }
+      const bool host = session_->isHost();
+      const net::Lobby lb = session_->lobby();
+      int myShip = 0;
+      bool ready = false;
+      for (const net::LobbyEntry& e : lb.players) if (e.id == session_->myId()) { myShip = e.ship; ready = e.ready != 0; }
+      const int rows = 6;  // track, laps, difficulty, my ship, ready / start, leave
+      if (k == K::Up) netSel_ = (netSel_ + rows - 1) % rows;
+      else if (k == K::Down) netSel_ = (netSel_ + 1) % rows;
+      else if (k == K::Back) { netLeaveSession(); netUi_ = NetUi::Main; netSel_ = 0; }
+      else if (k == K::Left || k == K::Right || k == K::Select) {
+        const int d = k == K::Left ? -1 : 1;
+        if (netSel_ == 0 && host && k != K::Select) { const int t = (lb.track - 1 + d + 10) % 10 + 1; session_->hostSettings(t, lb.laps, lb.difficulty, lb.aiFill); if (t != track_) { std::string e; loadTrack(t, &e); } }
+        else if (netSel_ == 1 && host && k != K::Select) session_->hostSettings(lb.track, std::clamp(lb.laps + d, 1, 20), lb.difficulty, lb.aiFill);
+        else if (netSel_ == 2 && host && k != K::Select) session_->hostSettings(lb.track, lb.laps, std::clamp(lb.difficulty + d, 0, 2), lb.aiFill);
+        else if (netSel_ == 3 && k != K::Select) { opt_.ship = (myShip + d + 10) % 10; session_->setIntent(opt_.ship, ready); }
+        else if (netSel_ == 4 && k == K::Select) {
+          if (host) { if (session_->hostCanStart()) session_->hostStart(unsigned(std::rand()) | 1u); else netMsg_ = "Waiting for everybody to be ready"; }
+          else session_->setIntent(myShip, !ready);
+        } else if (netSel_ == 5 && k == K::Select) { netLeaveSession(); netUi_ = NetUi::Main; netSel_ = 0; }
+      }
+      return;
+    }
+  }
+}
+
+void ViewerApp::netText(const std::string& t) {
+  if (netUi_ != NetUi::Address) return;
+  for (char c : t) if (std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == ':' || c == '-') if (netAddr_.size() < 40) netAddr_ += c;
+}
+
+void ViewerApp::netBackspace() {
+  if (netUi_ == NetUi::Address && !netAddr_.empty()) netAddr_.pop_back();
+}
+
+void ViewerApp::drawNetUi() {
+  if (!hudAssets_.loaded) return;
+  HudCanvas c;
+  c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
+  c.darken(0, 0, 319, 199, 60);
+  const Font& f = hudAssets_.menu.height > 0 ? hudAssets_.menu : hudAssets_.time;
+  const Font& sm = hudAssets_.small.height > 0 ? hudAssets_.small : f;
+  auto row = [&](int y, const std::string& text, bool sel) {
+    if (sel) c.fillIndex(30, y - 2, 289, y + f.height + 1, 0x33);
+    c.textCentered(f, text, 30, 289, y, sel ? 0xFF : 0xFB);
+  };
+  auto box = [&](int x0, int y0, int x1, int y1) { c.fillIndex(x0 - 2, y0 - 2, x1 + 2, y1 + 2, 7); c.fillIndex(x0, y0, x1, y1, 0); };
+  box(20, 14, 299, 186);
+  c.textCentered(f, "Multiplayer", 20, 299, 20, 0xFE);
+  const int y0 = 20 + f.height + 12, rowH = f.height + 5;
+  switch (netUi_) {
+    case NetUi::None: return;
+    case NetUi::Main: {
+      static const char* items[4] = {"Host Game", "Join LAN Game", "Join By Address", "Back"};
+      for (int i = 0; i < 4; ++i) row(y0 + i * rowH, items[i], i == netSel_);
+      break;
+    }
+    case NetUi::Browse: {
+      const auto list = browse_ ? browse_->sessions() : std::vector<net::SessionInfo>{};
+      if (list.empty()) c.textCentered(sm, "Searching for games on the local network...", 20, 299, y0, 0xFB);
+      for (size_t i = 0; i < list.size() && i < 8; ++i) {
+        const net::SessionInfo& si = list[i];
+        char b[120];
+        std::snprintf(b, sizeof b, "%s  %s  %d/10", si.name.c_str(), trackDisplayNames()[size_t(std::clamp<int>(si.track, 1, 10) - 1)], si.players);
+        const bool ok = si.version == net::kProtocolVersion && si.dataHash == netDataHash_;
+        row(y0 + int(i) * rowH, ok ? b : std::string(b) + " (incompatible)", int(i) == netSel_);
+      }
+      break;
+    }
+    case NetUi::Address: {
+      c.textCentered(sm, "Address of the host (HOST or HOST:PORT), Enter to join", 20, 299, y0, 0xFB);
+      row(y0 + rowH + 6, netAddr_ + ((int(animSeconds_ * 2) & 1) ? "_" : " "), true);
+      break;
+    }
+    case NetUi::Lobby: {
+      if (!session_) break;
+      const net::Lobby& lb = session_->lobby();
+      if (session_->state() == net::Session::State::Joining) { c.textCentered(sm, netMsg_.empty() ? "Connecting..." : netMsg_, 20, 299, y0, 0xFB); break; }
+      const bool host = session_->isHost();
+      int myShip = 0;
+      bool ready = false;
+      for (const net::LobbyEntry& e : lb.players) if (e.id == session_->myId()) { myShip = e.ship; ready = e.ready != 0; }
+      char b[120];
+      int y = y0 - 4;
+      c.text(sm, "Players", 28, y, 0xFE);
+      y += sm.height + 4;
+      for (const net::LobbyEntry& e : lb.players) {
+        std::snprintf(b, sizeof b, "%s%s", e.name.c_str(), e.id == 0 ? " (host)" : e.ready ? " (ready)" : "");
+        c.text(sm, b, 28, y, e.id == session_->myId() ? 0xFF : 0xFB);
+        std::snprintf(b, sizeof b, "ship %d", e.ship + 1);
+        c.text(sm, b, 118, y, 0xFB);
+        y += sm.height + 2;
+      }
+      const int rh = sm.height + 6;
+      auto srow = [&](int yy, const std::string& text, bool sel) {
+        if (sel) c.fillIndex(166, yy - 2, 291, yy + sm.height + 1, 0x33);
+        c.text(sm, text, 170, yy, sel ? 0xFF : 0xFB);
+      };
+      y = y0 - 4;
+      c.text(sm, host ? "Race settings" : "Race settings (host)", 170, y, 0xFE);
+      y += sm.height + 6;
+      std::snprintf(b, sizeof b, "Track: %s", trackDisplayNames()[size_t(std::clamp<int>(lb.track, 1, 10) - 1)]);
+      srow(y, b, netSel_ == 0); y += rh;
+      std::snprintf(b, sizeof b, "Laps: %d", lb.laps); srow(y, b, netSel_ == 1); y += rh;
+      static const char* diff[3] = {"Easy", "Normal", "Hard"};
+      std::snprintf(b, sizeof b, "Difficulty: %s", diff[std::clamp<int>(lb.difficulty, 0, 2)]); srow(y, b, netSel_ == 2); y += rh;
+      std::snprintf(b, sizeof b, "My ship: %d", myShip + 1); srow(y, b, netSel_ == 3); y += rh;
+      srow(y, host ? "START RACE" : ready ? "Ready (cancel)" : "READY", netSel_ == 4); y += rh;
+      srow(y, "Leave", netSel_ == 5);
+      break;
+    }
+  }
+  c.textCentered(sm, netUi_ == NetUi::Address ? "Type the address, Enter joins, Esc goes back" : "Up / Down select    Left / Right change    Enter confirm    Esc back", 20, 299, 160, 0xFB);
+  if (!netMsg_.empty() && netUi_ != NetUi::Lobby) c.textCentered(sm, netMsg_, 20, 299, 172, 0xFE);
+  else if (!netMsg_.empty() && session_ && session_->state() == net::Session::State::Lobby) c.textCentered(sm, netMsg_, 20, 299, 172, 0xFE);
 }
 
 }  // namespace slip

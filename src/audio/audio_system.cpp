@@ -164,6 +164,7 @@ bool AudioSystem::playCue(int cue) {
   cueVoice_ = mixer_.play(s, 1.0f);
   for (int i = 3; i > 0; --i) cueHistory_[i] = cueHistory_[i - 1];  // 0x531B5..0x531E4
   cueHistory_[0] = cue;
+  cueSpeakerNow_ = cues_[size_t(cue)].speaker;  // 0x531E1: [0x52EF4] = entry +0x18
   return cueVoice_ != 0;
 }
 

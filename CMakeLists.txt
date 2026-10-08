@@ -28,6 +28,16 @@ add_library(slipstream_core STATIC
 target_include_directories(slipstream_core PUBLIC src)
 target_compile_options(slipstream_core PRIVATE -Wall -Wextra)
 
+# --- net: POSIX sockets, framed transport, wire protocol, LAN discovery (SDL-free) --------------------
+add_library(slipstream_net STATIC src/net/socket.cpp src/net/transport.cpp src/net/protocol.cpp src/net/discovery.cpp src/net/session.cpp)
+target_include_directories(slipstream_net PUBLIC src)
+target_compile_options(slipstream_net PRIVATE -Wall -Wextra)
+
+# game side of the multiplayer mode (snapshots, interpolation, combat relay)
+add_library(slipstream_netplay STATIC src/game/netplay.cpp)
+target_link_libraries(slipstream_netplay PUBLIC slipstream_core slipstream_net)
+target_compile_options(slipstream_netplay PRIVATE -Wall -Wextra)
+
 # --- renderer: software "compatibility" renderer ------------------------------------------
 add_library(slipstream_renderer STATIC src/renderer/software_renderer.cpp)
 target_link_libraries(slipstream_renderer PUBLIC slipstream_core)
@@ -57,7 +67,7 @@ endif()
 
 # --- application (SDL3) -------------------------------------------------------------------
 add_executable(slipstream src/platform/main.cpp src/platform/viewer_app.cpp)
-target_link_libraries(slipstream PRIVATE slipstream_renderer slipstream_audio slipstream_core SDL3::SDL3)
+target_link_libraries(slipstream PRIVATE slipstream_netplay slipstream_renderer slipstream_audio slipstream_core SDL3::SDL3)
 target_compile_options(slipstream PRIVATE -Wall -Wextra)
 
 # --- tools / tests (need the user's original game files; skipped when SLIPSTREAM_DATA unset) -
@@ -76,6 +86,10 @@ add_test(NAME physics_tests COMMAND slipstream_physics_tests)
 add_executable(slipstream_weapons_tests tests/weapons_tests.cpp)
 target_link_libraries(slipstream_weapons_tests PRIVATE slipstream_core)
 add_test(NAME weapons_tests COMMAND slipstream_weapons_tests)
+
+add_executable(slipstream_net_tests tests/net_tests.cpp)
+target_link_libraries(slipstream_net_tests PRIVATE slipstream_net)
+add_test(NAME net_tests COMMAND slipstream_net_tests)
 
 add_executable(slipstream_audio_tests tests/audio_tests.cpp)
 target_link_libraries(slipstream_audio_tests PRIVATE slipstream_audio slipstream_core)

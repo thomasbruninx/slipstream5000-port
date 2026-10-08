@@ -32,7 +32,9 @@ bool HudAssets::load(const GameData& d, int ship, const Palette& pal) {
   ok &= loadFont(d, "TIME.FNT", &time);
   ok &= loadFont(d, "SPD.FNT", &spd);
   ok &= loadFont(d, "SMALLEST.FNT", &smallest);
+  loadFont(d, "SMALL.FNT", &small);
   loadFont(d, "SHADE.FNT", &shade);
+  for (int i = 0; i < 10; ++i) loadSprite(d, "GAMEF" + std::to_string(i) + ".SPR", &portrait[size_t(i)]);
   loadFont(d, "MENUFONT.FNT", &menu);
   for (int i = 0; i < 10; ++i) ok &= loadSprite(d, "POS" + std::to_string(i) + ".SPR", &pos[size_t(i)]);
   ok &= loadSprite(d, "NSIGHT.SPR", &nsight);
@@ -203,6 +205,13 @@ void Hud::draw(uint32_t* fb, int w, int h, const HudState& st, const HudAssets& 
   if (st.finalLapTimer > 0) c.textCentered(a.time, "Final Lap!!", 0, 319, 13, 0xFF);
   if (st.gameOverTimer > 0) c.textCentered(a.time, "GAME OVER", 0, 319, 13, 0xFF);
   if (st.finishedPosition > 0) c.textCentered(a.time, "Finished Position " + std::to_string(st.finishedPosition), 0, 319, 13, 0xFE);
+  // talking pilot (0x58BEA..0x58C6F): the pilot's GAMEF face at (260, 40) while his voice line plays, his rank (or FINISHED) in SMALL.FNT, yellow,
+  // centred under the top of the face's lower edge (y 79)
+  if (st.portraitPilot >= 1 && st.portraitPilot <= 10 && a.portrait[size_t(st.portraitPilot - 1)].w > 0) {
+    const Sprite& f = a.portrait[size_t(st.portraitPilot - 1)];
+    c.blit(f, 260, 40, transparentOf(f));
+    if (a.small.height > 0) c.textCentered(a.small, st.portraitText, 260, 311, 79, 0xFE);
+  }
   // sights (0x5C234): crosshair for lock capable weapons, flashing marker on the locked ship
   if (st.canLock) {
     if (st.cockpit) c.blit(a.nsight, st.centerX - 14, st.centerY - 11, transparentOf(a.nsight));  // the crosshair only makes sense along the nose: hidden in the chase views

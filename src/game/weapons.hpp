@@ -93,12 +93,17 @@ struct Projectile {
   double age = 0;
   double radius = 1500;  // collision radius (half the mesh size)
   bool alive = true;
+  // multiplayer: ids are unique per session (owner << 24 | counter); a copy of another peer's projectile only flies and hits ships simulated here
+  uint32_t id = 0;
+  bool remote = false;   // copy of a projectile launched on another peer
+  bool first = false;    // first projectile of a launch (plays the launch sound on the other peers)
 };
 
 struct Pickup {
   double pos[3] = {0, 0, 0};
   int type = 0;          // 0 repair engine, 1 repair steering, 2 booster fuel, 3 reversed controls (5 s), 4 +50 credits, 5 free booster (5 s)
   bool alive = true;
+  int id = 0;            // index in the placement list (the same on every peer)
 };
 
 struct Explosion {  // purely visual (the original spawns particle effects 0x4F61B / 0x4F79E / 0x4F414)
@@ -125,6 +130,7 @@ struct CombatContext {
   std::vector<CombatControls> controls;  // human intents for this step (cycle is an edge)
   std::vector<const ShipState*> obstacles;  // door panels (static boxes): missiles stop at them (their 0x106 handler destroys the missile)
   int humanShip = -1;                 // the listener ([0x543DD]): receives the pilot / announcer cues
+  std::vector<bool> remote;           // multiplayer: ships simulated on another peer (no ship logic, never a victim here; hits arrive as events)
 };
 
 class CombatWorld {
@@ -142,6 +148,15 @@ class CombatWorld {
   std::vector<Pickup> pickups;
   std::vector<Explosion> explosions;
   std::vector<CombatEvent> events;  // drained by the front end
+  // multiplayer: what happened here that the other peers must hear about (drained by game/netplay)
+  struct HitRec { uint32_t id; int victim; double pos[3]; };
+  std::vector<Projectile> launched;  // projectiles launched this step (a smoker puff is kind kSmoker, not added to `projectiles`)
+  std::vector<HitRec> hitLog;        // projectiles that hit a ship simulated here
+  std::vector<std::pair<int, int>> pickupLog;  // (pickup id, ship) taken by a ship simulated here
+  static int hitFx(int kind);
+  void spawnRemote(const Projectile& p);
+  void remoteHit(const CombatContext& ctx, uint32_t id, int victim, const double* pos);
+  void remotePickup(int id, int ship);
 
  private:
   struct Rng { uint32_t s = 1; uint32_t next() { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return s; } } rng_;
@@ -159,6 +174,8 @@ class CombatWorld {
   void emitFx(int id, int ship, const double* pos);
   void emitCue(const CombatContext& ctx, int ship, int cue);
   void addExplosion(const double* pos, int kind);
+  static bool isRemote(const CombatContext& ctx, int i) { return ctx.remote.size() > size_t(i) && ctx.remote[size_t(i)]; }
+  uint32_t launchCounter_ = 0;
   const WeaponTable* table_ = nullptr;
   std::array<ShipRefPoints, 10> refs_{};
   std::array<double, kWeaponCount> radius_{};

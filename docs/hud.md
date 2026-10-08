@@ -34,7 +34,8 @@ read from the disassembly, INFERRED, SPECULATIVE.
 * Damage beyond 100 on the human ship: `0x4411A` shows "GAME OVER" for 4 s (`[0x42DFC]` timer 0xFA0), the loop then ends the race (0x44022 -> 0x591D9). The port ends the race the same way (LOSE music).
 * Camera keys of the original: F1..F5 (player 1) / F6..F10 (player 2) select camera callbacks 0x44AF6 (cockpit with console), 0x44DFE (smoothed chase), 0x44F64 (rear view: the ship matrix negated, label "Rear" 0x44A25),
   0x45196 (TV camera, jet-by sound), 0x44FB4 (close chase, distance 0x2250..0xBEA0). The port keeps its own `V` cycle.
-* Not ported: the pilot portraits that appear with the voice cues (pane table 0x42CAB, DRIVER / EYES / MOUTH sprites), the two-player layout (`[0x543F4] == 1`, CONS_BH / CONS_TH, TURBO_H), the optional smaller window (`[0x49E67]`: y 32..166, centre y 99, frame colour 0x1F), the fps text.
+* **Talking pilot** (CONFIRMED, `GetSpeaker` 0x53061 + 0x58BEA..0x58C6F): while a pilot's voice line plays (cue list entry `+0x18` = pilot 1..10, cleared when the sample ends) the face `GAMEF<pilot-1>.SPR` (52x48, no animation) is drawn at (260, 40) in the top right of the window, with the pilot's current rank (or "FINISHED") in SMALL.FNT, yellow, centred at y 79 over the face's lower edge. Announcer lines (pilot 0) show nothing. The pane table 0x42CAB turned out to be the camera table, not portraits; the DRIVER / EYES / MOUTH sprites belong to the menus. `SLIP_PORTRAIT=n` forces a portrait for screenshots.
+* Not ported: the two-player layout (`[0x543F4] == 1`, CONS_BH / CONS_TH, TURBO_H), the optional smaller window (`[0x49E67]`: y 32..166, centre y 99, frame colour 0x1F), the fps text.
 
 ## Fonts and string tables (CONFIRMED)
 `.FNT`: "FONT", u16 cell width (bytes per glyph row), u16 height, u8 first char, u8 last char, u16 glyph table offset; table entry per char = u16 bitmap offset (height rows x cell width,

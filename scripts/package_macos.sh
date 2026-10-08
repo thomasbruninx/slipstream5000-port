@@ -26,6 +26,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
  <key>CFBundleShortVersionString</key><string>0.1</string>
  <key>LSMinimumSystemVersion</key><string>12.0</string>
  <key>NSHighResolutionCapable</key><true/>
+ <key>NSLocalNetworkUsageDescription</key><string>Slipstream finds and joins multiplayer races on your local network.</string>
 </dict></plist>
 PLIST
 codesign --force --deep -s - "$APP" 2>&1 | tail -1 || true

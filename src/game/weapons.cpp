@@ -267,6 +267,8 @@ void CombatWorld::init(const WeaponTable& table, const std::array<ShipRefPoints,
   projectiles.clear();
   explosions.clear();
   events.clear();
+  launched.clear(); hitLog.clear(); pickupLog.clear();
+  launchCounter_ = 0;
   pickups.clear();
   for (auto& c : combat) c = CombatState{};
   for (int k = 0; k < kWeaponCount; ++k) radius_[size_t(k)] = 1500;
@@ -275,6 +277,7 @@ void CombatWorld::init(const WeaponTable& table, const std::array<ShipRefPoints,
     Pickup p;
     for (int k = 0; k < 3; ++k) p.pos[k] = s.pos[k];
     p.type = s.type >= 0 ? s.type : kRandomTypes[rng_.next() % 5];
+    p.id = int(pickups.size());
     pickups.push_back(p);
   }
 }
@@ -312,7 +315,7 @@ void CombatWorld::addExplosion(const double* pos, int kind) {
 void CombatWorld::step(const CombatContext& ctx, double dt) {
   if (!table_) return;
   for (int i = 0; i < int(ctx.ships.size()) && i < 10; ++i)
-    if (ctx.ships[size_t(i)]) shipLogic(ctx, i, dt);
+    if (ctx.ships[size_t(i)] && !isRemote(ctx, i)) shipLogic(ctx, i, dt);
   for (Projectile& p : projectiles) if (p.alive) stepProjectile(ctx, p, dt);
   projectiles.erase(std::remove_if(projectiles.begin(), projectiles.end(), [](const Projectile& p) { return !p.alive; }), projectiles.end());
   stepPickups(ctx);
@@ -473,6 +476,8 @@ void CombatWorld::launch(const CombatContext& ctx, int i, int weapon) {  // laun
   const bool human = i == ctx.humanShip;
   const double ownerPos[3] = {s.x, s.y, s.z};
   ++c.shotsFired;
+  ++launchCounter_;
+  const size_t before = projectiles.size();  // the launch's first projectile plays the launch sound on the other peers
   auto spawn = [&](int kind, const double* pos) -> Projectile& {
     projectiles.emplace_back();
     Projectile& p = projectiles.back();
@@ -480,6 +485,8 @@ void CombatWorld::launch(const CombatContext& ctx, int i, int weapon) {  // laun
     for (int k = 0; k < 3; ++k) { p.pos[k] = pos[k]; p.prev[k] = pos[k]; }
     for (int k = 0; k < 9; ++k) p.m[k] = s.m[k];
     p.radius = radius_[size_t(kind)];
+    p.id = (uint32_t(i) << 24) | ((launchCounter_ & 0xFFFFFu) << 4) | uint32_t(projectiles.size() - before - 1);  // owner | launch | index inside the launch
+    p.first = projectiles.size() == before + 1;
     return p;
   };
   if (human && cues::launchCue(weapon) >= 0) emitCue(ctx, i, cues::launchCue(weapon));
@@ -506,6 +513,7 @@ void CombatWorld::launch(const CombatContext& ctx, int i, int weapon) {  // laun
       double pos[3];
       world(s, refs_[size_t(i)].smok, pos);
       addExplosion(pos, 1);
+      { Projectile sm; sm.kind = kSmoker; sm.owner = i; sm.first = true; sm.id = (uint32_t(i) << 24) | (launchCounter_ & 0xFFFFFFu); for (int k = 0; k < 3; ++k) sm.pos[k] = pos[k]; launched.push_back(sm); }
       emitFx(5, i, ownerPos);
       break;
     }
@@ -534,6 +542,7 @@ void CombatWorld::launch(const CombatContext& ctx, int i, int weapon) {  // laun
       break;
     }
   }
+  for (size_t k = before; k < projectiles.size(); ++k) launched.push_back(projectiles[k]);
 }
 
 void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double dt) {
@@ -547,10 +556,11 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
   const bool beam = p.kind == kBlaster || p.kind == kDisrupter;
   if (p.kind == kMiniMines) {
     for (int j = 0; j < int(ctx.ships.size()) && j < 10; ++j) {
-      if (!ctx.ships[size_t(j)] || (j == p.owner && p.age < 1.0)) continue;
+      if (!ctx.ships[size_t(j)] || isRemote(ctx, j) || (j == p.owner && p.age < 1.0)) continue;
       const ShipState& s = *ctx.ships[size_t(j)];
       if (s.wrecked || !s.hasBox || !pointNearShip(s, p.pos, p.radius)) continue;
       hitShip(ctx, p, j);
+      hitLog.push_back({p.id, j, {p.pos[0], p.pos[1], p.pos[2]}});
       addExplosion(p.pos, 0);
       p.alive = false;
       return;
@@ -584,7 +594,7 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
   double bestT = 2.0;
   int bestShip = -1;
   for (int j = 0; j < int(ctx.ships.size()) && j < 10; ++j) {
-    if (!ctx.ships[size_t(j)] || j == p.owner) continue;  // INFERRED: projectiles never hit their owner's ship
+    if (!ctx.ships[size_t(j)] || j == p.owner || isRemote(ctx, j)) continue;  // INFERRED: projectiles never hit their owner's ship
     const ShipState& s = *ctx.ships[size_t(j)];
     const double t = segmentVsShip(s, p.pos, np, beam ? 0.0 : p.radius);
     if (t >= 0 && t < bestT) { bestT = t; bestShip = j; }
@@ -609,7 +619,8 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
     for (int k = 0; k < 3; ++k) p.pos[k] += (np[k] - p.pos[k]) * std::min(bestT, 1.0);
     if (beam) beamHit(ctx, p, bestShip);
     else { hitShip(ctx, p, bestShip); addExplosion(p.pos, 0); }
-    ++combat[size_t(p.owner)].hitsDealt;
+    hitLog.push_back({p.id, bestShip, {p.pos[0], p.pos[1], p.pos[2]}});
+    if (!p.remote) ++combat[size_t(p.owner)].hitsDealt;
     p.alive = false;
     return;
   }
@@ -662,10 +673,11 @@ void CombatWorld::stepPickups(const CombatContext& ctx) {  // bonus object (0x42
   for (Pickup& pk : pickups) {
     if (!pk.alive) continue;
     for (int j = 0; j < int(ctx.ships.size()) && j < 10; ++j) {
-      if (!ctx.ships[size_t(j)]) continue;
+      if (!ctx.ships[size_t(j)] || isRemote(ctx, j)) continue;
       const ShipState& s = *ctx.ships[size_t(j)];
       if (s.wrecked || !s.hasBox || !pointNearShip(s, pk.pos, kPickupHalf)) continue;
       pk.alive = false;
+      pickupLog.push_back({pk.id, j});
       applyPickup(ctx, j, pk.type);
       break;
     }
@@ -685,6 +697,56 @@ void CombatWorld::applyPickup(const CombatContext& ctx, int ship, int type) {  /
     case 4: c.credits += 50; emitFx(6, ship, p); break;                        // +50 credits
     case 5: s.boosterFreeTime = 5.0; emitFx(12, ship, p); break;               // free booster for 5 s
     default: emitFx(6, ship, p); break;
+  }
+}
+
+}  // namespace slip
+
+namespace slip {
+
+int CombatWorld::hitFx(int kind) {
+  switch (kind) {
+    case kBlaster: return 10;
+    case kDisrupter: return 11;
+    case kAmbler: return 16;
+    case kBomber: return 13;
+    case kHyperNeuro: return 15;
+    case kScrambler: return 14;
+    default: return 9;
+  }
+}
+
+void CombatWorld::spawnRemote(const Projectile& in) {
+  if (in.kind == kSmoker) { addExplosion(in.pos, 1); emitFx(5, in.owner, in.pos); return; }
+  Projectile p = in;
+  p.remote = true;
+  p.alive = true;
+  for (int k = 0; k < 3; ++k) p.prev[k] = p.pos[k];
+  p.radius = radius_[size_t(std::clamp(p.kind, 0, kWeaponCount - 1))];
+  projectiles.push_back(p);
+  if (p.first) emitFx(p.kind <= kDisrupter ? 4 : p.kind == kMiniMines ? 7 : 5, p.owner, p.pos);
+}
+
+void CombatWorld::remoteHit(const CombatContext& ctx, uint32_t id, int victim, const double* pos) {  // a projectile hit a ship simulated on another peer
+  for (Projectile& p : projectiles) {
+    if (p.id != id || !p.alive) continue;
+    p.alive = false;
+    if (p.kind > kDisrupter) addExplosion(pos, 0);
+    emitFx(hitFx(p.kind), victim, pos);
+    if (!p.remote) {
+      ++combat[size_t(p.owner)].hitsDealt;
+      if (p.owner == ctx.humanShip && ctx.humanShip >= 0 && ctx.shipClass.size() > size_t(victim)) emitCue(ctx, victim, cues::hitByHuman(ctx.shipClass[size_t(victim)]));
+    }
+    return;
+  }
+}
+
+void CombatWorld::remotePickup(int id, int ship) {
+  for (Pickup& pk : pickups) {
+    if (pk.id != id || !pk.alive) continue;
+    pk.alive = false;
+    emitFx(pk.type == 3 ? 11 : pk.type == 5 ? 12 : 6, ship, pk.pos);
+    return;
   }
 }
 

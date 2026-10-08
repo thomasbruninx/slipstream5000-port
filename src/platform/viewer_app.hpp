@@ -13,8 +13,11 @@
 #include "game/ship_sim.hpp"
 #include "game/weapons.hpp"
 #include "game/hud.hpp"
+#include "game/netplay.hpp"
 #include "game/pause_menu.hpp"
 #include "input/input_state.hpp"
+#include "net/discovery.hpp"
+#include "net/session.hpp"
 #include "original_formats/game_data.hpp"
 #include "renderer/software_renderer.hpp"
 
@@ -46,13 +49,20 @@ struct AppOptions {
   int difficulty = -1;              // --difficulty 0..2 (default: SLIPSTRM.CFG, normally 1)
   bool voices = true;               // --no-voices: pilot / announcer lines
   int view = 0;                     // 0 cockpit, 1 cockpit with the own ship drawn (--ship-view), 2 chase (--chase); V cycles
+  // multiplayer (docs/multiplayer.md)
+  std::string netRole;              // "host" (--host) or "join" (--join); empty: single player
+  std::string netHost = "127.0.0.1";  // --join HOST[:PORT]
+  int netPort = 51500;              // --port (host: TCP listen port; join: the host's port)
+  std::string netName;              // --name (default: the user name)
+  int netPlayers = 0;               // --players N: the host starts the race as soon as N humans are in the lobby (0 = start from the menu)
+  bool netHeadless = false;         // --net-run: no window; joiners ready up by themselves, the process ends after the race
 };
 
 class ViewerApp {
  public:
   bool init(const AppOptions& opt, std::string* error);
   void update(double dt, const InputState& in);
-  void render();
+  void render();  // 3D view, HUD, and the multiplayer menu on top
   const SoftwareRenderer& renderer() const { return renderer_; }
   std::vector<std::string> hudLines() const;
 
@@ -74,6 +84,16 @@ class ViewerApp {
   void openPause();
   void menuKey(PauseMenu::Key k);
   bool wantsQuit() const { return quit_; }
+  // multiplayer: lobby UI (Multiplayer entry, Host / Join / browse / lobby screens) and the race session
+  bool netActive() const { return session_ != nullptr; }
+  bool netRacing() const { return netplay_ != nullptr; }
+  bool netUiOpen() const { return netUi_ != NetUi::None; }
+  bool netWantsText() const { return netUi_ == NetUi::Address; }
+  void openNetMenu();
+  void netKey(PauseMenu::Key k);
+  void netText(const std::string& utf8);
+  void netBackspace();
+  std::string netSummary() const;  // one line per ship: owner, laps, finish (used by the headless test driver)
   void toggleHud() { hudOn_ = !hudOn_; }
   bool hudActive() const { return hudOn_ && driving_ && mode_ == AppMode::Track && hudAssets_.loaded; }
   void toggleAssist() { simCfg_.assist = !simCfg_.assist; }
@@ -100,6 +120,31 @@ class ViewerApp {
   int track_ = 1;
   bool driving_ = false;
   ShipState player_;
+  // multiplayer state
+  enum class NetUi { None, Main, Browse, Address, Lobby };
+  std::unique_ptr<net::Session> session_;
+  std::unique_ptr<Netplay> netplay_;
+  std::unique_ptr<net::IDiscovery> browse_;
+  NetUi netUi_ = NetUi::None;
+  int netSel_ = 0;
+  std::string netAddr_, netMsg_;
+  uint32_t netDataHash_ = 0, netStartLocal_ = 0;
+  double netClock_ = 0, netEndTimer_ = 0;
+  unsigned netSeed_ = 0;
+  bool netAutoReady_ = false;
+  void netInit();
+  void netHostGame();
+  void netJoinGame(const std::string& host, int port);
+  void netLeaveSession();
+  void updateNet(double dt);
+  void startNetRace(const net::Start& st, uint32_t startLocal);
+  void netLeaveRace();
+  void drawNetUi();
+  void drawPlayerList(const HudCanvas& c);
+  bool showList_ = false;
+  void renderFrame();
+  bool shipShown(int i) const { return !netplay_ || netplay_->present(i); }
+  bool netStartWaiting() const { return netplay_ && int32_t(netStartLocal_ - session_->nowMs()) > 0; }
   ShipSimConfig simCfg_;
   Doors doors_;
   AiTables aiTables_;

@@ -137,6 +137,7 @@ int main() {
         for (int c = 0; c < a.cueCount(); ++c) CHECK(d->exists(a.cueSample(c)));
         CHECK(a.playCue(14));
         CHECK(a.cueBusy());
+        CHECK(a.currentSpeaker() == 1);     // EM102 is pilot 1's line: his portrait is shown while it plays
         CHECK(!a.playCue(15));              // the previous line is still playing -> dropped
         float buf[2048];
         a.renderBlock(buf, 1024);
@@ -144,7 +145,7 @@ int main() {
         for (float v : buf) peak = std::max(peak, std::fabs(v));
         CHECK(peak > 0.05f);
         for (int i = 0; i < 400 && a.cueBusy(); ++i) a.renderBlock(buf, 1024);  // let it finish
-        CHECK(!a.cueBusy());
+        CHECK(!a.cueBusy() && a.currentSpeaker() == 0);
         CHECK(!a.playCue(14));              // one of the last four cues
         CHECK(a.playCue(15));
       }

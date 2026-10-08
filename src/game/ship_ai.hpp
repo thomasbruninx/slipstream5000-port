@@ -59,6 +59,7 @@ RaceInfo buildRaceInfo(const Scene& scene, int shipCount);
 struct RaceStatus {  // global race state ([0x5440C] end timer, 0x5A780)
   double endTimer = -1;  // < 0: not started; 5 s after the second AI ship finished (or all AI ships are done) the race ends
   bool over = false;
+  bool settled = false;  // multiplayer: the unfinished ships got their projected finish after the race end
   int finishedCount = 0;
   int bestAiRank = 10, prevBestAiRank = 10;  // [0x50438] / [0x5043A]: best rank among the AI ships this / last frame
   struct Event { int ship; int kind; };  // kind 0 start crossing, 1 lap line, 2 finished, 3 human passed the best AI ship
@@ -77,6 +78,10 @@ struct RaceContext {
   std::vector<ShipState*> ships;
   std::vector<AiState*> state;
   std::vector<const ShipParams*> params;
+  // multiplayer: ships simulated on another peer keep the race record they send (laps, finish); empty slots are not part of the race
+  std::vector<bool> remote, absent;
+  bool multiplayer = false;      // the race ends 5 s after the second finisher (humans included) instead of the second AI finisher
+  bool authoritativeEnd = true;  // false on peers that wait for the host's race-over message
 };
 
 // RaceUpdate 0x5A4EC: lap line crossings between the TRD lap pieces, finishing, ranks, clocks and the race end timer.

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 
 #include "platform/viewer_app.hpp"
 
@@ -38,6 +39,11 @@ static void usage() {
       "  --difficulty N      0..2 (default: the setting of SLIPSTRM.CFG, normally 1): AI speed tables, blaster damage\n"
       "  --no-pickups        no bonus objects      --no-ai-weapons   the AI ships do not shoot      --no-voices   no pilot/announcer lines\n"
       "  --no-music          no music      --no-sfx   no sound effects     --no-audio   no sound at all\n"
+      "  --host              multiplayer: host a game on the local network (up to 10 players, AI ships fill the empty seats)\n"
+      "  --join HOST[:PORT]  multiplayer: join a game (F10 opens the multiplayer menu: host / browse LAN games / join by address)\n"
+      "  --name NAME         player name (default: user name)      --port N   TCP port (default 51500)\n"
+      "  --players N         with --host: start the race as soon as N humans are in the lobby\n"
+      "  --net-run SEC       headless multiplayer test run (autopilot, no window, no sound): runs SEC seconds or until the race is over\n"
       "  --volume V          master volume 0..1 (default 1)   --music-volume V (0.8)   --sfx-volume V (1)\n");
 }
 
@@ -64,7 +70,7 @@ int main(int argc, char** argv) {
   AppOptions opt;
   std::string screenshot;
   int bench = 0;
-  double simSeconds = 0;
+  double simSeconds = 0, netRun = 0;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     auto next = [&](const char* name) -> const char* {
@@ -77,6 +83,18 @@ int main(int argc, char** argv) {
     else if (a == "--models") { opt.mode = AppMode::Model; opt.shape = optional(); }
     else if (a == "--sprites") { opt.mode = AppMode::Sprite; opt.sprite = optional(); }
     else if (a == "--drive") opt.drive = true;
+    else if (a == "--host") opt.netRole = "host";
+    else if (a == "--join") {
+      opt.netRole = "join";
+      std::string h = next("--join");
+      const size_t c = h.rfind(':');
+      if (c != std::string::npos) { opt.netPort = std::atoi(h.c_str() + c + 1); h.resize(c); }
+      opt.netHost = h;
+    }
+    else if (a == "--name") opt.netName = next("--name");
+    else if (a == "--port") opt.netPort = std::atoi(next("--port"));
+    else if (a == "--players") opt.netPlayers = std::clamp(std::atoi(next("--players")), 1, 10);
+    else if (a == "--net-run") { netRun = std::atof(next("--net-run")); opt.netHeadless = true; }
     else if (a == "--ship") opt.ship = std::atoi(next("--ship"));
     else if (a == "--ship-scale") opt.shipScale = float(std::atof(next("--ship-scale")));
     else if (a == "--res") { if (std::sscanf(next("--res"), "%dx%d", &opt.width, &opt.height) != 2) { usage(); return 2; } }
@@ -109,7 +127,7 @@ int main(int argc, char** argv) {
   }
 
   if (!screenshot.empty() && simSeconds > 0) opt.countdown = false;
-  if (!screenshot.empty() || bench > 0) opt.audio.openDevice = false;  // headless runs stay silent (no device, nothing rendered)
+  if (!screenshot.empty() || bench > 0 || netRun > 0) opt.audio.openDevice = false;  // headless runs stay silent (no device, nothing rendered)
   ViewerApp app;
   std::string err;
   if (!app.init(opt, &err)) {
@@ -119,6 +137,26 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  if (netRun > 0) {  // headless multiplayer test: real time, the autopilot flies, results are printed at the end
+    setenv("SLIP_AUTOPILOT", "1", 0);
+    const auto t0 = std::chrono::steady_clock::now();
+    auto prev = t0;
+    while (!app.wantsQuit()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(8));
+      const auto now = std::chrono::steady_clock::now();
+      const double dt = std::min(0.1, std::chrono::duration<double>(now - prev).count());
+      prev = now;
+      InputState hold;
+      hold.fire = std::getenv("SLIP_FIRE") != nullptr;  // test hook: hold the trigger
+      hold.showList = std::getenv("SLIP_LIST") != nullptr;  // test hook: Tab held
+      app.update(dt, hold);
+      if (std::chrono::duration<double>(now - t0).count() > netRun) break;
+      if (!screenshot.empty() && std::chrono::duration<double>(now - t0).count() > netRun - 0.2) break;
+    }
+    std::printf("%s\n", app.netSummary().c_str());
+    if (!screenshot.empty()) { app.render(); writePPM(screenshot, app.renderer()); }
+    return 0;
+  }
   if (bench > 0) {  // headless render timing
     uint64_t t0 = 0;
     (void)t0;
@@ -170,7 +208,7 @@ int main(int argc, char** argv) {
     SDL_free(ids);
   }
 
-  bool running = true;
+  bool running = true, textInput = false;
   uint64_t last = SDL_GetPerformanceCounter();
   const double freq = double(SDL_GetPerformanceFrequency());
   float mouseDX = 0, mouseDY = 0;
@@ -207,7 +245,27 @@ int main(int argc, char** argv) {
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) app.nextItem(-1);
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) running = false;
           break;
+        case SDL_EVENT_TEXT_INPUT:
+          if (app.netUiOpen()) app.netText(e.text.text);
+          break;
         case SDL_EVENT_KEY_DOWN:
+          if (app.netUiOpen()) {  // multiplayer menu
+            switch (e.key.key) {
+              case SDLK_UP: app.netKey(PauseMenu::Key::Up); break;
+              case SDLK_DOWN: app.netKey(PauseMenu::Key::Down); break;
+              case SDLK_LEFT: app.netKey(PauseMenu::Key::Left); break;
+              case SDLK_RIGHT: app.netKey(PauseMenu::Key::Right); break;
+              case SDLK_RETURN: case SDLK_KP_ENTER: if (!e.key.repeat) app.netKey(PauseMenu::Key::Select); break;
+              case SDLK_ESCAPE: if (!e.key.repeat) app.netKey(PauseMenu::Key::Back); break;
+              case SDLK_BACKSPACE: app.netBackspace(); break;
+              case SDLK_W: if (!app.netWantsText()) app.netKey(PauseMenu::Key::Up); break;
+              case SDLK_S: if (!app.netWantsText()) app.netKey(PauseMenu::Key::Down); break;
+              case SDLK_A: if (!app.netWantsText()) app.netKey(PauseMenu::Key::Left); break;
+              case SDLK_D: if (!app.netWantsText()) app.netKey(PauseMenu::Key::Right); break;
+              default: break;
+            }
+            break;
+          }
           if (app.paused()) {  // pause menu keys (key repeat allowed for the volume sliders)
             switch (e.key.key) {
               case SDLK_UP: case SDLK_W: app.menuKey(PauseMenu::Key::Up); break;
@@ -224,13 +282,14 @@ int main(int argc, char** argv) {
           switch (e.key.key) {
             case SDLK_ESCAPE: if (app.pausable()) app.openPause(); else running = false; break;
             case SDLK_H: app.toggleHud(); break;
+            case SDLK_F10: app.openNetMenu(); break;
             case SDLK_RIGHTBRACKET: app.nextItem(1); break;
             case SDLK_LEFTBRACKET: app.nextItem(-1); break;
             case SDLK_SPACE: app.toggleDrive(); break;
             case SDLK_F1: app.setMode(AppMode::Track); break;
             case SDLK_F2: app.setMode(AppMode::Model); break;
             case SDLK_F3: app.setMode(AppMode::Sprite); break;
-            case SDLK_TAB: app.toggleCulling(); break;
+            case SDLK_TAB: if (!app.netRacing()) app.toggleCulling(); break;
             case SDLK_F4: copyDebug(app); break;
             case SDLK_F5: app.toggleVisibility(); break;
             case SDLK_F6: app.togglePainter(); break;
@@ -280,9 +339,14 @@ int main(int argc, char** argv) {
       in.throttle = std::max(in.throttle, ax(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
       in.brake = std::max(in.brake, ax(SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
     }
+    in.showList = k[SDL_SCANCODE_TAB];
     in.fire = k[SDL_SCANCODE_F] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST));
     in.steer = std::clamp(in.steer, -1.0f, 1.0f);
 
+    {
+      const bool wantText = app.netWantsText();
+      if (wantText != textInput) { if (wantText) SDL_StartTextInput(window); else SDL_StopTextInput(window); textInput = wantText; }
+    }
     app.update(dt, in);
     app.render();
 

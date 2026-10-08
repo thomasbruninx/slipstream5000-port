@@ -18,7 +18,8 @@ struct HudLayout {
 };
 
 struct HudAssets {
-  Font time, spd, smallest, shade, menu;
+  Font time, spd, small, smallest, shade, menu;
+  std::array<Sprite, 10> portrait;                // GAMEF0..9: the pilot's face while a voice line plays (52x48)
   std::array<Sprite, 10> pos;                     // POS0..9: rank digits
   Sprite nsight, tsight[2], turbo, consExt;       // crosshair, lock markers (flashing), turbo indicator, bar of the external views
   Sprite consTop[2], consBottom[2];               // CON<ship>_TN1/2, CON<ship>_BN1/2 (frame 2 = dark piece)
@@ -53,6 +54,8 @@ struct HudState {
   bool lockVisible = false;     // lock marker on screen
   double lockX = 0, lockY = 0;  // virtual 320x200 coordinates of the target
   double time = 0;              // seconds, drives the lock marker flicker
+  int portraitPilot = 0;        // 1..10: pilot speaking (0x53061), 0 none
+  std::string portraitText;     // pilot's current rank, or "FINISHED" (0x58C42..0x58C6F)
   int centerX = HudLayout::cx, centerY = HudLayout::cy;  // projection centre incl. the hit shake
 };
 

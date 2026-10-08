@@ -1,4 +1,4 @@
-# Project status (updated 2026-10-07)
+# Project status (updated 2026-10-08)
 
 ## WORKING
 * **Native macOS app (arm64, SDL3)**: `build/bin/slipstream`, bundle `dist/Slipstream.app` via `scripts/package_macos.sh`. Software renderer, ~120+ fps at 960×540.
@@ -57,8 +57,16 @@ A window/input/loop ✅ · B display original asset ✅ · C free-camera track v
 
 ## HUD and pause menu (this phase; docs/hud.md)
 * DONE: the original's cockpit console (CON<ship>_TN/BN, dark frame by piece light) and the external-view bar, frame, 3D window and hit shake, speed / position / lap time / lap / messages / damage bars / weapon and turbo panels / sights, `.FNT` and `.ST*` parsers, UI palette 248..255, pause menu with the original's texts (Esc no longer quits a race).
-* OPEN: pilot portraits with the voice cues, two-player layout, the original's camera keys F1..F5, the menu zone engine (the pause menu is the port's own layout).
+* DONE: talking pilot portraits (GAMEF faces with rank / FINISHED while a pilot's line plays).
+* OPEN: two-player layout, the original's camera keys F1..F5, the menu zone engine (the pause menu is the port's own layout).
 
 
 ## Pit lane (this phase; docs/simulation.md "Pit lane / refuel")
 * DONE: refuel piece found on all ten tracks (material ids, not indices), repair 25 points/s and booster refill, PITSLP loop, AI pit decision one node before the split and the branch-flag target rule, per-piece lighting and the flickering pit lights. OPEN: ships are not darkened by the piece light, the lighting of textured polygons.
+
+
+## Multiplayer (this phase; docs/multiplayer.md)
+* DONE: peer-to-peer TCP mesh for up to 10 humans on one subnet (UDP broadcast discovery + manual address), lobby and menu (F10, `--host` / `--join`), owner-simulated ships with 30 Hz snapshots and interpolation, host-flown AI fill, projectile / hit / pickup relay, synchronised start, lap / finish / race-end agreement, leave handling (AI takes over), headless multi-process test `tools/net_race_test.sh`, `net_tests`.
+* DESIGN ONLY (not original behaviour): the protocol; the original's network code was not ported.
+* DONE: Tab player list (place, name, lap, ping), host migration (lowest remaining id takes over; `KILLHOST=1 tools/net_race_test.sh`).
+* OPEN: return to lobby after a race, names above ships, internet matchmaking (the `ITransport` / `IDiscovery` seams are in place), two-machine test.

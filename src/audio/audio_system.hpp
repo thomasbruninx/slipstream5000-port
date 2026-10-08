@@ -71,6 +71,8 @@ class AudioSystem {
   const std::string& cueSample(int cue) const;  // "EF93.SMP" ("" when out of range)
   int cueSpeaker(int cue) const;                // pilot number 1..10 of the line (entry +0x18), 0 = announcer
   bool cueBusy() const { return cueVoice_ && mixer_.active(cueVoice_); }
+  // Pilot (1..10) whose line is playing right now, 0 for the announcer or silence (GetSpeaker 0x53061: [0x52EF4], cleared when the sample ends).
+  int currentSpeaker() const { return cueBusy() ? cueSpeakerNow_ : 0; }
 
   // --- music ---
   bool playMusic(const std::string& hmpName, bool loop = true);
@@ -102,7 +104,7 @@ class AudioSystem {
   std::string speech_[2][11];
   struct Cue { std::string name; int speaker = 0; };
   std::vector<Cue> cues_;
-  int cueVoice_ = 0;
+  int cueVoice_ = 0, cueSpeakerNow_ = 0;
   int cueHistory_[4] = {-1, -1, -1, -1};
   int ambientId_ = 0, ambientVoice_ = 0;
   float ambientVol_ = 0;

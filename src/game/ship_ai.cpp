@@ -264,25 +264,31 @@ void updateRace(RaceContext& ctx) {
   const size_t n = ctx.ships.size();
   std::vector<double> remain(n, 0);
   std::vector<AiState*> recs;
+  auto flag = [](const std::vector<bool>& v, size_t i) { return v.size() > i && v[i]; };
+  if (ctx.multiplayer) {  // the finishing rank counts every finisher, whichever peer simulates it
+    st.finishedCount = 0;
+    for (size_t i = 0; i < n; ++i) if (!flag(ctx.absent, i) && ctx.state[i]->finished && !ctx.state[i]->projected) ++st.finishedCount;
+  }
   for (size_t i = 0; i < n; ++i) {
     ShipState& s = *ctx.ships[i];
     AiState& a = *ctx.state[i];
     recs.push_back(&a);
-    const int prevNode = a.node;
+    if (flag(ctx.absent, i)) { remain[i] = 1e12; a.rank = int(i) + 1; continue; }
     const int node = targetNode(*ctx.scene, s, a);
-    (void)prevNode;
-    if (ctx.running) {  // 0x5A542: clocks only run after the countdown; the race clock stops at the finish
-      if (!a.finished) { a.raceTime += ctx.dt; a.lapTime += ctx.dt; }
-    }
-    const int np_ = s.wrecked ? a.piece : stepPiece(*ctx.scene, s, a.piece);
-    if (np_ != a.piece) {
-      const int old = a.piece;
-      a.piece = np_;
-      if (old >= 0) {
-        const LapEvent ev = lapCrossing(a, old, np_, t.lapPieceA, t.lapPieceB, ctx.totalLaps, st.finishedCount);
-        if (ev == LapEvent::Started) st.events.push_back({int(i), 0});
-        else if (ev == LapEvent::Lap) st.events.push_back({int(i), 1});
-        else if (ev == LapEvent::Finished) { ++st.finishedCount; st.events.push_back({int(i), 1}); st.events.push_back({int(i), 2}); }
+    if (!flag(ctx.remote, i)) {
+      if (ctx.running) {  // 0x5A542: clocks only run after the countdown; the race clock stops at the finish
+        if (!a.finished) { a.raceTime += ctx.dt; a.lapTime += ctx.dt; }
+      }
+      const int np_ = s.wrecked ? a.piece : stepPiece(*ctx.scene, s, a.piece);
+      if (np_ != a.piece) {
+        const int old = a.piece;
+        a.piece = np_;
+        if (old >= 0) {
+          const LapEvent ev = lapCrossing(a, old, np_, t.lapPieceA, t.lapPieceB, ctx.totalLaps, st.finishedCount);
+          if (ev == LapEvent::Started) st.events.push_back({int(i), 0});
+          else if (ev == LapEvent::Lap) st.events.push_back({int(i), 1});
+          else if (ev == LapEvent::Finished) { ++st.finishedCount; st.events.push_back({int(i), 1}); st.events.push_back({int(i), 2}); }
+        }
       }
     }
     a.progress = ctx.race->lapDist[size_t(node)] - estv(np(t, node, 0) - s.x, np(t, node, 1) - s.y, np(t, node, 2) - s.z);
@@ -292,30 +298,37 @@ void updateRace(RaceContext& ctx) {
   st.prevBestAiRank = st.bestAiRank;
   assignRanks(recs, remain);
   int best = 10;
-  for (size_t i = 0; i < n; ++i) if (!recs[i]->human) best = std::min(best, recs[i]->rank);  // 0x50446
+  for (size_t i = 0; i < n; ++i) if (!recs[i]->human && !flag(ctx.absent, i)) best = std::min(best, recs[i]->rank);  // 0x50446
   st.bestAiRank = best;
   for (size_t i = 0; i < n; ++i) {  // 0x50BB4..0x50BE0: the human took the place of the best AI ship
     AiState& a = *recs[i];
-    if (a.human && a.rank != a.prevRank && st.bestAiRank != st.prevBestAiRank && a.rank == st.prevBestAiRank && a.rank < st.bestAiRank) st.events.push_back({int(i), 3});
+    if (a.human && !flag(ctx.remote, i) && a.rank != a.prevRank && st.bestAiRank != st.prevBestAiRank && a.rank == st.prevBestAiRank && a.rank < st.bestAiRank) st.events.push_back({int(i), 3});
   }
   // race end (0x5A74F..0x5A793): five seconds after the second AI ship finished, or when no AI ship is left racing
+  // (multiplayer: after the second finisher of any kind, or when everybody is done; only the host decides)
   int aiDone = 0, aiRacing = 0;
-  for (size_t i = 0; i < n; ++i) if (!recs[i]->human) { if (recs[i]->finished) ++aiDone; else ++aiRacing; }
-  if (st.endTimer < 0 && !st.over && (aiDone >= 2 || (aiRacing == 0 && n > 0))) st.endTimer = 5.0;
-  if (st.endTimer >= 0 && ctx.running) {
+  for (size_t i = 0; i < n; ++i) {
+    if (flag(ctx.absent, i)) continue;
+    if (ctx.multiplayer || !recs[i]->human) { if (recs[i]->finished) ++aiDone; else ++aiRacing; }
+  }
+  const bool deciding = !ctx.multiplayer || ctx.authoritativeEnd;
+  if (deciding && st.endTimer < 0 && !st.over && (aiDone >= 2 || (aiRacing == 0 && n > 0) || (ctx.multiplayer && aiDone >= 1 && aiRacing == 0))) st.endTimer = 5.0;
+  bool ended = false;
+  if (deciding && st.endTimer >= 0 && ctx.running) {
     st.endTimer -= ctx.dt;
-    if (st.endTimer < 0) {
-      st.over = true;
-      // 0x5A461: ships still racing get a projected finish clock: time left in the lap at the lap estimate (90 s per lap) plus the full laps to go
-      const double lap = ctx.tables ? ctx.tables->lapEstimateMs[std::clamp(ctx.scene->trackIndex, 1, 10)] / 1000.0 : 90.0;
-      for (size_t i = 0; i < n; ++i) {
-        AiState& a = *recs[i];
-        if (a.finished) continue;
-        a.finishTime = a.raceTime + remain[i] / std::max(1.0, ctx.race->lapLength) * lap + std::max(0, ctx.totalLaps - a.laps) * lap;
-        a.projected = true;
-        a.finished = true;
-        a.finishRank = a.rank;
-      }
+    if (st.endTimer < 0) { st.over = true; ended = true; }
+  }
+  if (st.over && !st.settled && (ended || ctx.multiplayer)) {
+    st.settled = true;
+    // 0x5A461: ships still racing get a projected finish clock: time left in the lap at the lap estimate (90 s per lap) plus the full laps to go
+    const double lap = ctx.tables ? ctx.tables->lapEstimateMs[std::clamp(ctx.scene->trackIndex, 1, 10)] / 1000.0 : 90.0;
+    for (size_t i = 0; i < n; ++i) {
+      AiState& a = *recs[i];
+      if (a.finished || flag(ctx.absent, i)) continue;
+      a.finishTime = a.raceTime + remain[i] / std::max(1.0, ctx.race->lapLength) * lap + std::max(0, ctx.totalLaps - a.laps) * lap;
+      a.projected = true;
+      a.finished = true;
+      a.finishRank = a.rank;
     }
   }
 }

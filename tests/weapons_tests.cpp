@@ -206,6 +206,31 @@ int main() {
     NEAR(r.b.damageA, 0, 1e-9);
     CHECK(r.b.reverseTime > 3.5);
   }
+  {  // multiplayer: a ship simulated by another peer is no victim here, launches / hits are logged for the relay, remote copies fly and die by id
+    Rig r;
+    r.ctx.remote = {false, true};  // ship 1 belongs to another peer
+    r.w.combat[0].energy[0] = 1;
+    r.ctx.controls[0].fire = true;
+    r.run(0.05);
+    CHECK(r.w.launched.size() == 2 && r.w.launched[0].first && !r.w.launched[1].first && r.w.launched[0].id != r.w.launched[1].id);
+    r.ctx.controls[0].fire = false;
+    r.run(3.0);
+    CHECK(r.b.damageA == 0 && r.b.damageB == 0 && r.w.hitLog.empty());  // flew through the remote ship: its owner resolves the hit
+    CHECK(!r.w.projectiles.empty());
+    const uint32_t id = r.w.launched[0].id;
+    const double hp[3] = {0, 0, 200000};
+    r.w.remoteHit(r.ctx, id, 1, hp);
+    bool gone = true;
+    for (const Projectile& p : r.w.projectiles) if (p.id == id && p.alive) gone = false;
+    CHECK(gone && r.w.combat[0].hitsDealt == 1);
+    // a copy of a projectile launched elsewhere hits the local ship and is reported
+    Projectile p;
+    p.kind = kBlaster; p.owner = 1; p.id = (1u << 24) | 5; p.pos[0] = 0; p.pos[1] = 0; p.pos[2] = 30000; p.m[6] = 0; p.m[7] = 0; p.m[8] = -1; p.speed = 400000; p.life = 5; p.first = true;
+    r.w.projectiles.clear(); r.w.hitLog.clear();
+    r.w.spawnRemote(p);
+    r.run(0.5);
+    CHECK(r.w.hitLog.size() == 1 && r.w.hitLog[0].victim == 0 && r.a.damageA > 0);
+  }
   std::printf(failures ? "weapons: %d failure(s)\n" : "weapons ok\n", failures);
   return failures ? 1 : 0;
 }
