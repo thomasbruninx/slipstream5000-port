@@ -14,6 +14,7 @@ add_library(slipstream_core STATIC
   src/original_formats/game_data.cpp
   src/original_formats/formats.cpp
   src/original_formats/audio.cpp
+  src/original_formats/gdv.cpp
   src/original_formats/track.cpp
   src/game/scene.cpp
   src/game/ship_params.cpp
@@ -24,7 +25,9 @@ add_library(slipstream_core STATIC
   src/game/ship_ai.cpp
   src/game/weapons.cpp
   src/game/hud.cpp
-  src/game/pause_menu.cpp)
+  src/game/pause_menu.cpp
+  src/game/globe.cpp
+  src/game/frontend.cpp)
 target_include_directories(slipstream_core PUBLIC src)
 target_compile_options(slipstream_core PRIVATE -Wall -Wextra)
 
@@ -90,6 +93,10 @@ add_test(NAME weapons_tests COMMAND slipstream_weapons_tests)
 add_executable(slipstream_net_tests tests/net_tests.cpp)
 target_link_libraries(slipstream_net_tests PRIVATE slipstream_net)
 add_test(NAME net_tests COMMAND slipstream_net_tests)
+
+add_executable(slipstream_gdv_tests tests/gdv_tests.cpp)
+target_link_libraries(slipstream_gdv_tests PRIVATE slipstream_core)
+add_test(NAME gdv_tests COMMAND slipstream_gdv_tests)
 
 add_executable(slipstream_audio_tests tests/audio_tests.cpp)
 target_link_libraries(slipstream_audio_tests PRIVATE slipstream_audio slipstream_core)

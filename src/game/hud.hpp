@@ -83,6 +83,10 @@ struct HudCanvas {
   void blitScaled(const Sprite& s, int x, int y, int tw, int th, int transparent) const;
   void text(const Font& f, const std::string& s, int x, int y, int palIndex) const;  // x left
   void textCentered(const Font& f, const std::string& s, int x0, int x1, int y, int palIndex) const;
+  // Colour fonts (MENUFONT, CNFFONT, ...): the glyph bytes are palette indices of the screen's palette, drawn as they are (the original passes colour -1 to its
+  // text routine 0x29DF4 -> 0x32A14); mono fonts use `text` with an explicit colour (0x32B94).
+  void textDirect(const Font& f, const std::string& s, int x, int y) const;
+  void textDirectCentered(const Font& f, const std::string& s, int x0, int x1, int y) const;
   void darken(int x0, int y0, int x1, int y1, int percent) const;
   void pixel(int x, int y, int palIndex, int cx0, int cy0, int cx1, int cy1) const;  // one virtual pixel, clipped to the rectangle
   void line(int x0, int y0, int x1, int y1, int palIndex, int cx0, int cy0, int cx1, int cy1) const;  // 1 px Bresenham line in virtual coordinates

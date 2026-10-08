@@ -39,6 +39,8 @@ static void usage() {
       "  --difficulty N      0..2 (default: the setting of SLIPSTRM.CFG, normally 1): AI speed tables, blaster damage\n"
       "  --no-pickups        no bonus objects      --no-ai-weapons   the AI ships do not shoot      --no-voices   no pilot/announcer lines\n"
       "  --no-music          no music      --no-sfx   no sound effects     --no-audio   no sound at all\n"
+      "  --viewer            start in the track viewer instead of the front end (menus); implied by --track / --drive / --models / --sprites / --host / --join\n"
+      "  --skip-intro        no logos / intro movie\n"
       "  --host              multiplayer: host a game on the local network (up to 10 players, AI ships fill the empty seats)\n"
       "  --join HOST[:PORT]  multiplayer: join a game (F10 opens the multiplayer menu: host / browse LAN games / join by address)\n"
       "  --name NAME         player name (default: user name)      --port N   TCP port (default 51500)\n"
@@ -70,7 +72,9 @@ int main(int argc, char** argv) {
   AppOptions opt;
   std::string screenshot;
   int bench = 0;
-  double simSeconds = 0, netRun = 0;
+  double simSeconds = 0, netRun = 0, frontSim = 0;
+  bool viewer = false, frontForced = false;
+  std::string frontKeys;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     auto next = [&](const char* name) -> const char* {
@@ -79,10 +83,15 @@ int main(int argc, char** argv) {
     };
     auto optional = [&]() -> std::string { return (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : ""; };
     if (a == "--data") opt.dataDir = next("--data");
-    else if (a == "--track") opt.track = std::atoi(next("--track"));
-    else if (a == "--models") { opt.mode = AppMode::Model; opt.shape = optional(); }
-    else if (a == "--sprites") { opt.mode = AppMode::Sprite; opt.sprite = optional(); }
-    else if (a == "--drive") opt.drive = true;
+    else if (a == "--track") { viewer = true; opt.track = std::atoi(next("--track")); }
+    else if (a == "--models") { viewer = true; opt.mode = AppMode::Model; opt.shape = optional(); }
+    else if (a == "--sprites") { viewer = true; opt.mode = AppMode::Sprite; opt.sprite = optional(); }
+    else if (a == "--drive") { opt.drive = true; viewer = true; }
+    else if (a == "--viewer") viewer = true;
+    else if (a == "--front") frontForced = true;
+    else if (a == "--skip-intro") opt.skipIntro = true;
+    else if (a == "--front-sim") frontSim = std::atof(next("--front-sim"));
+    else if (a == "--front-keys") frontKeys = next("--front-keys");
     else if (a == "--host") opt.netRole = "host";
     else if (a == "--join") {
       opt.netRole = "join";
@@ -127,6 +136,7 @@ int main(int argc, char** argv) {
   }
 
   if (!screenshot.empty() && simSeconds > 0) opt.countdown = false;
+  if (opt.netRole.empty() && !viewer && (frontForced || (screenshot.empty() && bench == 0 && netRun <= 0))) opt.front = true;
   if (!screenshot.empty() || bench > 0 || netRun > 0) opt.audio.openDevice = false;  // headless runs stay silent (no device, nothing rendered)
   ViewerApp app;
   std::string err;
@@ -164,6 +174,18 @@ int main(int argc, char** argv) {
     for (int i = 0; i < bench; ++i) { app.update(1.0 / 60.0, InputState{}); app.render(); }
     double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     std::printf("%d frames at %dx%d: %.1f ms/frame (%.0f fps)\n", bench, opt.width, opt.height, 1000.0 * sec / bench, bench / sec);
+    return 0;
+  }
+  if (!screenshot.empty() && app.frontActive()) {  // headless front end: --front-sim SEC, --front-keys "dds." (u d l r s=select b=back .=0.5 s)
+    for (double t = 0; t < frontSim; t += 1.0 / 60.0) app.update(1.0 / 60.0, InputState{});
+    for (char k : frontKeys) {
+      if (k == '.') { for (int i = 0; i < 30; ++i) app.update(1.0 / 60.0, InputState{}); continue; }
+      app.frontKey(k == 'u' ? PauseMenu::Key::Up : k == 'd' ? PauseMenu::Key::Down : k == 'l' ? PauseMenu::Key::Left : k == 'r' ? PauseMenu::Key::Right : k == 'b' ? PauseMenu::Key::Back : PauseMenu::Key::Select);
+      app.update(1.0 / 60.0, InputState{});
+    }
+    app.render();
+    if (!writePPM(screenshot, app.renderer())) { std::fprintf(stderr, "cannot write %s\n", screenshot.c_str()); return 1; }
+    std::printf("wrote %s\n", screenshot.c_str());
     return 0;
   }
   if (!screenshot.empty()) {  // headless
@@ -220,7 +242,10 @@ int main(int argc, char** argv) {
     while (SDL_PollEvent(&e)) {
       switch (e.type) {
         case SDL_EVENT_QUIT: running = false; break;
-        case SDL_EVENT_MOUSE_MOTION: mouseDX += e.motion.xrel; mouseDY += e.motion.yrel; break;
+        case SDL_EVENT_MOUSE_MOTION:
+          mouseDX += e.motion.xrel; mouseDY += e.motion.yrel;
+          if (app.frontActive()) { int ww = 1, wh = 1; SDL_GetWindowSize(window, &ww, &wh); app.frontMouse(e.motion.x / ww, e.motion.y / wh, false); }
+          break;
         case SDL_EVENT_GAMEPAD_ADDED:
           if (!pad) pad = SDL_OpenGamepad(e.gdevice.which);
           break;
@@ -245,10 +270,26 @@ int main(int argc, char** argv) {
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) app.nextItem(-1);
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) running = false;
           break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+          if (app.frontActive() && e.button.button == SDL_BUTTON_LEFT) { int ww = 1, wh = 1; SDL_GetWindowSize(window, &ww, &wh); app.frontMouse(e.button.x / ww, e.button.y / wh, true); }
+          break;
         case SDL_EVENT_TEXT_INPUT:
           if (app.netUiOpen()) app.netText(e.text.text);
           break;
         case SDL_EVENT_KEY_DOWN:
+          if (app.frontActive()) {  // menus
+            if (e.key.repeat && e.key.key != SDLK_LEFT && e.key.key != SDLK_RIGHT && e.key.key != SDLK_UP && e.key.key != SDLK_DOWN) break;
+            switch (e.key.key) {
+              case SDLK_UP: case SDLK_W: app.frontKey(PauseMenu::Key::Up); break;
+              case SDLK_DOWN: case SDLK_S: app.frontKey(PauseMenu::Key::Down); break;
+              case SDLK_LEFT: case SDLK_A: app.frontKey(PauseMenu::Key::Left); break;
+              case SDLK_RIGHT: case SDLK_D: app.frontKey(PauseMenu::Key::Right); break;
+              case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: app.frontKey(PauseMenu::Key::Select); break;
+              case SDLK_ESCAPE: app.frontKey(PauseMenu::Key::Back); break;
+              default: break;
+            }
+            break;
+          }
           if (app.netUiOpen()) {  // multiplayer menu
             switch (e.key.key) {
               case SDLK_UP: app.netKey(PauseMenu::Key::Up); break;
@@ -312,6 +353,11 @@ int main(int argc, char** argv) {
       }
     }
     if (app.wantsQuit()) running = false;
+    {
+      static bool relative = true;
+      const bool wantRelative = !app.frontActive();
+      if (wantRelative != relative) { SDL_SetWindowRelativeMouseMode(window, wantRelative); relative = wantRelative; }
+    }
     uint64_t now = SDL_GetPerformanceCounter();
     double dt = std::min(0.1, double(now - last) / freq);
     last = now;

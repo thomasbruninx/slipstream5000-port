@@ -74,6 +74,11 @@ class AudioSystem {
   // Pilot (1..10) whose line is playing right now, 0 for the announcer or silence (GetSpeaker 0x53061: [0x52EF4], cleared when the sample ends).
   int currentSpeaker() const { return cueBusy() ? cueSpeakerNow_ : 0; }
 
+  // Arbitrary PCM (the sound track of a movie): returns a voice id, 0 when audio is off.
+  int playPcm(std::shared_ptr<const SoundSample> s, float gain = 1.0f) { return enabled_ ? mixer_.play(std::move(s), gain) : 0; }
+  void stopVoice(int voice) { if (voice) mixer_.stop(voice); }
+  bool voiceActive(int voice) const { return voice && mixer_.active(voice); }
+
   // --- music ---
   bool playMusic(const std::string& hmpName, bool loop = true);
   void stopMusic();

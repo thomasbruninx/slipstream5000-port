@@ -134,6 +134,19 @@ void HudCanvas::text(const Font& f, const std::string& str, int x, int y, int pa
   }
 }
 
+void HudCanvas::textDirect(const Font& f, const std::string& str, int x, int y) const {
+  int pen = x;
+  for (unsigned char ch : str) {
+    if (const uint8_t* bm = f.bitmap(ch))
+      for (int gy = 0; gy < f.height; ++gy)
+        for (int gx = 0; gx < f.cellW; ++gx)
+          if (const uint8_t v = bm[gy * f.cellW + gx]) fill(pen + gx, y + gy, pen + gx, y + gy, argb(pal->rgba[v]));
+    pen += f.advance(ch);
+  }
+}
+
+void HudCanvas::textDirectCentered(const Font& f, const std::string& str, int x0, int x1, int y) const { textDirect(f, str, x0 + (x1 - x0 + 1 - f.textWidth(str)) / 2, y); }
+
 void HudCanvas::textCentered(const Font& f, const std::string& str, int x0, int x1, int y, int palIndex) const {
   text(f, str, x0 + (x1 - x0 + 1 - f.textWidth(str)) / 2, y, palIndex);
 }

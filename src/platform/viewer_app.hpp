@@ -12,6 +12,7 @@
 #include "game/ship_ai.hpp"
 #include "game/ship_sim.hpp"
 #include "game/weapons.hpp"
+#include "game/frontend.hpp"
 #include "game/hud.hpp"
 #include "game/netplay.hpp"
 #include "game/pause_menu.hpp"
@@ -55,6 +56,8 @@ struct AppOptions {
   int netPort = 51500;              // --port (host: TCP listen port; join: the host's port)
   std::string netName;              // --name (default: the user name)
   int netPlayers = 0;               // --players N: the host starts the race as soon as N humans are in the lobby (0 = start from the menu)
+  bool front = false;               // start in the front end (logo, intro, main menu ...) instead of the track viewer
+  bool skipIntro = false;           // --skip-intro: straight to the main menu
   bool netHeadless = false;         // --net-run: no window; joiners ready up by themselves, the process ends after the race
 };
 
@@ -95,6 +98,11 @@ class ViewerApp {
   void netBackspace();
   std::string netSummary() const;  // one line per ship: owner, laps, finish (used by the headless test driver)
   void toggleHud() { hudOn_ = !hudOn_; }
+  // front end (menus): keys / mouse are routed here while it is active
+  bool frontActive() const { return frontActive_; }
+  void frontKey(PauseMenu::Key k);
+  void frontMouse(double nx, double ny, bool click);  // window position 0..1
+  FrontEnd* frontEnd() { return front_.get(); }
   void toggleMap() { settings_.trackMap = !settings_.trackMap; }
   bool hudActive() const { return hudOn_ && driving_ && mode_ == AppMode::Track && hudAssets_.loaded; }
   void toggleAssist() { simCfg_.assist = !simCfg_.assist; }
@@ -121,6 +129,14 @@ class ViewerApp {
   int track_ = 1;
   bool driving_ = false;
   ShipState player_;
+  std::unique_ptr<FrontEnd> front_;
+  bool frontActive_ = false;
+  void startRaceFromFront(const RaceSetup& s);
+  void returnToFront();
+  void showResultsScreen();
+  double resultsTimer_ = 0;
+  bool netFromFront_ = false;
+  void renderFront();
   // multiplayer state
   enum class NetUi { None, Main, Browse, Address, Lobby };
   std::unique_ptr<net::Session> session_;

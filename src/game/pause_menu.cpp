@@ -99,25 +99,23 @@ PauseMenu::Action PauseMenu::key(Key k, GameSettings* s) {
   return Action::None;
 }
 
+// The original's pause popup (0x5A34C / 0x5A3CB): four bevelled buttons directly over the frozen race at x 101..220, y 46..60 / 64..78 / 83..96 / 100..114
+// (table 0x5401C), light edges 0x1C (top, left) and dark 0x0C (bottom, right), fill 0x14 (0xFD for the selected one), the PAUSED.ST0 text in the
+// default font SMALL.FNT, colour 0xFF, centred. The configuration pages are the port's own (the original opens a full screen menu), drawn the same way.
 void PauseMenu::draw(const HudCanvas& c, const HudAssets& a, const GameSettings& s) const {
   if (!open_) return;
-  c.darken(0, 0, 319, 199, 55);
   const auto list = items(s);
-  const Font& f = a.menu.height > 0 ? a.menu : a.time;
-  const int rowH = f.height + 5;
-  const int boxH = int(list.size()) * rowH + f.height + 22;
-  int boxW = f.textWidth(title());
-  for (const auto& it : list) boxW = std::max(boxW, f.textWidth(it));
-  boxW += 40;
-  const int x0 = 160 - boxW / 2, y0 = 100 - boxH / 2;
-  c.fillIndex(x0 - 2, y0 - 2, x0 + boxW + 1, y0 + boxH + 1, 7);   // frame colour of the HUD borders
-  c.fillIndex(x0, y0, x0 + boxW - 1, y0 + boxH - 1, 0);
-  c.textCentered(f, title(), x0, x0 + boxW - 1, y0 + 6, 0xFE);
-  int y = y0 + 6 + f.height + 10;
-  for (size_t i = 0; i < list.size(); ++i, y += rowH) {
+  const Font& f = a.small.height > 0 ? a.small : a.time;
+  const int x0 = 101, x1 = 220, pitch = 18, h = 15;
+  const int y0 = list.size() > 5 ? 34 : 46;
+  for (size_t i = 0; i < list.size(); ++i) {
+    static const int kY[4] = {46, 64, 83, 100};  // table 0x5401C
+    const int y = list.size() <= 4 ? kY[i] : y0 + int(i) * pitch;
     const bool sel = int(i) == sel_;
-    if (sel) c.fillIndex(x0 + 6, y - 2, x0 + boxW - 7, y + f.height + 1, 0x33);
-    c.textCentered(f, list[i], x0, x0 + boxW - 1, y, sel ? 0xFF : 0xFB);
+    c.fillIndex(x0, y, x1, y + h - 1, sel ? 0xFD : 0x14);
+    c.fillIndex(x0, y, x1, y, 0x1C); c.fillIndex(x0, y, x0, y + h - 1, 0x1C);
+    c.fillIndex(x0, y + h - 1, x1, y + h - 1, 0x0C); c.fillIndex(x1, y, x1, y + h - 1, 0x0C);
+    c.textCentered(f, list[i], x0, x1, y + (h - f.height) / 2 + 1, 0xFF);
   }
 }
 

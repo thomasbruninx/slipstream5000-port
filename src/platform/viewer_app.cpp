@@ -74,6 +74,15 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
     loadSprite(spriteIdx_);
   }
   netInit();
+  if (opt.front && mode_ == AppMode::Track) {
+    front_ = std::make_unique<FrontEnd>();
+    if (front_->init(*data_, &audio_)) {
+      front_->setDefaults(track_, opt_.laps, opt.weapons == "default" ? Loadout{} : playerLoadout_);
+      front_->setEconomy(&weaponTable_, aiTables_.difficulty, 5000);
+      front_->start(opt.skipIntro);
+      frontActive_ = true;
+    } else front_.reset();
+  }
   if (opt.haveCam) {
     cam_.pos[0] = opt.cam[0]; cam_.pos[1] = opt.cam[1]; cam_.pos[2] = opt.cam[2];
     cam_.yaw = opt.camYaw; cam_.pitch = opt.camPitch;
@@ -354,6 +363,7 @@ void ViewerApp::toggleDrive() {
     raceStatus_ = RaceStatus{};
     startPhase_ = 15.0;
     raceOverHandled_ = false;
+    resultsTimer_ = 0;
     setupCombat();
   } else {
     countdown_ = 0;
@@ -365,6 +375,15 @@ void ViewerApp::toggleDrive() {
 }
 
 void ViewerApp::update(double dt, const InputState& in0) {
+  if (frontActive_) {
+    front_->update(dt);
+    if (front_->wantsQuit()) quit_ = true;
+    RaceSetup rs;
+    if (front_->takeRace(&rs)) startRaceFromFront(rs);
+    else if (front_->takeNetRequest()) { frontActive_ = false; netFromFront_ = true; openNetMenu(); }
+    return;
+  }
+  if (netFromFront_ && front_ && !netUiOpen() && !session_ && !driving_) { netFromFront_ = false; returnToFront(); return; }
   if (session_) updateNet(dt);
   showList_ = in0.showList;
   const InputState in = ((netplay_ && pause_.isOpen()) || (netUi_ != NetUi::None && !driving_)) ? InputState{} : in0;  // the multiplayer race goes on behind the pause menu
@@ -515,6 +534,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
           if (dmg > prevDamage_ + 1e-9) shakeTimer_ = 0.3;  // 0x440F3: [0x42DBC] = 0x12C ms
           prevDamage_ = dmg;
         }
+        if (front_ && !netplay_ && raceOverHandled_ && (resultsTimer_ += dt) > 8.0) showResultsScreen();
         if (raceStatus_.over && !raceOverHandled_) {  // race over: results (0x5A820): LOSE.HMP below 4th, else WIN.HMP; result line
           raceOverHandled_ = true;
           if (!finished_) { finished_ = true; finishRank_ = me.rank; }
@@ -599,7 +619,75 @@ void ViewerApp::drawSprite() {
   }
 }
 
+void ViewerApp::startRaceFromFront(const RaceSetup& s) {
+  opt_.ship = s.ship;
+  opt_.laps = s.laps;
+  playerLoadout_ = s.loadout;
+  std::string err;
+  if (s.track != track_) loadTrack(s.track, &err);
+  frontActive_ = false;
+  driving_ = false;
+  toggleDrive();
+}
+
+void ViewerApp::showResultsScreen() {
+  RaceResult r;
+  r.track = track_; r.ship = player_.ship;
+  for (int i = 0; i < 10; ++i) {
+    const AiState& a = ai_[size_t(i)];
+    r.place[i] = a.finished ? a.finishRank : a.rank;
+    r.time[i] = a.finished ? a.finishTime : a.raceTime;
+    r.projected[i] = a.projected;
+  }
+  r.bestLap = ai_[size_t(player_.ship)].bestLap;
+  toggleDrive();
+  audio_.stopMusic();
+  front_->showResults(r);
+  frontActive_ = true;
+}
+
+void ViewerApp::returnToFront() {
+  if (!front_) return;
+  audio_.stopMusic();
+  front_->start(true);
+  frontActive_ = true;
+}
+
+void ViewerApp::frontKey(PauseMenu::Key k) {
+  using K = PauseMenu::Key;
+  if (!frontActive_) return;
+  front_->key(k == K::Up ? FrontEnd::Key::Up : k == K::Down ? FrontEnd::Key::Down : k == K::Left ? FrontEnd::Key::Left : k == K::Right ? FrontEnd::Key::Right : k == K::Select ? FrontEnd::Key::Select : FrontEnd::Key::Back);
+}
+
+// Window position (0..1) to the front end's 320x200 screen, shown at 4:3 in the middle of the frame buffer.
+void ViewerApp::frontMouse(double nx, double ny, bool click) {
+  if (!frontActive_) return;
+  const double fw = renderer_.width(), fh = renderer_.height();
+  const double rw = std::min(fw, fh * 4.0 / 3.0), rh = rw * 3.0 / 4.0, dx = (fw - rw) / 2, dy = (fh - rh) / 2;
+  const double vx = (nx * fw - dx) * 320.0 / rw, vy = (ny * fh - dy) * 200.0 / rh;
+  const bool inside = vx >= 0 && vx < 320 && vy >= 0 && vy < 200;
+  if (click) front_->click(inside ? int(vx) : -1, inside ? int(vy) : -1);
+  else front_->mouseMove(inside ? int(vx) : -1, inside ? int(vy) : -1);
+}
+
+void ViewerApp::renderFront() {
+  front_->draw();
+  uint32_t* fb = renderer_.framebuffer();
+  const int fw = renderer_.width(), fh = renderer_.height();
+  std::fill(fb, fb + size_t(fw) * size_t(fh), 0xff000000u);
+  const int rw = std::min(fw, fh * 4 / 3), rh = rw * 3 / 4, dx = (fw - rw) / 2, dy = (fh - rh) / 2;
+  const uint32_t* src = front_->pixels();
+  std::vector<int> cols; cols.resize(size_t(rw));
+  for (int x = 0; x < rw; ++x) cols[size_t(x)] = std::min(319, x * 320 / rw);
+  for (int y = 0; y < rh; ++y) {
+    const uint32_t* row = src + size_t(std::min(199, y * 200 / rh)) * 320;
+    uint32_t* dst = fb + size_t(y + dy) * size_t(fw) + size_t(dx);
+    for (int x = 0; x < rw; ++x) dst[x] = row[cols[size_t(x)]];
+  }
+}
+
 void ViewerApp::render() {
+  if (frontActive_) { renderFront(); return; }
   renderFrame();
   if (netUi_ != NetUi::None && !driving_ && mode_ == AppMode::Track) drawNetUi();
 }
@@ -755,7 +843,7 @@ void ViewerApp::menuKey(PauseMenu::Key k) {
   if (!pause_.isOpen()) return;
   const PauseMenu::Action act = pause_.key(k, &settings_);
   applySettings();
-  if (act == PauseMenu::Action::QuitRace) { if (netplay_) netLeaveRace(); else toggleDrive(); }   // 0x591CE: leave the race
+  if (act == PauseMenu::Action::QuitRace) { if (netplay_) netLeaveRace(); else { toggleDrive(); if (front_) returnToFront(); } }   // 0x591CE: leave the race
   else if (act == PauseMenu::Action::ExitGame) quit_ = true;
 }
 
@@ -1451,7 +1539,7 @@ void ViewerApp::drawNetUi() {
       break;
     }
   }
-  c.textCentered(sm, netUi_ == NetUi::Address ? "Type the address, Enter joins, Esc goes back" : "Up / Down select    Left / Right change    Enter confirm    Esc back", 20, 299, 160, 0xFB);
+  c.textCentered(sm, netUi_ == NetUi::Address ? "Type the address, Enter joins, Esc goes back" : "Up Down select   Left Right change   Enter OK   Esc back", 20, 299, 160, 0xFB);
   if (!netMsg_.empty() && netUi_ != NetUi::Lobby) c.textCentered(sm, netMsg_, 20, 299, 172, 0xFE);
   else if (!netMsg_.empty() && session_ && session_->state() == net::Session::State::Lobby) c.textCentered(sm, netMsg_, 20, 299, 172, 0xFE);
 }

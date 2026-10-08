@@ -72,3 +72,7 @@ A window/input/loop ✅ · B display original asset ✅ · C free-camera track v
 * OPEN: return to lobby after a race, names above ships, internet matchmaking (the `ITransport` / `IDiscovery` seams are in place), two-machine test.
 
 * DONE: track map overlay of the race HUD as in the original (docs/hud.md "Track map"): ortho top-down map centred on the ship, heading up, green node lines, lap-line marker, ship dots; `M` toggles it, default from `SLIPSTRM.CFG`; music toggle is now `Shift+M`.
+
+## Front end (docs/frontend.md)
+* DONE: GDV movie decoder (INTRO / LOGO_S, verified against FFmpeg), logo + intro, main menu, track choice, vehicle parking lot with the ZON hit map, pilot information cards, garage shop (weapons / turbo / systems), race results, best lap records, mouse + keyboard; Two Players opens the network game menu.
+* OPEN: championship, saved games, configuration pages, commentator fly-through (.ANN), animated faces, exact original shop economy.
