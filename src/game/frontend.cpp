@@ -117,7 +117,7 @@ void FrontEnd::go(Screen s) {
   if (voice_ && audio_ && s != Screen::ViewCar) { audio_->stopVoice(voice_); voice_ = 0; }
   if (audio_ && prev == Screen::Info && s != Screen::Info) audio_->stopCue();  // leaving the information screen ends the narration
   // MainMenuDraw (0x4CF09) and the track choice (0x5AD44) play SELECT.SMP when they open and when something is chosen
-  if (s == Screen::Main || s == Screen::OnePlayer || s == Screen::Tracks) playSelect();
+  if (s == Screen::Main || s == Screen::OnePlayer || s == Screen::Multi || s == Screen::Tracks) playSelect();
   screen_ = s;
   t_ = 0;
   sel_ = 0;
@@ -213,7 +213,13 @@ void FrontEnd::buildButtons() {
   };
   switch (screen_) {
     case Screen::Main:
-      for (int i = 1; i <= 6; ++i) add("MAINBT_" + std::to_string(i) + ".SPR", "MAINBTH" + std::to_string(i) + ".SPR", i <= 5 ? str("MAINMENU.ST0", "OPT" + std::to_string(i)) : "Exit Game", i);
+      for (int i = 1; i <= 6; ++i) add("MAINBT_" + std::to_string(i) + ".SPR", "MAINBTH" + std::to_string(i) + ".SPR", i == 1 ? "Singleplayer" : i == 2 ? "Multiplayer" : i <= 5 ? str("MAINMENU.ST0", "OPT" + std::to_string(i)) : "Exit Game", i);  // entry 2 opens the port's network game, so it is not "Two Players"
+      break;
+    case Screen::Multi:
+      add("MAINBT_1.SPR", "MAINBTH1.SPR", "Host Game", 1);
+      add("MAINBT_2.SPR", "MAINBTH2.SPR", "Search LAN", 2);
+      add("MAINBT_3.SPR", "MAINBTH3.SPR", "Direct IP", 3);
+      add("MAINBT_6.SPR", "MAINBTH6.SPR", "Back", 6);
       break;
     case Screen::OnePlayer:
       for (int i = 1; i <= 3; ++i) add("MAINBT_" + std::to_string(i) + ".SPR", "MAINBTH" + std::to_string(i) + ".SPR", str("MAINMENU.ST0", "OP1" + std::to_string(i)), i, i != 3);
@@ -279,6 +285,7 @@ void FrontEnd::key(Key k) {
   switch (screen_) {
     case Screen::Main:
     case Screen::OnePlayer:
+    case Screen::Multi:
     case Screen::Tracks:
       if (k == Key::Up) move(-1);
       else if (k == Key::Down) move(1);
@@ -322,12 +329,15 @@ void FrontEnd::skipIntro() {  // Enter / Esc / click: the next part of the start
 }
 
 void FrontEnd::activate(int id) {
-  if (screen_ == Screen::Main || screen_ == Screen::OnePlayer || screen_ == Screen::Tracks) playSelect();
-  if (screen_ == Screen::Main) {
+  if (screen_ == Screen::Main || screen_ == Screen::OnePlayer || screen_ == Screen::Multi || screen_ == Screen::Tracks) playSelect();
+  if (screen_ == Screen::Multi) {
+    if (id == 6) go(Screen::Main);
+    else net_ = id;
+  } else if (screen_ == Screen::Main) {
     if (id == 1) go(Screen::OnePlayer);
     else if (id == 5) go(Screen::Best);
     else if (id == 6) quit_ = true;
-    else if (id == 2) net_ = true;  // the original's link menu (split screen / serial / modem / network) is replaced by the port's network game
+    else if (id == 2) go(Screen::Multi);  // the original's link menu (split screen / serial / modem / network) is replaced by the port's network game
     else { notice_ = id == 3 ? "Saved games are not available" : "Use the pause menu during a race to configure the game"; go(Screen::Notice); }
   } else if (screen_ == Screen::OnePlayer) {
     if (id == 6) go(Screen::Main);
@@ -345,7 +355,7 @@ void FrontEnd::draw() {
     case Screen::Logo: case Screen::Intro: drawIntro(); break;
     case Screen::Gremlin: drawGremlin(); break;
     case Screen::Credits: drawCredits(); break;
-    case Screen::Main: case Screen::OnePlayer: drawMain(); break;
+    case Screen::Main: case Screen::OnePlayer: case Screen::Multi: drawMain(); break;
     case Screen::Tracks: drawTracks(); break;
     case Screen::Team: drawTeam(); break;
     case Screen::ViewCar: drawViewCar(); break;
@@ -469,7 +479,7 @@ void FrontEnd::drawCredits() {
 }
 
 void FrontEnd::drawMain() {
-  const Sprite* bg = spr(screen_ == Screen::Main || screen_ == Screen::OnePlayer ? "MAINMENU.SPR" : "TITLE.SPR");
+  const Sprite* bg = spr(screen_ == Screen::Main || screen_ == Screen::OnePlayer || screen_ == Screen::Multi ? "MAINMENU.SPR" : "TITLE.SPR");
   if (!bg) return;
   if (bg->palette) usePalette(*bg->palette);
   HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;

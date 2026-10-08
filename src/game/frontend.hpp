@@ -35,7 +35,7 @@ struct RaceSetup {  // what the front end hands to the race
 class FrontEnd {
  public:
   enum class Key { Up, Down, Left, Right, Select, Back };
-  enum class Screen { Logo, Intro, Gremlin, Credits, Main, OnePlayer, Tracks, Team, ViewCar, Info, Garage, Best, Results, Notice };
+  enum class Screen { Logo, Intro, Gremlin, Credits, Main, OnePlayer, Multi, Tracks, Team, ViewCar, Info, Garage, Best, Results, Notice };
 
   bool init(const GameData& data, AudioSystem* audio);
   void start(bool skipMovies);
@@ -48,7 +48,7 @@ class FrontEnd {
   bool wantsQuit() const { return quit_; }
   bool takeRace(RaceSetup* out) { if (!race_) return false; race_ = false; *out = setup_; return true; }
   void showResults(const RaceResult& r);
-  bool takeNetRequest() { const bool r = net_; net_ = false; return r; }  // "Two Players": the application opens its network game menu
+  int takeNetRequest() { const int r = net_; net_ = 0; return r; }  // "Multiplayer" submenu: 1 host, 2 browse LAN games, 3 join by address (the application opens the matching network screen)
   // Pilot information screen (DoViewCar 0x46A94): the 3D craft turning in the middle of the card. The application renders it: ship number, turn angle
   // (radians) and the virtual 320x200 rectangle it may draw into. Returns -1 on every other screen.
   int previewShip(double* angle, int rect[4]) const;
@@ -107,7 +107,7 @@ class FrontEnd {
   std::map<std::string, std::vector<uint8_t>> zones_;
   std::vector<uint32_t> buf_ = std::vector<uint32_t>(320 * 200, 0xff000000u);
   Palette pal_;                  // palette of the current screen (the backdrop's embedded palette)
-  bool net_ = false;
+  int net_ = 0;
   bool ready_ = false, quit_ = false, race_ = false, skipMovies_ = false;
   Screen screen_ = Screen::Logo, back_ = Screen::Main;
   double t_ = 0;                 // seconds in the current screen

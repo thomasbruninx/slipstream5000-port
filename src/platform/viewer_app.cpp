@@ -380,7 +380,12 @@ void ViewerApp::update(double dt, const InputState& in0) {
     if (front_->wantsQuit()) quit_ = true;
     RaceSetup rs;
     if (front_->takeRace(&rs)) startRaceFromFront(rs);
-    else if (front_->takeNetRequest()) { frontActive_ = false; netFromFront_ = true; openNetMenu(); }
+    else if (const int nr = front_->takeNetRequest()) {
+      frontActive_ = false; netFromFront_ = true; openNetMenu();
+      if (nr == 1) netHostGame();
+      else if (nr == 2) { browse_ = net::makeLanDiscovery(net::kDiscoveryPort); browse_->startBrowse(); netUi_ = NetUi::Browse; netSel_ = 0; netMsg_.clear(); }
+      else if (nr == 3) { netUi_ = NetUi::Address; if (netAddr_.empty()) netAddr_ = "192.168.0."; netMsg_.clear(); }
+    }
     return;
   }
   if (netFromFront_ && front_ && !netUiOpen() && !session_ && !driving_) { netFromFront_ = false; returnToFront(); return; }
@@ -1454,7 +1459,7 @@ void ViewerApp::netKey(PauseMenu::Key k) {
       const int n = int(list.size());
       if (k == K::Up && n) netSel_ = (netSel_ + n - 1) % n;
       else if (k == K::Down && n) netSel_ = (netSel_ + 1) % n;
-      else if (k == K::Back) { browse_.reset(); netUi_ = NetUi::Main; netSel_ = 1; }
+      else if (k == K::Back) { browse_.reset(); netUi_ = netFromFront_ ? NetUi::None : NetUi::Main; netSel_ = 1; }
       else if (k == K::Select && n) {
         const net::SessionInfo& si = list[size_t(std::clamp(netSel_, 0, n - 1))];
         const std::string host = si.host;
@@ -1465,7 +1470,7 @@ void ViewerApp::netKey(PauseMenu::Key k) {
       return;
     }
     case NetUi::Address: {
-      if (k == K::Back) { netUi_ = NetUi::Main; netSel_ = 2; }
+      if (k == K::Back) { netUi_ = netFromFront_ ? NetUi::None : NetUi::Main; netSel_ = 2; }
       else if (k == K::Select && !netAddr_.empty()) {
         std::string host = netAddr_;
         int port = opt_.netPort;
@@ -1485,7 +1490,7 @@ void ViewerApp::netKey(PauseMenu::Key k) {
       const int rows = 6;  // track, laps, difficulty, my ship, ready / start, leave
       if (k == K::Up) netSel_ = (netSel_ + rows - 1) % rows;
       else if (k == K::Down) netSel_ = (netSel_ + 1) % rows;
-      else if (k == K::Back) { netLeaveSession(); netUi_ = NetUi::Main; netSel_ = 0; }
+      else if (k == K::Back) { netLeaveSession(); netUi_ = netFromFront_ ? NetUi::None : NetUi::Main; netSel_ = 0; }
       else if (k == K::Left || k == K::Right || k == K::Select) {
         const int d = k == K::Left ? -1 : 1;
         if (netSel_ == 0 && host && k != K::Select) { const int t = (lb.track - 1 + d + 10) % 10 + 1; session_->hostSettings(t, lb.laps, lb.difficulty, lb.aiFill); if (t != track_) { std::string e; loadTrack(t, &e); } }
@@ -1495,7 +1500,7 @@ void ViewerApp::netKey(PauseMenu::Key k) {
         else if (netSel_ == 4 && k == K::Select) {
           if (host) { if (session_->hostCanStart()) session_->hostStart(unsigned(std::rand()) | 1u); else netMsg_ = "Waiting for everybody to be ready"; }
           else session_->setIntent(myShip, !ready);
-        } else if (netSel_ == 5 && k == K::Select) { netLeaveSession(); netUi_ = NetUi::Main; netSel_ = 0; }
+        } else if (netSel_ == 5 && k == K::Select) { netLeaveSession(); netUi_ = netFromFront_ ? NetUi::None : NetUi::Main; netSel_ = 0; }
       }
       return;
     }
@@ -1529,7 +1534,7 @@ void ViewerApp::drawNetUi() {
   switch (netUi_) {
     case NetUi::None: return;
     case NetUi::Main: {
-      static const char* items[4] = {"Host Game", "Join LAN Game", "Join By Address", "Back"};
+      static const char* items[4] = {"Host Game", "Search LAN", "Direct IP", "Back"};
       for (int i = 0; i < 4; ++i) row(y0 + i * rowH, items[i], i == netSel_);
       break;
     }
