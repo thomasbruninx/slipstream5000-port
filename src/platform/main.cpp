@@ -32,6 +32,7 @@ static void usage() {
       "  --soundfont FILE    SoundFont for the MIDI music (default: resources/GeneralUser-GS.sf2, bundled in the app)\n"
       "  --music NAME        play this song (INGAME2/3/4/6, INTRO, WIN, LOSE .HMP) instead of a random race song\n"
       "  --laps N            race length for the finish / result music (default 3)\n"
+      "  --start-bonus       restore the original's 15 s start speed bonus by rank (up to +75 %, off by default)\n"
       "  --no-countdown      skip the 5 s start sequence\n"
       "  --weapons SPEC      player loadout, e.g. seeker:9,scrambler:9,booster:2 (default: the original's cheat loadout; 'none' = blaster only)\n"
       "  --chase             start in the chase camera (V cycles cockpit / close chase / far chase)\n"
@@ -90,6 +91,7 @@ int main(int argc, char** argv) {
     else if (a == "--viewer") viewer = true;
     else if (a == "--front") frontForced = true;
     else if (a == "--skip-intro") opt.skipIntro = true;
+    else if (a == "--start-bonus") opt.startBonus = true;
     else if (a == "--front-sim") frontSim = std::atof(next("--front-sim"));
     else if (a == "--front-keys") frontKeys = next("--front-keys");
     else if (a == "--host") opt.netRole = "host";

@@ -38,6 +38,7 @@ struct AppOptions {
   bool haveCam = false;
   double cam[3] = {0, 0, 0};
   float camYaw = 0, camPitch = 0;
+  bool startBonus = false;  // the original's 15 s start-phase speed bonus by rank (0x50252, up to +75 %); off by default, it makes the leader far too fast
   float shipScale = 1.0f;  // --ship-scale: 1 = the original size
   bool countdown = true;   // 5 s start sequence with announcer and held ships
   int laps = 3;            // race length for the finish (result music, HUD)

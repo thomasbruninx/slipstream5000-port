@@ -447,7 +447,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
         ctx.totalLaps = opt_.laps;
         if (!held) startPhase_ = std::max(0.0, startPhase_ - step);
         for (int i = 0; i < 10; ++i)  // 0x51CC2: speed factor bonus by rank during the first 15 s
-          ctx.ships[size_t(i)]->startBonus = startPhase_ > 0 ? startBonusForRank(ai_[size_t(i)].rank) : 0.0;
+          ctx.ships[size_t(i)]->startBonus = opt_.startBonus && startPhase_ > 0 ? startBonusForRank(ai_[size_t(i)].rank) : 0.0;
         doors_.step(step, all);  // door slots update before the ships move (0x3C00E)
         updateRace(ctx);
         if (netplay_) {
@@ -1229,7 +1229,7 @@ std::vector<std::string> ViewerApp::hudLines() const {
       else if (finished_) { std::snprintf(buf, sizeof buf, "FINISHED - position %d of 10  time %.1f  (autopilot, race ends %s)", finishRank_, me.raceTime, raceStatus_.endTimer >= 0 ? "soon" : "when the others are in"); l.push_back(buf); }
       else {
         std::snprintf(buf, sizeof buf, "%s lap %d/%d  position %d  time %.1f  last %.1f  best %.1f%s", me.laps == opt_.laps ? "FINAL LAP!!" : "", std::max(1, me.laps), opt_.laps, me.rank, me.raceTime, me.lastLap,
-                      me.bestLap, startPhase_ > 0 && countdown_ <= 0 ? "  START BOOST" : "");
+                      me.bestLap, opt_.startBonus && startPhase_ > 0 && countdown_ <= 0 ? "  START BOOST" : "");
         l.push_back(buf);
       }
       l.push_back(combatLine());
