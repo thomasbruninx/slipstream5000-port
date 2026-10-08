@@ -104,7 +104,7 @@ void HudCanvas::line(int x0, int y0, int x1, int y1, int idx, int cx0, int cy0, 
 
 void HudCanvas::blitScaled(const Sprite& s, int x, int y, int tw, int th, int transparent) const {
   if (s.w <= 0 || s.h <= 0) return;
-  const Palette& pl = s.palette ? *s.palette : *pal;
+  const Palette& pl = s.palette && !canvasPalette ? *s.palette : *pal;
   const int px0 = std::max(0, int(std::floor(x * sx()))), px1 = std::min(w, int(std::floor((x + tw) * sx())));
   const int py0 = std::max(0, int(std::floor(y * sy()))), py1 = std::min(h, int(std::floor((y + th) * sy())));
   for (int py = py0; py < py1; ++py) {

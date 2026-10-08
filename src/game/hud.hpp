@@ -75,6 +75,7 @@ struct HudCanvas {
   uint32_t* fb = nullptr;
   int w = 0, h = 0;
   const Palette* pal = nullptr;
+  bool canvasPalette = false;  // draw sprites with `pal` even when they carry a (partial) palette of their own
   double sx() const { return double(w) / 320.0; }
   double sy() const { return double(h) / 200.0; }
   void fill(int x0, int y0, int x1, int y1, uint32_t argb) const;          // virtual rect, inclusive

@@ -38,7 +38,7 @@ struct AppOptions {
   bool haveCam = false;
   double cam[3] = {0, 0, 0};
   float camYaw = 0, camPitch = 0;
-  float shipScale = 2.0f;
+  float shipScale = 1.0f;  // --ship-scale: 1 = the original size
   bool countdown = true;   // 5 s start sequence with announcer and held ships
   int laps = 3;            // race length for the finish (result music, HUD)
   AudioConfig audio;       // --soundfont, --no-audio, --music-volume ...
@@ -137,6 +137,9 @@ class ViewerApp {
   double resultsTimer_ = 0;
   bool netFromFront_ = false;
   void renderFront();
+  std::unique_ptr<Scene> previewScene_;
+  int previewShip_ = -1;
+  void renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh);
   // multiplayer state
   enum class NetUi { None, Main, Browse, Address, Lobby };
   std::unique_ptr<net::Session> session_;

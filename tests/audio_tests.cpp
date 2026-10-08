@@ -112,8 +112,42 @@ int main() {
         CHECK(seg && !seg->loop.empty() && seg->loopStartTick == 2 && seg->loopEndTick == 3595);
         auto in = hmpToSegments(*d->read("INTRO.HMP"));
         CHECK(in && in->loopStartTick == 6748 && in->loopEndTick == 8545);
+        // branch locations (SetMusicPart): 0x3F = the waiting music (the default loop above), 0x35..0x3E = the ten pilots' sections, each with its own loop
+        auto intro = d->read("INTRO.HMP");
+        auto wait = hmpLocationSegments(*intro, 0x3f);
+        CHECK(wait && wait->introStartTick == 6745 && wait->loopStartTick == 6748 && wait->loopEndTick == 8545);
+        for (int id = 0x35; id <= 0x3e; ++id) {
+          auto p = hmpLocationSegments(*intro, id);
+          CHECK(p && p->introStartTick > 6745 && p->loopEndTick > p->loopStartTick && p->loopStartTick >= p->introStartTick);
+        }
+        CHECK(!hmpLocationSegments(*intro, 0x20));
         auto win = hmpToSegments(*d->read("WIN.HMP"));
         CHECK(win && win->loop.empty() && !win->intro.empty());
+      }
+      {  // SetMusicPart: only while INTRO.HMP plays
+        AudioConfig cfg;
+        cfg.openDevice = false;
+        AudioSystem a;
+        a.init(*d, cfg, nullptr);
+        if (a.musicReady()) {
+          CHECK(!a.setMusicPart(3));
+          CHECK(a.playMusic("INTRO.HMP", true) && a.musicPart() == 0);
+          CHECK(a.setMusicPart(3) && a.musicPart() == 3);
+          CHECK(a.setMusicPart(10) && a.setMusicPart(0) && a.musicPart() == 0);
+          a.playMusic("INGAME2.HMP", true);
+          CHECK(!a.setMusicPart(2));
+        }
+      }
+      {  // the pilot narration (DoViewCar: VoiceCue(0..9)): ten long lines, one per pilot
+        AudioConfig cfg;
+        cfg.openDevice = false;
+        AudioSystem a;
+        a.init(*d, cfg, nullptr);
+        for (int i = 0; i < 10; ++i) {
+          const std::string n = a.narrationSample(i);
+          auto b = d->read(n);
+          CHECK(b && double(b->size()) / 11025.0 > 8.0);
+        }
       }
       {  // announcer samples per track exist (lists read from the exe) and every fixed effect sample exists
         AudioConfig cfg;

@@ -91,6 +91,57 @@ struct Builder {
 
 }  // namespace
 
+// The craft as DoViewCar (0x46A94) builds it for the pilot information card: RACER<n>.ART with the materials of VIEW<n>.MAT (not CARS.MAT), drawn in the
+// palette of the card. Only the mesh (index 0 of shipMeshes), the materials and the textures are filled.
+bool buildShipPreview(const GameData& data, int ship, Scene* out, float scale) {
+  auto matBytes = data.read("VIEW" + std::to_string(ship) + ".MAT");
+  auto artBytes = data.read("RACER" + std::to_string(ship) + ".ART");
+  if (!matBytes || !artBytes) return false;
+  auto mats = parseMaterials(*matBytes);
+  auto art = parseArt(*artBytes);
+  if (!mats || !art) return false;
+  *out = Scene{};
+  Builder b{data, *out, *mats, {}};
+  b.buildMaterials();
+  std::vector<Vec3i> acc(art->nodes.size());
+  for (size_t n = 0; n < art->nodes.size(); ++n) {
+    acc[n] = art->nodes[n].offset;
+    const int par = art->nodes[n].parent;
+    if (par >= 0 && size_t(par) < n) { acc[n].x += acc[size_t(par)].x; acc[n].y += acc[size_t(par)].y; acc[n].z += acc[size_t(par)].z; }
+  }
+  Mesh& m = out->shipMeshes[0];
+  for (size_t n = 0; n < art->nodes.size(); ++n) {
+    const ArtNode& node = art->nodes[n];
+    if (node.shapes.empty()) continue;
+    auto bytes = data.read(node.shapes[0]);
+    if (!bytes) continue;
+    auto sh = parseShape(*bytes);
+    if (!sh) continue;
+    for (auto& poly : sh->polys) {
+      std::vector<Vec3> vs;
+      bool bad = false;
+      for (uint16_t k : poly.index) {
+        if (k >= sh->verts.size()) { bad = true; break; }
+        vs.push_back({float(sh->verts[k].x + acc[n].x) * scale, float(sh->verts[k].y + acc[n].y) * scale, float(sh->verts[k].z + acc[n].z) * scale});
+      }
+      if (bad || vs.size() < 3) continue;
+      MeshPoly p;
+      p.first = uint32_t(m.verts.size());
+      p.count = uint16_t(vs.size());
+      p.material = b.globalMaterial(sh->materials, poly.material);
+      p.hasUV = !poly.uv.empty();
+      p.normal = Builder::unitNormal(poly.nx, poly.ny, poly.nz);
+      for (size_t i = 0; i < vs.size(); ++i) {
+        m.verts.push_back(vs[i]);
+        m.uv.push_back(p.hasUV ? poly.uv[i][0] * kFix14 : 0.0f);
+        m.uv.push_back(p.hasUV ? poly.uv[i][1] * kFix14 : 0.0f);
+      }
+      m.polys.push_back(p);
+    }
+  }
+  return !m.polys.empty();
+}
+
 bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* error, float shipScale) {
   auto s = std::make_unique<Scene>();
   s->shipScale = shipScale;

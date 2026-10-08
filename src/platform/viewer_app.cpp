@@ -538,7 +538,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
         if (raceStatus_.over && !raceOverHandled_) {  // race over: results (0x5A820): LOSE.HMP below 4th, else WIN.HMP; result line
           raceOverHandled_ = true;
           if (!finished_) { finished_ = true; finishRank_ = me.rank; }
-          if (!opt_.noMusic) audio_.playMusic(finishRank_ > 3 ? "LOSE.HMP" : "WIN.HMP", false);
+          if (!opt_.noMusic && (!front_ || netplay_)) audio_.playMusic(finishRank_ > 3 ? "LOSE.HMP" : "WIN.HMP", false);  // with the menus the results screen plays it
           if (opt_.voices) audio_.playCue(finishRank_ == 1 ? (std::rand() & 1) : finishRank_ + 1);  // 0x5A9A9..0x5A9CC
         }
       }
@@ -625,6 +625,8 @@ void ViewerApp::startRaceFromFront(const RaceSetup& s) {
   playerLoadout_ = s.loadout;
   std::string err;
   if (s.track != track_) loadTrack(s.track, &err);
+  audio_.stopMusic();  // 0x55E3C: the menu / pilot music ends when the race starts; DoGame3D then plays a race song (0x586F2)
+  playTrackMusic();
   frontActive_ = false;
   driving_ = false;
   toggleDrive();
@@ -684,6 +686,53 @@ void ViewerApp::renderFront() {
     uint32_t* dst = fb + size_t(y + dy) * size_t(fw) + size_t(dx);
     for (int x = 0; x < rw; ++x) dst[x] = row[cols[size_t(x)]];
   }
+  double ang = 0;
+  int rc[4];
+  if (const int ps = front_->previewShip(&ang, rc); ps >= 0) renderShipPreview(ps, ang, rc, dx, dy, rw, rh);
+}
+
+// The craft turning on the pilot information card (DoViewCar 0x46A94): rendered with the card's own palette into the rectangle of the card, over the
+// already composed front end image (pixels the 3D pass leaves at the clear colour keep the card behind them).
+void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh) {
+  if (ship < 0 || ship >= 10) return;
+  if (previewShip_ != ship) {  // the craft with its own VIEW<n>.MAT materials
+    previewScene_ = std::make_unique<Scene>();
+    previewShip_ = buildShipPreview(*data_, ship, previewScene_.get()) ? ship : -2;
+  }
+  if (previewShip_ != ship) return;
+  Scene& sc = *previewScene_;
+  sc.palette = front_->palette();  // the card's palette
+  uint32_t* fb = renderer_.framebuffer();
+  const int fw = renderer_.width(), fh = renderer_.height();
+  const std::vector<uint32_t> keep(fb, fb + size_t(fw) * size_t(fh));
+  const int x0 = dx + rect[0] * rw / 320, y0 = dy + rect[1] * rh / 200, x1 = dx + rect[2] * rw / 320, y1 = dy + rect[3] * rh / 200;
+  const Mesh& mesh = sc.shipMeshes[0];
+  double radius = 1;
+  for (const Vec3& v : mesh.verts) radius = std::max(radius, std::sqrt(double(v.x) * v.x + double(v.y) * v.y + double(v.z) * v.z));
+  const double fov = 0.9, el = 0.42, dist = radius / (0.80 * 2.0 * std::tan(fov / 2.0));
+  Camera cam;
+  cam.pos[0] = dist * std::sin(angle) * std::cos(el); cam.pos[1] = dist * std::sin(el); cam.pos[2] = dist * std::cos(angle) * std::cos(el);
+  cam.yaw = float(std::atan2(-cam.pos[0], -cam.pos[2]));
+  cam.pitch = float(std::asin(-cam.pos[1] / dist));
+  cam.fovY = float(fov);
+  cam.nearPlane = float(radius * 0.2);
+  const uint32_t key = 0xff010203u;
+  const bool cull = renderer_.cullBackfaces, shadows = renderer_.shadows, portals = renderer_.portalCulling;
+  const std::vector<ShadowCaster> casters = std::move(renderer_.shadowCasters);
+  renderer_.shadowCasters.clear();
+  renderer_.cullBackfaces = true; renderer_.shadows = false; renderer_.portalCulling = false; renderer_.visMask = 0xFFFF;
+  renderer_.setViewport(x0, y0, x1, y1, float(x0 + x1 + 1) * 0.5f, float(y0 + y1 + 1) * 0.5f);
+  renderer_.beginFrame(cam, key, key);
+  MeshTransform xf;
+  renderer_.drawMesh(sc, mesh, xf);
+  renderer_.resetViewport();
+  renderer_.cullBackfaces = cull; renderer_.shadows = shadows; renderer_.portalCulling = portals;
+  renderer_.shadowCasters = casters;
+  for (int y = 0; y < fh; ++y)
+    for (int x = 0; x < fw; ++x) {
+      const size_t i = size_t(y) * size_t(fw) + size_t(x);
+      if (x < x0 || x > x1 || y < y0 || y > y1 || fb[i] == key) fb[i] = keep[i];
+    }
 }
 
 void ViewerApp::render() {

@@ -13,7 +13,7 @@
 ## PARTIALLY UNDERSTOOD
 * Track formats: placement (TRD pieces) and geometry (TRC) are right; TRK cells, TRD auxiliary lists and a few unplaced TRC records are not understood.
 * Materials (numeric flags), transparency (index 0 assumed transparent; `Dummy` material = invisible portal polygons (INFERRED); indices 248–255 use placeholder colours), lighting (simple directional light on shade ramps).
-* Ship assembly from `.ART` (parts/offsets) and ship display scale (×2 default, chosen visually against the road's start boxes; INFERRED); model front = +z (from ART reference points); track handedness (mirror) UNVERIFIED.
+* Ship assembly from `.ART` (parts/offsets) and ship display scale (original size = 1; the earlier ×2 was a visual guess and has been dropped); model front = +z (from ART reference points); track handedness (mirror) UNVERIFIED.
 * Physics: thrust law known; the rest of `RaceSlotMove`, collision, AI, weapons only surveyed.
 * Timing model (variable timestep, ≤70 Hz clock) INFERRED, not measured.
 

@@ -197,6 +197,37 @@ std::optional<MusicSegments> hmpToSegments(const Bytes& hmp) {
   return s;
 }
 
+std::optional<MusicSegments> hmpLocationSegments(const Bytes& hmp, int locationId) {
+  auto hp = parseHmp(hmp);
+  if (!hp) return std::nullopt;
+  bool found = false;
+  uint32_t loc = 0;
+  for (const auto& tr : hp->tracks)
+    for (const Ev& e : tr)
+      if (!e.meta && (e.status & 0xF0) == 0xB0 && e.d1 == 113 && e.data.size() > 2 && (e.data[2] & 0x7f) == (locationId & 0x7f) && (e.data[2] & 0x80)) { loc = e.tick; found = true; }
+  if (!found) return std::nullopt;
+  // the first loop (109 start .. 111 end) after the location
+  bool haveEnd = false;
+  uint32_t endTick = 0, endId = 0;
+  for (const auto& tr : hp->tracks)
+    for (const Ev& e : tr)
+      if (!e.meta && (e.status & 0xF0) == 0xB0 && e.d1 == 111 && e.tick > loc && (!haveEnd || e.tick < endTick)) { endTick = e.tick; endId = e.data.size() > 2 ? e.data[2] : 0; haveEnd = true; }
+  if (!haveEnd) return std::nullopt;
+  uint32_t startTick = loc;
+  bool haveStart = false;
+  for (const auto& tr : hp->tracks)
+    for (const Ev& e : tr)
+      if (!e.meta && (e.status & 0xF0) == 0xB0 && e.d1 == 109 && e.tick >= loc && e.tick <= endTick && e.data.size() > 2 && e.data[2] == endId && (!haveStart || e.tick > startTick)) { startTick = e.tick; haveStart = true; }
+  if (!haveStart || endTick <= startTick + 60) return std::nullopt;
+  MusicSegments s;
+  s.intro = buildSmf(*hp, loc, endTick + 1, true);
+  s.loop = buildSmf(*hp, startTick, endTick + 1, true);
+  s.loopStartTick = startTick;
+  s.loopEndTick = endTick;
+  s.introStartTick = loc;
+  return s;
+}
+
 std::optional<Bytes> hmpToSmf(const Bytes& hmp, HmpInfo* info) {
   auto hp = parseHmp(hmp);
   if (!hp) return std::nullopt;

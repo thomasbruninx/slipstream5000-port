@@ -324,3 +324,5 @@ Traced every use of the refuel piece (0x35E53 check, 0x50E97 repair, 0x58CBD amb
 
 ## Session: pit lane, second pass (Chicago) and piece lighting
 User report: no pit on Chicago. Root cause: `InitRefuel` port compared the polygon material *index* with the TRC material table; polygons carry the table *id*. After the fix every track has a refuel piece on an alternative route (the earlier "Hawaii / Norway cannot be entered" notes were artefacts of that bug). Then decoded the per-piece lighting (0x39ADA..0x39B85: piece `+0x20` -> `[0x39C56]` -> 0x39427 scales the diffuse level and the ambient) and the pit flicker (random piece light, generator 0x3667B). Manual (`Manual.PDF`, "Re-charger Pit") confirms one pit per track with blue / white flashes.
+
+* **Ship scale (2026-10-08, user request):** ships are drawn at the original model size (`--ship-scale` default 1, was 2) in the races and everywhere else; the collision boxes were already derived from the unscaled model, so physics did not change. The earlier ×2 was only a visual guess against the painted start boxes.

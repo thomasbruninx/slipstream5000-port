@@ -23,7 +23,7 @@ static void usage() {
       "  --sprites [NAME]    start in the sprite viewer\n"
       "  --drive             start driving ship --ship\n"
       "  --ship N            0..9\n"
-      "  --ship-scale F      display scale for ship models (default 2)\n"
+      "  --ship-scale F      display scale for ship models (default 1 = original size)\n"
       "  --res WxH           internal render size (default 960x540)\n"
       "  --screenshot FILE   render one frame to a PPM file and exit (no window)\n"
       "  --cam X,Y,Z,YAW,PITCH   camera (world units, radians)\n"

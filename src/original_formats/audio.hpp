@@ -36,8 +36,13 @@ struct HmpInfo {
 struct MusicSegments {
   Bytes intro, loop;
   double loopStartTick = 0, loopEndTick = 0;
+  double introStartTick = 0;  // song tick at which `intro` starts (0, or the branch location)
 };
 std::optional<MusicSegments> hmpToSegments(const Bytes& hmp);
+// HMI branch locations: controller 113 with value 0x80 | id marks a location (INTRO.HMP has eleven, 0x3F..0x35: the waiting music and one section per
+// pilot). A branch jumps to the location, plays on to the next loop (controller 109 .. 111, endless) and stays in it. Returns the segments starting at the
+// location (intro = location .. loop end, loop = that loop); nullopt when the id does not exist.
+std::optional<MusicSegments> hmpLocationSegments(const Bytes& hmp, int locationId);
 
 // Converts an HMP file to a type-1 Standard MIDI File (division 120, tempo 1,000,000 us per quarter note, i.e. 120 ticks/s).
 std::optional<Bytes> hmpToSmf(const Bytes& hmp, HmpInfo* info = nullptr);

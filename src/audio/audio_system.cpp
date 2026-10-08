@@ -125,6 +125,16 @@ bool AudioSystem::init(const GameData& data, const AudioConfig& cfg, std::string
       const size_t o = kBase + va;
       return o + 4 <= exe->size() ? uint32_t((*exe)[o]) | (uint32_t((*exe)[o + 1]) << 8) | (uint32_t((*exe)[o + 2]) << 16) | (uint32_t((*exe)[o + 3]) << 24) : 0u;
     };
+    narration_.clear();
+    if (const uint32_t p2 = rd(0x52EE4 + 2 * 4)) {  // mode 2: the ten pilot narrations
+      const size_t l2 = size_t(p2) + 0x10000;
+      const uint32_t n2 = rd(l2);
+      if (n2 == 10)
+        for (uint32_t i = 0; i < n2; ++i) {
+          const char* nm = reinterpret_cast<const char*>(exe->data() + kBase + l2 + 4 + size_t(i) * 0x1C);
+          narration_.emplace_back(nm, strnlen(nm, 14));
+        }
+    }
     const uint32_t ptr = rd(0x52EE4 + 3 * 4);
     if (ptr) {
       const size_t list = size_t(ptr) + 0x10000;
@@ -155,10 +165,28 @@ const std::string& AudioSystem::cueSample(int cue) const {
 
 int AudioSystem::cueSpeaker(int cue) const { return cue >= 0 && cue < int(cues_.size()) ? cues_[size_t(cue)].speaker : 0; }
 
-bool AudioSystem::playCue(int cue) {
+const std::string& AudioSystem::narrationSample(int ship) const {
+  static const std::string kEmpty;
+  return ship >= 0 && ship < int(narration_.size()) ? narration_[size_t(ship)] : kEmpty;
+}
+
+bool AudioSystem::playNarration(int ship) {
+  if (!enabled_ || ship < 0 || ship >= int(narration_.size())) return false;
+  if (cueVoice_) mixer_.stop(cueVoice_);
+  cueVoice_ = 0;
+  auto s = sample(narration_[size_t(ship)]);
+  if (!s) return false;
+  cueVoice_ = mixer_.play(s, 1.0f);
+  cueSpeakerNow_ = 0;
+  return cueVoice_ != 0;
+}
+
+bool AudioSystem::playCue(int cue, bool menu) {
   if (!enabled_ || cue < 0 || cue >= int(cues_.size())) return false;
+  if (menu) { if (cueVoice_) mixer_.stop(cueVoice_); cueVoice_ = 0; }
+  else {
   for (int h : cueHistory_) if (h == cue) return false;        // 0x530DC..0x53106: not one of the last four cues again
-  if (cueVoice_ && mixer_.active(cueVoice_)) return false;     // 0x53131..0x5313F: the previous line is still playing -> dropped
+  if (cueVoice_ && mixer_.active(cueVoice_)) return false; }     // 0x53131..0x5313F: the previous line is still playing -> dropped
   auto s = sample(cues_[size_t(cue)].name);
   if (!s) return false;
   cueVoice_ = mixer_.play(s, 1.0f);
@@ -273,14 +301,34 @@ bool AudioSystem::playMusic(const std::string& hmpName, bool loop) {
   auto seg = hmpToSegments(*b);
   if (!seg) return false;
   musicName_ = hmpName;
+  musicPart_ = 0;
   // HMI loop markers: intro up to the first loop end, then that loop forever; songs without markers loop whole when asked
-  if (!seg->loop.empty()) return music_.playSegments(seg->intro, seg->loop, int(seg->loopEndTick));
+  if (!seg->loop.empty()) return music_.playSegments(seg->intro, seg->loop, int(seg->loopEndTick - seg->introStartTick));
   return music_.play(seg->intro, loop);
+}
+
+bool AudioSystem::setMusicPart(int part) {
+  if (!enabled_ || !music_.ready() || !data_ || musicName_ != "INTRO.HMP") return false;
+  part = std::clamp(part, 0, 10);
+  if (part == musicPart_) return true;
+  int id = 0x3f;  // waiting music (0x55F14)
+  if (part > 0)
+    if (auto exe = data_->read("SLIPSTRM.EXE")) {
+      const size_t o = 0x4D854 + (0x55f24 - 0x10000) + 4 * size_t(part);
+      if (o + 4 <= exe->size()) id = int((*exe)[o] | ((*exe)[o + 1] << 8));
+    }
+  auto b = data_->read(musicName_);
+  if (!b) return false;
+  auto seg = hmpLocationSegments(*b, id);
+  if (!seg) return false;
+  musicPart_ = part;
+  return music_.playSegments(seg->intro, seg->loop, int(seg->loopEndTick - seg->introStartTick));
 }
 
 void AudioSystem::stopMusic() {
   music_.stop();
   musicName_.clear();
+  musicPart_ = 0;
 }
 
 void AudioSystem::renderBlock(float* out, int frames) {

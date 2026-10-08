@@ -66,10 +66,15 @@ class AudioSystem {
   // Voice cues of the original (VoiceCue 0x530B8): pilot and announcer lines taken from the 85 entry list of mode 3 in the
   // executable (EF*.SMP / EM*.SMP / EPS*.SMP). One voice at a time: a cue is dropped while the previous line is still playing,
   // and a cue equal to one of the last four is dropped as well. Returns true when the line started.
-  bool playCue(int cue);
+  // `menu` (0x530D3: the no-repeat test is skipped while [0x52F0C] is clear, i.e. outside a race): the line always plays and replaces a running one.
+  bool playCue(int cue, bool menu = false);
   int cueCount() const { return int(cues_.size()); }
   const std::string& cueSample(int cue) const;  // "EF93.SMP" ("" when out of range)
   int cueSpeaker(int cue) const;                // pilot number 1..10 of the line (entry +0x18), 0 = announcer
+  // Pilot narration of the information card (voice list of mode 2 = list pointer [0x52EE4 + 2*4], 10 entries: EF01 EM23 EF05 EM27 EF04 EM24 EF02 EM26 EF03 EM25).
+  bool playNarration(int ship);
+  const std::string& narrationSample(int ship) const;
+  void stopCue() { if (cueVoice_) { mixer_.stop(cueVoice_); cueVoice_ = 0; } }
   bool cueBusy() const { return cueVoice_ && mixer_.active(cueVoice_); }
   // Pilot (1..10) whose line is playing right now, 0 for the announcer or silence (GetSpeaker 0x53061: [0x52EF4], cleared when the sample ends).
   int currentSpeaker() const { return cueBusy() ? cueSpeakerNow_ : 0; }
@@ -82,6 +87,10 @@ class AudioSystem {
   // --- music ---
   bool playMusic(const std::string& hmpName, bool loop = true);
   void stopMusic();
+  // SetMusicPart (0x55EFC): while INTRO.HMP plays, branch to the pilot's own section (part 1..10 = the craft's number + 1, table at 0x55F28) or back to
+  // the waiting music (part 0 = location 0x3F). Returns false when INTRO.HMP is not the current song.
+  bool setMusicPart(int part);
+  int musicPart() const { return musicPart_; }
   const std::string& currentMusic() const { return musicName_; }
   void setVolumes(float master, float music, float sfx);
   void toggleMusic() { musicOn_ = !musicOn_; applyVolumes(); }
@@ -104,11 +113,13 @@ class AudioSystem {
   SDL_AudioStream* stream_ = nullptr;
   std::map<std::string, std::shared_ptr<const SoundSample>> cache_;
   std::string soundfont_, musicName_;
+  int musicPart_ = 0;
   bool musicOn_ = true, sfxOn_ = true, enabled_ = false;
   bool sdlAudioInit_ = false;
   std::string speech_[2][11];
   struct Cue { std::string name; int speaker = 0; };
   std::vector<Cue> cues_;
+  std::vector<std::string> narration_;
   int cueVoice_ = 0, cueSpeakerNow_ = 0;
   int cueHistory_[4] = {-1, -1, -1, -1};
   int ambientId_ = 0, ambientVoice_ = 0;

@@ -35,7 +35,7 @@ struct RaceSetup {  // what the front end hands to the race
 class FrontEnd {
  public:
   enum class Key { Up, Down, Left, Right, Select, Back };
-  enum class Screen { Logo, Intro, Gremlin, Credits, Main, OnePlayer, Tracks, Team, ViewCar, Garage, Best, Results, Notice };
+  enum class Screen { Logo, Intro, Gremlin, Credits, Main, OnePlayer, Tracks, Team, ViewCar, Info, Garage, Best, Results, Notice };
 
   bool init(const GameData& data, AudioSystem* audio);
   void start(bool skipMovies);
@@ -49,6 +49,10 @@ class FrontEnd {
   bool takeRace(RaceSetup* out) { if (!race_) return false; race_ = false; *out = setup_; return true; }
   void showResults(const RaceResult& r);
   bool takeNetRequest() { const bool r = net_; net_ = false; return r; }  // "Two Players": the application opens its network game menu
+  // Pilot information screen (DoViewCar 0x46A94): the 3D craft turning in the middle of the card. The application renders it: ship number, turn angle
+  // (radians) and the virtual 320x200 rectangle it may draw into. Returns -1 on every other screen.
+  int previewShip(double* angle, int rect[4]) const;
+  const Palette& palette() const { return pal_; }  // palette of the screen just drawn
   bool ready() const { return ready_; }
   Screen screen() const { return screen_; }
   void setDefaults(int track, int laps, const Loadout& l) { setup_.track = track; setup_.laps = laps; setup_.loadout = l; }
@@ -64,6 +68,8 @@ class FrontEnd {
   const Font* font(const std::string& name);
   std::string str(const std::string& file, const std::string& tag) const;
   void go(Screen s);
+  void playSelect();  // SELECT.SMP (0x4AE8B)
+  void playVoice(int ship);  // the pilot's greeting (table 0x45842)
   void buildButtons();
   void activate(int id);
   void skipIntro();
@@ -80,6 +86,12 @@ class FrontEnd {
   void drawTracks();
   void drawTeam();
   void drawViewCar();
+  void drawInfo();
+  void greyscale();
+  void greyRamp();
+  void lighten(int x0, int y0, int x1, int y1, int percent);
+  void wrapTextCentered(const Font& f, const std::string& s, int cx, int y, int w, int idx, int lineGap);
+  int cardSel_ = 0;
   void drawGarage();
   void drawBest();
   void drawNotice();
@@ -113,7 +125,8 @@ class FrontEnd {
   std::vector<std::string> credits_;
   size_t creditIdx_ = 0;
   double creditT_ = 0;
-  int creditVoice_ = 0;
+  int creditVoice_ = 0, voice_ = 0;
+  std::shared_ptr<SoundSample> selectSnd_;
   // selections
   RaceSetup setup_;
   int viewShip_ = 0, hoverShip_ = -1, mode_ = 1;  // mode: 0 practice, 1 single race, 2 championship

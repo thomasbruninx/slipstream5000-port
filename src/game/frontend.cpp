@@ -25,7 +25,8 @@ int transparentOf(const Sprite& s) { return s.hdr8 == 0xFFFF ? -1 : int(s.hdr8 &
 static const double kTrackLatLon[10][2] = {{41.9, -87.6}, {21.3, -157.9}, {35.7, 139.7}, {60.5, 8.5}, {46.2, 2.2}, {36.1, -112.1}, {-3.1, -60.0}, {51.5, -0.1}, {30.0, 31.1}, {40.7, -74.0}};
 
 void FrontEnd::usePalette(const Palette& p) {  // every screen's palette gets the executable's static UI colours in 248..255 (VideoSetPalette 0x557C7)
-  pal_ = p;
+  // Sprite palettes only define a range of the 256 entries (Palette::first / count): the rest of the screen's palette stays as it was, like the VGA registers
+  for (int i = p.first; i < p.first + p.count && i < 256; ++i) pal_.rgba[size_t(i)] = p.rgba[size_t(i)];
   if (!uiLoaded_) {
     uiLoaded_ = true;
     if (auto exe = data_->read("SLIPSTRM.EXE")) {
@@ -88,8 +89,35 @@ void FrontEnd::start(bool skipMovies) {
   else go(Screen::Logo);
 }
 
+void FrontEnd::playSelect() {
+  if (!audio_) return;
+  if (!selectSnd_)
+    if (auto b = data_->read("SELECT.SMP")) if (auto sm = parseSample("SELECT.SMP", *b)) selectSnd_ = std::make_shared<SoundSample>(std::move(*sm));
+  if (selectSnd_) audio_->playPcm(selectSnd_, 1.0f);
+}
+
+void FrontEnd::playVoice(int ship) {  // the pilot's greeting: EM47 / EM50 / EM49 / EF45 / EM51 / EM52 / EM48 / EF43 / EF44 / EM53 (exe table 0x45842)
+  if (!audio_) return;
+  if (voice_) { audio_->stopVoice(voice_); voice_ = 0; }
+  auto exe = data_->read("SLIPSTRM.EXE");
+  if (!exe) return;
+  const size_t o = 0x4D854 + (0x45842 - 0x10000) + 4 * size_t(std::clamp(ship, 0, 9) + 1);
+  if (o + 4 > exe->size()) return;
+  const size_t p = size_t((*exe)[o] | ((*exe)[o + 1] << 8) | ((*exe)[o + 2] << 16)) + 0x10000;
+  const size_t so = 0x4D854 + (p - 0x10000);
+  std::string name;
+  for (size_t i = so; i < exe->size() && (*exe)[i] && name.size() < 16; ++i) name += char((*exe)[i]);
+  if (auto b = data_->read(name)) if (auto sm = parseSample(name, *b)) voice_ = audio_->playPcm(std::make_shared<SoundSample>(std::move(*sm)), 1.0f);
+}
+
 void FrontEnd::go(Screen s) {
+  const Screen prev = screen_;
   if (movieVoice_ && audio_) { audio_->stopVoice(movieVoice_); movieVoice_ = 0; }
+  if (creditVoice_ && audio_) { audio_->stopVoice(creditVoice_); creditVoice_ = 0; }  // REFINERY.SMP ends the moment the credits are left
+  if (voice_ && audio_ && s != Screen::ViewCar) { audio_->stopVoice(voice_); voice_ = 0; }
+  if (audio_ && prev == Screen::Info && s != Screen::Info) audio_->stopCue();  // leaving the information screen ends the narration
+  // MainMenuDraw (0x4CF09) and the track choice (0x5AD44) play SELECT.SMP when they open and when something is chosen
+  if (s == Screen::Main || s == Screen::OnePlayer || s == Screen::Tracks) playSelect();
   screen_ = s;
   t_ = 0;
   sel_ = 0;
@@ -108,6 +136,10 @@ void FrontEnd::go(Screen s) {
   }
   else if (s == Screen::Main && audio_) { if (audio_->currentMusic() != "INTRO.HMP") audio_->playMusic("INTRO.HMP", true); }
   if (s == Screen::Garage) garageEnter();
+  // music: the parking lot plays the waiting music, the pilot's card the pilot's own section of INTRO.HMP (SetMusicPart 0x55EFC, calls at 0x45D3E / 0x46174)
+  if (audio_ && s == Screen::Team) audio_->setMusicPart(0);
+  if (audio_ && s == Screen::ViewCar) { audio_->setMusicPart(viewShip_ + 1); if (prev != Screen::Info) playVoice(viewShip_); cardSel_ = 0; }
+  if (audio_ && s == Screen::Info) { audio_->setMusicPart(viewShip_ + 1); audio_->playNarration(viewShip_); }  // DoViewCar 0x46C8E: VoiceCue(table 0x46F54[car]) narrates the text
   buildButtons();
 }
 
@@ -205,6 +237,12 @@ int FrontEnd::hit(int x, int y) const {
 
 void FrontEnd::mouseMove(int x, int y) {
   mx_ = x; my_ = y;
+  if (screen_ == Screen::ViewCar) {
+    for (int i = 0; i < 3; ++i)
+      if (const Sprite* b = spr("DRIVER" + std::to_string(viewShip_) + char('A' + i) + ".SPR"))
+        if (x >= b->hdr4 && x < b->hdr4 + b->w && y >= b->hdr6 && y < b->hdr6 + b->h) cardSel_ = i;
+    return;
+  }
   if (screen_ == Screen::Team) {
     hoverShip_ = x < 0 ? -1 : zone("CH_TEAMZ.ZON", x, y) - 1;
     return;
@@ -216,6 +254,13 @@ void FrontEnd::mouseMove(int x, int y) {
 void FrontEnd::click(int x, int y) {
   mouseMove(x, y);
   if (screen_ <= Screen::Credits) { skipIntro(); return; }
+  if (screen_ == Screen::ViewCar) {  // the three card buttons (DRIVER<n>A / B / C)
+    for (int i = 0; i < 3; ++i)
+      if (const Sprite* b = spr("DRIVER" + std::to_string(viewShip_) + char('A' + i) + ".SPR"))
+        if (x >= b->hdr4 && x < b->hdr4 + b->w && y >= b->hdr6 && y < b->hdr6 + b->h) { cardSel_ = i; key(Key::Select); return; }
+    return;
+  }
+  if (screen_ == Screen::Info) { key(Key::Select); return; }
   if (screen_ == Screen::Garage) { garageClick(x, y); return; }
   if (screen_ == Screen::Team) { if (hoverShip_ >= 0 && hoverShip_ < 10) { viewShip_ = hoverShip_; go(Screen::ViewCar); } return; }
   const int h = hit(x, y);
@@ -236,19 +281,25 @@ void FrontEnd::key(Key k) {
       if (k == Key::Up) move(-1);
       else if (k == Key::Down) move(1);
       else if (k == Key::Select && n) activate(btns_[size_t(sel_)].id);
-      else if (k == Key::Back) { if (screen_ == Screen::Main) quit_ = true; else go(screen_ == Screen::Tracks ? Screen::OnePlayer : Screen::Main); }
+      else if (k == Key::Back) { if (screen_ == Screen::Main) quit_ = true; else if (screen_ == Screen::Tracks) { hoverShip_ = setup_.ship; go(Screen::Team); } else go(Screen::Main); }
       break;
     case Screen::Team:
       if (k == Key::Left || k == Key::Up) hoverShip_ = (hoverShip_ + 9) % 10;
       else if (k == Key::Right || k == Key::Down) hoverShip_ = (hoverShip_ + 1) % 10;
       else if (k == Key::Select) { viewShip_ = std::clamp(hoverShip_, 0, 9); go(Screen::ViewCar); }
-      else if (k == Key::Back) go(Screen::Tracks);
+      else if (k == Key::Back) go(Screen::OnePlayer);
       break;
-    case Screen::ViewCar:
-      if (k == Key::Left) viewShip_ = (viewShip_ + 9) % 10;
-      else if (k == Key::Right) viewShip_ = (viewShip_ + 1) % 10;
-      else if (k == Key::Select) { setup_.ship = viewShip_; go(Screen::Garage); }
-      else if (k == Key::Back) { hoverShip_ = viewShip_; go(Screen::Team); }
+    case Screen::ViewCar:  // the card: Accept / Cancel / View (CH_TEAM.ST0 OPT1..3); the picture itself is the menu
+      if (k == Key::Up) cardSel_ = (cardSel_ + 2) % 3;
+      else if (k == Key::Down) cardSel_ = (cardSel_ + 1) % 3;
+      else if (k == Key::Select) {
+        if (cardSel_ == 0) { setup_.ship = viewShip_; go(Screen::Tracks); }  // original order (0x55ADF): vehicle, track, garage, race
+        else if (cardSel_ == 1) { hoverShip_ = viewShip_; go(Screen::Team); }
+        else go(Screen::Info);
+      } else if (k == Key::Back) { hoverShip_ = viewShip_; go(Screen::Team); }
+      break;
+    case Screen::Info:  // the text with the turning craft: any key or click returns to the card
+      if (k == Key::Select || k == Key::Back) go(Screen::ViewCar);
       break;
     case Screen::Garage: garageKey(k); break;
     case Screen::Best:
@@ -269,6 +320,7 @@ void FrontEnd::skipIntro() {  // Enter / Esc / click: the next part of the start
 }
 
 void FrontEnd::activate(int id) {
+  if (screen_ == Screen::Main || screen_ == Screen::OnePlayer || screen_ == Screen::Tracks) playSelect();
   if (screen_ == Screen::Main) {
     if (id == 1) go(Screen::OnePlayer);
     else if (id == 5) go(Screen::Best);
@@ -277,12 +329,11 @@ void FrontEnd::activate(int id) {
     else { notice_ = id == 3 ? "Saved games are not available" : "Use the pause menu during a race to configure the game"; go(Screen::Notice); }
   } else if (screen_ == Screen::OnePlayer) {
     if (id == 6) go(Screen::Main);
-    else { mode_ = id - 1; go(Screen::Tracks); }
+    else { mode_ = id - 1; hoverShip_ = setup_.ship; go(Screen::Team); hoverShip_ = setup_.ship; }
   } else if (screen_ == Screen::Tracks) {
     setup_.track = id + 1;
-    hoverShip_ = setup_.ship;
-    go(Screen::Team);
-    hoverShip_ = setup_.ship;
+    if (mode_ == 0) { setup_.loadout = Loadout{}; race_ = true; }  // practice has no garage
+    else go(Screen::Garage);
   }
 }
 
@@ -296,6 +347,7 @@ void FrontEnd::draw() {
     case Screen::Tracks: drawTracks(); break;
     case Screen::Team: drawTeam(); break;
     case Screen::ViewCar: drawViewCar(); break;
+    case Screen::Info: drawInfo(); break;
     case Screen::Garage: drawGarage(); break;
     case Screen::Best: drawBest(); break;
     case Screen::Results: drawResults(); break;
@@ -473,21 +525,84 @@ void FrontEnd::drawTeam() {
   }
 }
 
+// SpriteGreyscale (0x5B8BF): the screen behind the pilot cards is turned to grey.
+void FrontEnd::greyscale() {
+  for (uint32_t& p : buf_) {
+    const uint32_t y = (((p >> 16) & 255) * 77 + ((p >> 8) & 255) * 150 + (p & 255) * 29) >> 8;
+    p = 0xff000000u | (y << 16) | (y << 8) | y;
+  }
+}
+
+// Entries 0..63 become a grey ramp (the sprites of the cards use them for the greyed background and their own light areas: the surfboard, the text).
+void FrontEnd::greyRamp() {
+  for (uint32_t i = 0; i < 64; ++i) { const uint32_t v = (i << 2) | (i >> 4); pal_.rgba[i] = (v << 16) | (v << 8) | v; }
+}
+
+void FrontEnd::lighten(int x0, int y0, int x1, int y1, int pct) {
+  for (int y = std::max(0, y0); y <= std::min(H - 1, y1); ++y)
+    for (int x = std::max(0, x0); x <= std::min(W - 1, x1); ++x) {
+      uint32_t& p = buf_[size_t(y) * W + size_t(x)];
+      auto up = [&](uint32_t v) { return std::min(255u, v + (255 - v) * uint32_t(pct) / 100u); };
+      p = 0xff000000u | (up((p >> 16) & 255) << 16) | (up((p >> 8) & 255) << 8) | up(p & 255);
+    }
+}
+
+void FrontEnd::wrapTextCentered(const Font& f, const std::string& s, int cx, int y, int w, int idx, int gap) {
+  std::string line, word;
+  auto flush = [&]() { drawText(f, line, cx - f.textWidth(line) / 2, y, idx); y += f.height + gap; line.clear(); };
+  for (size_t i = 0; i <= s.size(); ++i) {
+    if (i == s.size() || s[i] == ' ') {
+      if (!line.empty() && f.textWidth(line + " " + word) > w) flush();
+      line += (line.empty() ? "" : " ") + word;
+      word.clear();
+    } else word += s[i];
+  }
+  if (!line.empty()) flush();
+}
+
+// The pilot card (0x45D5C: DRIVER<n>.SPR, 265x178 at (27, 10), with its own palette, over the greyed parking lot) with the three buttons
+// DRIVER<n>A / B / C (Accept, Cancel, View: CH_TEAM.ST0 OPT1..3).
 void FrontEnd::drawViewCar() {
   drawTeam();
-  HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;
-  c.darken(0, 0, W - 1, H - 1, 55);
-  const bool portrait = int(t_ / 4) % 2 == 1;  // the panel alternates between the information card and the pilot's portrait
-  if (const Sprite* s = spr((portrait ? "DRIVER" : "VIEWCAR") + std::to_string(viewShip_) + ".SPR")) {
-    c.blit(*s, s->hdr4, s->hdr6, -1);
-    if (!portrait)
-      if (const Font* f = font("VIEWDESC.FNT")) wrapText(*f, str("VIEWCAR.ST0", "CAR" + std::to_string(viewShip_)), s->hdr4 + 10, s->hdr6 + 30, s->w - 20, -1, 2);
+  greyscale();
+  greyRamp();
+  const Sprite* s = spr("DRIVER" + std::to_string(viewShip_) + ".SPR");
+  if (!s) return;
+  if (s->palette) usePalette(*s->palette);
+  HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_; c.canvasPalette = true;
+  c.blit(*s, s->hdr4, s->hdr6, -1);
+  const Font* f = font("SMALL.FNT");
+  for (int i = 0; i < 3; ++i) {
+    const Sprite* b = spr("DRIVER" + std::to_string(viewShip_) + char('A' + i) + ".SPR");
+    if (!b) continue;
+    c.blit(*b, b->hdr4, b->hdr6, transparentOf(*b));
+    if (f) {
+      const std::string label = str("CH_TEAM.ST0", "OPT" + std::to_string(i + 1));
+      drawText(*f, label, b->hdr4 + (b->w - f->textWidth(label)) / 2, b->hdr6 + (b->h - f->height) / 2 + 1, brightIndex(true));
+    }
+    if (i == cardSel_) lighten(b->hdr4, b->hdr6, b->hdr4 + b->w - 1, b->hdr6 + b->h - 1, 35);
   }
-  if (const Font* f = font("TEAMFONT.FNT")) {
-    const std::string cancel = up(str("CH_TEAM.ST0", "OPT2")), accept = up(str("CH_TEAM.ST0", "OPT1"));
-    drawText(*f, cancel, 60, 190, -1);
-    drawText(*f, accept, 260 - f->textWidth(accept), 190, -1);
-  }
+}
+
+// DoViewCar 0x46A94: VIEWCAR<n>.SPR (the card with the pilot's name, 265x178 at (27, 10)), the craft turning in it (rendered by the application,
+// see previewShip) and the biography (VIEWCAR.ST0 CAR<n>, VIEWDESC.FNT) centred at the bottom while the pilot's voice reads it.
+void FrontEnd::drawInfo() {
+  drawTeam();
+  greyscale();
+  greyRamp();
+  const Sprite* s = spr("VIEWCAR" + std::to_string(viewShip_) + ".SPR");
+  if (!s) return;
+  if (s->palette) usePalette(*s->palette);
+  HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_; c.canvasPalette = true;
+  c.blit(*s, s->hdr4, s->hdr6, -1);
+  if (const Font* f = font("VIEWDESC.FNT")) wrapTextCentered(*f, str("VIEWCAR.ST0", "CAR" + std::to_string(viewShip_)), 160, 135, 240, -1, 1);
+}
+
+int FrontEnd::previewShip(double* angle, int rect[4]) const {
+  if (screen_ != Screen::Info) return -1;
+  *angle = 0.7 + t_ * 0.8;
+  rect[0] = 30; rect[1] = 28; rect[2] = 290; rect[3] = 138;
+  return viewShip_;
 }
 
 // ------------------------------------------------------------------------------------------------------------------ garage
@@ -565,7 +680,7 @@ void FrontEnd::garageKey(Key k) {
   else if (k == Key::Up) sel = sel - cols >= 0 ? sel - cols : sel;
   else if (k == Key::Down) sel = sel + cols < n ? sel + cols : sel;
   else if (k == Key::Back) {
-    if (garPage_ == 0) { go(Screen::ViewCar); }
+    if (garPage_ == 0) { go(Screen::Tracks); }
     else if (garPage_ == 2) garPage_ = 1;
     else garPage_ = 0;
   } else if (k == Key::Select) {
@@ -732,6 +847,7 @@ void FrontEnd::showResults(const RaceResult& r) {
   result_ = r;
   addRecord(r.track, r.ship, r.bestLap);
   go(Screen::Results);
+  if (audio_) audio_->playMusic(r.place[std::clamp(r.ship, 0, 9)] > 3 ? "LOSE.HMP" : "WIN.HMP", false);  // results screen 0x5A820: WIN.HMP for the first three places, else LOSE.HMP
 }
 
 void FrontEnd::drawBest() {

@@ -104,7 +104,7 @@ struct Scene {
   }
   std::array<std::array<double, 3>, 10> startPos{};  // world coordinates of the start grid
   Track track_data;                   // raw parsed data (for tools / physics)
-  float shipScale = 2.0f;             // display scale applied to ART/SHP ship models
+  float shipScale = 1.0f;             // display scale applied to ART/SHP ship models (1 = the original size)
   int trackIndex = 0;
   std::string trackName;
   size_t scenerySkipped = 0;          // scenery instances whose shape could not be loaded
@@ -156,7 +156,9 @@ struct Scene {
 };
 
 // Builds a scene from the original data. Returns false (with *error) on failure.
-bool buildScene(const GameData& data, int trackIndex, Scene* scene, std::string* error, float shipScale = 2.0f);
+bool buildScene(const GameData& data, int trackIndex, Scene* scene, std::string* error, float shipScale = 1.0f);
+// Craft preview of the pilot information card: shipMeshes[0] with the materials of VIEW<n>.MAT.
+bool buildShipPreview(const GameData& data, int ship, Scene* scene, float scale = 1.0f);
 
 // Loads a single shape into a stand-alone preview scene (palette from track 1, CARS.MAT).
 bool buildShapePreview(const GameData& data, const std::string& shapeName, Scene* scene, std::string* error);
