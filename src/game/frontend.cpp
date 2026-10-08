@@ -255,6 +255,7 @@ void FrontEnd::mouseMove(int x, int y) {
     return;
   }
   if (screen_ == Screen::Garage) { garHov_ = x < 0 ? -1 : garageZoneAt(x, y); return; }
+  if (screen_ == Screen::Results) { const int z = x < 0 ? -1 : resultZoneAt(x, y); if (z >= 0) resSel_ = z; return; }
   const int h = hit(x, y);
   if (h >= 0 && btns_[size_t(h)].enabled) sel_ = h;
 }
@@ -270,6 +271,7 @@ void FrontEnd::click(int x, int y) {
   }
   if (screen_ == Screen::Info) { key(Key::Select); return; }
   if (screen_ == Screen::Garage) { garageClick(x, y); return; }
+  if (screen_ == Screen::Results) { const int z = resultZoneAt(x, y); if (z >= 0) resultChoose(z); return; }
   if (screen_ == Screen::Team) { if (hoverShip_ >= 0 && hoverShip_ < 10) { viewShip_ = hoverShip_; go(Screen::ViewCar); } return; }
   const int h = hit(x, y);
   if (h >= 0 && btns_[size_t(h)].enabled) { sel_ = h; activate(btns_[size_t(h)].id); }
@@ -317,6 +319,10 @@ void FrontEnd::key(Key k) {
       else if (k == Key::Select || k == Key::Back) go(Screen::Main);
       break;
     case Screen::Results:
+      if (k == Key::Left || k == Key::Right || k == Key::Up || k == Key::Down) resSel_ = k == Key::Left || k == Key::Up ? 0 : 1;
+      else if (k == Key::Select) resultChoose(resSel_);
+      else if (k == Key::Back) go(Screen::Main);  // Esc = Continue (0x5AB30)
+      break;
     case Screen::Notice:
       if (k == Key::Select || k == Key::Back) go(Screen::Main);
       break;
@@ -920,6 +926,7 @@ void FrontEnd::addRecord(int track, int ship, double seconds) {
 void FrontEnd::showResults(const RaceResult& r) {
   result_ = r;
   addRecord(r.track, r.ship, r.bestLap);
+  resSel_ = 1;
   go(Screen::Results);
   if (audio_) audio_->playMusic(r.place[std::clamp(r.ship, 0, 9)] > 3 ? "LOSE.HMP" : "WIN.HMP", false);  // results screen 0x5A820: WIN.HMP for the first three places, else LOSE.HMP
 }
@@ -954,31 +961,78 @@ void FrontEnd::drawBest() {
   }
 }
 
+// Race results, 0x5A820: RACERES.SPR with the title box and the two buttons cut from the dark copy RACERESD (the hovered button shows the bright picture), frame
+// colours 0x25 / 0x2B / 0x0A (sub_56137); ten rows from y = 40 every 13 px: "%d." at x 20, the pilot's name (exe table 0x54E94) at x 40, the time at x 240;
+// the human's row uses RESULTSB.FNT (gold), the AI rows RESULTSA.FNT (silver). Zones 0x5AD18: Replay (40,175)-(127,191), Continue (190,175)-(277,191). CONFIRMED.
+// The port's Replay restarts the race (the original replays the recorded race, not ported); unfinished ships show their projected time instead of "Retired".
+namespace {
+struct RZone { int x1, y1, x2, y2; };
+constexpr RZone kResZ[2] = {{40, 175, 127, 191}, {190, 175, 277, 191}};
+}  // namespace
+
+int FrontEnd::resultZoneAt(int x, int y) const {
+  for (int i = 0; i < 2; ++i) if (x >= kResZ[i].x1 && x <= kResZ[i].x2 && y >= kResZ[i].y1 && y <= kResZ[i].y2) return i;
+  return -1;
+}
+
+void FrontEnd::resultChoose(int i) {
+  if (i == 0) { race_ = true; }  // Replay: the same race again
+  else go(Screen::Main);
+}
+
+const std::string& FrontEnd::pilotName(int ship) {
+  if (names_.empty()) {
+    names_.assign(10, "");
+    if (auto exe = data_->read("SLIPSTRM.EXE")) {
+      const std::string key = "Charles Edward-Royce";
+      const std::string hay(exe->begin(), exe->end());
+      size_t p = hay.find(key);
+      for (int i = 0; i < 10 && p != std::string::npos && p < hay.size(); ++i) { names_[size_t(i)] = hay.c_str() + p; p += names_[size_t(i)].size() + 1; }
+    }
+  }
+  return names_[size_t(std::clamp(ship, 0, 9))];
+}
+
 void FrontEnd::drawResults() {
   const Sprite* bg = spr("RACERES.SPR");
+  const Sprite* dark = spr("RACERESD.SPR");
   if (!bg) return;
+  if (!dark) dark = bg;
   if (bg->palette) usePalette(*bg->palette);
   HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;
   c.blit(*bg, 0, 0, -1);
-  c.darken(10, 22, W - 11, 178, 45);
-  const Font* f = font("RESULTS.FNT");
-  if (!f) f = font("TEAMFONT.FNT");
-  const Font* sm = font("SMALL.FNT");
-  const int bright = brightIndex(true);
-  const std::string title = str("RACERES.ST0", "TIT" + std::to_string(result_.track - 1));
-  if (f) drawText(*f, title, 160 - f->textWidth(title) / 2, 6, -1);
+  const Font* fa = font("RESULTSA.FNT");
+  const Font* fb = font("RESULTSB.FNT");
+  if (!fb) fb = fa;
+  auto box = [&](int x1, int y1, int x2, int y2, bool hot, const std::string& label) {  // sub_56137
+    c.fillIndex(x1, y1, x1, y2, 0x25);
+    c.fillIndex(x1, y1, x2, y1, 0x2b);
+    c.fillIndex(x1, y2, x2, y2, 0x0a);
+    c.fillIndex(x2, y1, x2, y2, 0x0a);
+    const Sprite* src = hot ? bg : dark;
+    for (int y = y1 + 1; y < y2; ++y)
+      for (int x = x1 + 1; x < x2; ++x) buf_[size_t(y) * W + size_t(x)] = argb(pal_.rgba[src->pixels[size_t(y) * size_t(src->w) + size_t(x)]]);
+    if (fa) drawText(*fa, label, x1 + (x2 - x1 + 1 - fa->textWidth(label)) / 2, y1 + 4, -1);
+  };
+  box(59, 10, 258, 26, false, str("RACERES.ST0", "TIT" + std::to_string(std::clamp(result_.track, 1, 10) - 1)));
+  box(kResZ[0].x1, kResZ[0].y1, kResZ[0].x2, kResZ[0].y2, resSel_ == 0, str("RACERES.ST0", "BUT1"));
+  box(kResZ[1].x1, kResZ[1].y1, kResZ[1].x2, kResZ[1].y2, resSel_ == 1, str("RACERES.ST0", "BUT2"));
   int order[10];
-  for (int s = 0; s < 10; ++s) order[std::clamp(result_.place[s] - 1, 0, 9)] = s;
+  for (int& o : order) o = -1;
+  for (int sh = 0; sh < 10; ++sh) order[std::clamp(result_.place[sh] - 1, 0, 9)] = sh;
   for (int p = 0; p < 10; ++p) {
-    const int s = order[p], col = p / 5, row = p % 5;
-    const int x = 16 + col * 150, y = 28 + row * 30;
-    if (const Sprite* fc = spr("BESTF" + std::to_string(s) + ".SPR")) { HudCanvas fcv = c; fcv.pal = facePalette(); fcv.blitScaled(*fc, x + 18, y, 32, 28, transparentOf(*fc)); }
-    if (sm) {
-      drawText(*sm, std::to_string(p + 1), x, y + 10, -1);
-      drawText(*sm, timeText(result_.time[s]) + (result_.projected[s] ? " *" : ""), x + 56, y + 10, -1);
-    }
+    const int sh = order[p];
+    if (sh < 0) continue;
+    const Font* f = sh == result_.ship ? fb : fa;  // record +2 == 2 is an AI ship (RESULTSA, silver); the human uses RESULTSB (gold)
+    if (!f) continue;
+    const int y = 40 + 13 * p;
+    drawText(*f, std::to_string(p + 1) + ".", 20, y, -1);
+    drawText(*f, pilotName(sh), 40, y, -1);
+    char t[32];
+    const int cs = int(result_.time[sh] * 100 + 0.5);
+    std::snprintf(t, sizeof t, "%02d'%02d\"%02d", cs / 6000, (cs / 100) % 60, cs % 100);
+    drawText(*f, t, 240, y, -1);
   }
-  if (f) { const std::string ok = str("RACERES.ST0", "BUT2"); drawText(*f, ok, 160 - f->textWidth(ok) / 2, 184, -1); }
 }
 
 void FrontEnd::drawNotice() {

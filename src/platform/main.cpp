@@ -181,6 +181,7 @@ int main(int argc, char** argv) {
   if (!screenshot.empty() && app.frontActive()) {  // headless front end: --front-sim SEC, --front-keys "dds." (u d l r s=select b=back .=0.5 s)
     for (double t = 0; t < frontSim; t += 1.0 / 60.0) app.update(1.0 / 60.0, InputState{});
     for (char k : frontKeys) {
+      if (k == 'R') { app.frontDebugResults(); continue; }  // test hook: show the results screen with made-up times
       if (k == '.') { for (int i = 0; i < 30; ++i) app.update(1.0 / 60.0, InputState{}); continue; }
       app.frontKey(k == 'u' ? PauseMenu::Key::Up : k == 'd' ? PauseMenu::Key::Down : k == 'l' ? PauseMenu::Key::Left : k == 'r' ? PauseMenu::Key::Right : k == 'b' ? PauseMenu::Key::Back : PauseMenu::Key::Select);
       app.update(1.0 / 60.0, InputState{});
@@ -323,7 +324,8 @@ int main(int argc, char** argv) {
           }
           if (e.key.repeat) break;
           switch (e.key.key) {
-            case SDLK_ESCAPE: if (app.pausable()) app.openPause(); else running = false; break;
+            case SDLK_ESCAPE: if (app.tryShowResults()) break; if (app.pausable()) app.openPause(); else running = false; break;
+            case SDLK_RETURN: case SDLK_KP_ENTER: app.tryShowResults(); break;
             case SDLK_H: app.toggleHud(); break;
             case SDLK_F10: app.openNetMenu(); break;
             case SDLK_RIGHTBRACKET: app.nextItem(1); break;

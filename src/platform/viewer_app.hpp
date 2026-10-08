@@ -83,6 +83,9 @@ class ViewerApp {
   void cycleWeapon() { cyclePending_ = true; }
   void toggleCamera() { view_ = (view_ + 1) % 3; }
   // pause menu (Esc while driving): the race stands still, the menu is the original's PAUSED / CONFIG entries
+  // Esc / Enter after the player has finished (the craft keeps flying on autopilot) or the race is over: the results screen. Returns true when it opened.
+  bool tryShowResults();
+  void frontDebugResults();
   bool pausable() const { return mode_ == AppMode::Track && driving_; }
   bool paused() const { return pause_.isOpen(); }
   void openPause();

@@ -158,6 +158,11 @@ class FrontEnd {
   void saveRecords() const;
   void addRecord(int track, int ship, double seconds);
   void drawResults();
+  int resultZoneAt(int x, int y) const;
+  void resultChoose(int i);
+  const std::string& pilotName(int ship);
+  int resSel_ = 1;  // 0 Replay, 1 Continue
+  std::vector<std::string> names_;
   const Palette* facePalette();
   static std::string timeText(double seconds);
 };

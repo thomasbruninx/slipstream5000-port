@@ -539,7 +539,6 @@ void ViewerApp::update(double dt, const InputState& in0) {
           if (dmg > prevDamage_ + 1e-9) shakeTimer_ = 0.3;  // 0x440F3: [0x42DBC] = 0x12C ms
           prevDamage_ = dmg;
         }
-        if (front_ && !netplay_ && raceOverHandled_ && (resultsTimer_ += dt) > 8.0) showResultsScreen();
         if (raceStatus_.over && !raceOverHandled_) {  // race over: results (0x5A820): LOSE.HMP below 4th, else WIN.HMP; result line
           raceOverHandled_ = true;
           if (!finished_) { finished_ = true; finishRank_ = me.rank; }
@@ -635,6 +634,23 @@ void ViewerApp::startRaceFromFront(const RaceSetup& s) {
   frontActive_ = false;
   driving_ = false;
   toggleDrive();
+}
+
+void ViewerApp::frontDebugResults() {
+  if (!front_) return;
+  RaceResult r;
+  r.track = 2; r.ship = 1;
+  const double t[10] = {377.77, 383.13, 390.75, 398.12, 404.97, 407.17, 423.71, 423.73, 448.42, 453.70};
+  for (int i = 0; i < 10; ++i) { r.place[i] = i + 1; r.time[i] = t[i]; }
+  front_->showResults(r);
+  frontActive_ = true;
+}
+
+bool ViewerApp::tryShowResults() {
+  if (!front_ || netplay_ || !driving_ || frontActive_ || pause_.isOpen() || countdown_ > 0) return false;
+  if (!finished_ && !raceStatus_.over) return false;
+  showResultsScreen();
+  return true;
 }
 
 void ViewerApp::showResultsScreen() {
