@@ -421,7 +421,7 @@ void FrontEnd::drawButtons(const Palette* pal) {
     const bool on = int(i) == sel_ && b.enabled;
     if (const Sprite* s = spr(on ? b.hover : b.normal)) c.blit(*s, b.x, b.y, transparentOf(*s));
     if (!b.label.empty())
-      if (const Font* f = font("MENUFONT.FNT")) drawText(*f, b.label, b.x + (b.w - f->textWidth(b.label)) / 2, b.y + (b.h - f->height) / 2, -1);
+      if (const Font* f = font(screen_ == Screen::Tracks ? "STARFONT.FNT" : "MENUFONT.FNT")) drawText(*f, b.label, b.x + (b.w - f->textWidth(b.label)) / 2, b.y + (b.h - f->height) / 2, -1);
   }
 }
 
@@ -500,7 +500,7 @@ void FrontEnd::drawTracks() {
   }
   if (const Sprite* t = spr("CH_TRACK.SPR")) {
     c.blit(*t, t->hdr4, t->hdr6, transparentOf(*t));
-    if (const Font* f = font("MENUFONT.FNT")) { const std::string ti = str("CHTRACK.ST0", "TITL"); drawText(*f, ti, t->hdr4 + (t->w - f->textWidth(ti)) / 2, t->hdr6 + (t->h - f->height) / 2, -1); }
+    if (const Font* f = font("STARFONT.FNT")) { const std::string ti = str("CHTRACK.ST0", "TITL"); drawText(*f, ti, t->hdr4 + (t->w - f->textWidth(ti)) / 2, t->hdr6 + (t->h - f->height) / 2, -1); }
   }
   drawButtons(&pal_);
 }
