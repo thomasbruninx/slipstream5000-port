@@ -494,9 +494,9 @@ void FrontEnd::drawTracks() {
     const double ry[9] = {ca, 0, sa, 0, 1, 0, -sa, 0, ca}, rx[9] = {1, 0, 0, 0, ct, -st, 0, st, ct};
     double rot[9];
     mul3(rx, ry, rot);
-    globe_.draw(buf_.data(), W, H, pal_, 88, 100, 5900, rot, 0, true);
+    globe_.draw(buf_.data(), W, H, pal_, 90, 108, 5900 / 0.93, rot, 0, true);
     const double dir[3] = {std::cos(lat) * std::sin(lon), std::sin(lat), -std::cos(lat) * std::cos(lon)};
-    globe_.drawFlag(buf_.data(), W, H, pal_, 88, 100, 5900, rot, dir);
+    globe_.drawFlag(buf_.data(), W, H, pal_, 90, 108, 5900 / 0.93, rot, dir);
   }
   if (const Sprite* t = spr("CH_TRACK.SPR")) {
     c.blit(*t, t->hdr4, t->hdr6, transparentOf(*t));
