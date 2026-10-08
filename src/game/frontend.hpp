@@ -131,18 +131,22 @@ class FrontEnd {
   RaceSetup setup_;
   int viewShip_ = 0, hoverShip_ = -1, mode_ = 1;  // mode: 0 practice, 1 single race, 2 championship
   std::string notice_;
-  // garage: page 0 = the four boxes (weapons, turbo, systems, start race), 1 pods, 2 weapon grid, 3 turbo grid, 4 systems
+  // garage: page 0 = the four buttons (weapons, turbo, systems, start race), 1 = load / left pod / right pod / ok, 2 = weapon grid, 3 = turbo grid, 4 = systems
   const WeaponTable* table_ = nullptr;
-  int difficulty_ = 1, startCredits_ = 5000, garSel_ = 0, garPage_ = 0, pod_ = 0, grid_ = 0;
-  int podW_[2] = {-1, -1}, booster_ = -1;
-  bool fastRecharge_ = false, wideLock_ = false;
-  int credits() const;
+  int difficulty_ = 1, startCredits_ = 750, garPage_ = 0, garHov_ = -1, pod_ = 0, cash_ = 0;
+  double garOpen_ = 0;
+  int podW_[2] = {-1, -1}, podAmmo_[2] = {0, 0}, booster_ = 0;
+  bool fastRecharge_ = false, wideLock_ = false, loader_ = false;  // the three upgrades: charger, targetter, loader
   void garageEnter();
   void garageKey(Key k);
   void garageClick(int x, int y);
+  void garageGo(int page, bool fromMouse);
+  void garageChoose(int i, bool fromMouse);
   void garageBuildLoadout();
-  bool garageCell(int page, int i, int* x, int* y, int* w, int* h) const;
-  void drawRect(int x0, int y0, int x1, int y1, int idx);
+  int garageZoneAt(int x, int y) const;
+  int weaponPrice(int id) const;
+  int boosterPrice(int i) const;
+  void drawGaragePanel(const Sprite& panel);
   const Sprite* cropIcon(int weapon);
   std::map<int, Sprite> icons_;
   // results and best lap records

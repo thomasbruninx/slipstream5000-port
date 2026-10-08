@@ -185,6 +185,7 @@ void FrontEnd::update(double dt) {
     gYaw_ += dy * k;
     gTilt_ += (-lat + 0.45 - gTilt_) * k;
   }
+  if (screen_ == Screen::Garage) garOpen_ = std::min(1.0, garOpen_ + dt / 0.4);  // the status panel grows (sub_5BA9C; duration INFERRED)
   if (screen_ == Screen::Logo || screen_ == Screen::Intro) {
     if (!movieOpen_) return;
     movieClock_ += dt;
@@ -247,6 +248,7 @@ void FrontEnd::mouseMove(int x, int y) {
     hoverShip_ = x < 0 ? -1 : zone("CH_TEAMZ.ZON", x, y) - 1;
     return;
   }
+  if (screen_ == Screen::Garage) { garHov_ = x < 0 ? -1 : garageZoneAt(x, y); return; }
   const int h = hit(x, y);
   if (h >= 0 && btns_[size_t(h)].enabled) sel_ = h;
 }
@@ -606,198 +608,260 @@ int FrontEnd::previewShip(double* angle, int rect[4]) const {
 }
 
 // ------------------------------------------------------------------------------------------------------------------ garage
-// The garage: the hangar with the chosen craft (GARAGE<n>A), the four-slot panel GARBOX4 (Weapons, Turbo, Systems, Start Race, GARAGE.ST0 BUT1..4),
-// the pod window GARBOX1 (left / right weapon), the weapon grid GARBOX2 (the 11 purchasable weapons in table order) and the turbo grid GARBOX3
-// (the 5 booster items). Prices come from the executable's tables; the starting money and the "Systems" upgrades are the port's own (SPECULATIVE).
-constexpr int kFastRechargePrice = 1000, kWideLockPrice = 1200;
+// The workshop, DoGarage 0x4BAEE (docs/frontend.md): the hangar GARAGE<n>A with the craft on its crane; the menu buttons are regions of the darkened copy
+// GARAGE<n>B (the hovered one shows the bright A picture) with a 1 px frame (colours 0x25 left, 0x2B top, 0x0A bottom / right, sub_5609F) and a CNFFONT
+// label (GARAGE.ST0 BUT1..4 / WEP0..2 / REP3). The status panel GARBOX1 (cash, the two pods, charger / targetter / loader, turbo) grows from the point
+// (217,118) when the garage opens (sub_5BA9C). Weapons -> Load... / Left Pod / Right Pod / Ok -> the grid GARBOX2 (sub_4C476, 11 weapons + Cancel); Turbo
+// -> GARBOX3 (sub_4C6FE, 5 items + Cancel, a check mark GARGOT on the fitted one); Systems -> GARBOX4 (sub_4C19F, three upgrades + Exit). The weapon and turbo
+// names use GARWEAP.FNT, the price of the item under the pointer is shown over it in RESULTS.FNT, green (colour 0xFC) when affordable, red (0xFD) when not.
+// All zones are the executable's tables (0x4BED0, 0x4C122, 0x4BA8C, 0x4C3FE, 0x4C91E). CONFIRMED: start money 750 (0x58503), upgrade prices 300 / 500 / 700
+// (0x4C46A), purchases are not refunded, the loader doubles the rounds of later weapon purchases (max 9, 0x4C070), the fitted turbo item is the pre-selected one.
+namespace {
+struct Zone { int x1, y1, x2, y2; };
+constexpr Zone kMainZ[4] = {{13, 83, 113, 105}, {13, 111, 113, 133}, {13, 139, 113, 161}, {13, 167, 113, 189}};
+constexpr Zone kPodZ[3] = {{13, 111, 113, 133}, {13, 139, 113, 161}, {13, 167, 113, 189}};
+constexpr Zone kWeapZ[12] = {{24, 99, 84, 122}, {92, 99, 152, 122}, {160, 99, 220, 122}, {228, 99, 288, 122}, {24, 129, 84, 152}, {92, 129, 152, 152},
+                             {160, 129, 220, 152}, {228, 129, 288, 152}, {24, 159, 84, 182}, {92, 159, 152, 182}, {160, 159, 220, 182}, {228, 159, 288, 182}};
+constexpr Zone kSysZ[4] = {{24, 112, 84, 165}, {92, 112, 152, 165}, {160, 112, 220, 165}, {228, 112, 288, 165}};
+constexpr Zone kTurboZ[6] = {{23, 101, 105, 138}, {113, 101, 195, 138}, {203, 101, 285, 138}, {23, 144, 105, 181}, {113, 144, 195, 181}, {203, 144, 285, 181}};
+constexpr int kSysCheck[3][2] = {{54, 138}, {122, 138}, {190, 138}};                                          // table 0x4C444
+constexpr int kTurboCheck[5][2] = {{64, 119}, {154, 119}, {244, 119}, {64, 162}, {154, 162}};                 // table 0x4C984
+constexpr int kSysPrice[3] = {300, 500, 700};                                                                 // 0x4C46A
+constexpr const char* kSysName[3] = {"Charger", "Targetter", "Loader"};                                       // 0x4B9C8
+constexpr int kPanelX = 137, kPanelY = 83, kPanelW = 162, kPanelH = 107;
 
-int FrontEnd::credits() const {
-  int c = startCredits_;
-  for (int p = 0; p < 2; ++p) if (podW_[p] > 0 && table_) c -= table_->w[size_t(podW_[p])].price[std::clamp(difficulty_, 0, 2)];
-  if (booster_ >= 0 && table_) c -= table_->boosters[size_t(booster_)].price;
-  if (fastRecharge_) c -= kFastRechargePrice;
-  if (wideLock_) c -= kWideLockPrice;
-  return c;
+const Zone* garZones(int page, int* n) {
+  switch (page) {
+    case 0: *n = 4; return kMainZ;
+    case 1: *n = 3; return kPodZ;
+    case 2: *n = 12; return kWeapZ;
+    case 3: *n = 6; return kTurboZ;
+    default: *n = 4; return kSysZ;
+  }
+}
+}  // namespace
+
+int FrontEnd::garageZoneAt(int x, int y) const {
+  int n;
+  const Zone* z = garZones(garPage_, &n);
+  for (int i = 0; i < n; ++i)
+    if (x >= z[i].x1 && x <= z[i].x2 && y >= z[i].y1 && y <= z[i].y2) return i;
+  return -1;
 }
 
+int FrontEnd::weaponPrice(int id) const { return table_ && id >= 1 && id <= 11 ? table_->w[size_t(id)].price[std::clamp(difficulty_, 0, 2)] : 0; }
+int FrontEnd::boosterPrice(int i) const { return table_ && i >= 0 && i < 5 ? table_->boosters[size_t(i)].price : 0; }
+
 void FrontEnd::garageEnter() {
-  garSel_ = 0; garPage_ = 0; pod_ = 0; grid_ = 0;
-  podW_[0] = setup_.loadout.weaponA; podW_[1] = setup_.loadout.weaponB;
-  booster_ = setup_.loadout.booster;
-  fastRecharge_ = setup_.loadout.fastRecharge; wideLock_ = setup_.loadout.wideLock;
+  garPage_ = 0; garHov_ = -1; pod_ = 0; garOpen_ = 0;
+  podW_[0] = podW_[1] = -1; podAmmo_[0] = podAmmo_[1] = 0;
+  booster_ = 0;  // the roster record starts with turbo item 0 (the screen shows "Turbo: Delphine Injection" before anything is bought)
+  fastRecharge_ = wideLock_ = loader_ = false;
+  cash_ = startCredits_;
+  if (mx_ >= 0) garHov_ = garageZoneAt(mx_, my_);
 }
 
 void FrontEnd::garageBuildLoadout() {
   Loadout l;
   l.weaponA = podW_[0]; l.weaponB = podW_[1];
-  l.ammoA = podW_[0] > 0 && table_ ? table_->w[size_t(podW_[0])].pack : 0;
-  l.ammoB = podW_[1] > 0 && table_ ? table_->w[size_t(podW_[1])].pack : 0;
+  l.ammoA = podW_[0] > 0 ? podAmmo_[0] : 0;
+  l.ammoB = podW_[1] > 0 ? podAmmo_[1] : 0;
   l.booster = booster_;
   l.fastRecharge = fastRecharge_; l.wideLock = wideLock_;
   setup_.loadout = l;
 }
 
-bool FrontEnd::garageCell(int page, int i, int* x, int* y, int* w, int* h) const {
-  if (page == 0) { *x = 23 + int(i * 68.3); *y = 111; *w = 63; *h = 55; return i < 4; }                     // GARBOX4 slots
-  if (page == 2) { *x = 23 + int((i % 4) * 67.7); *y = 98 + int((i / 4) * 30.5); *w = 62; *h = 25; return i < 11; }  // GARBOX2 weapons 3 x 4
-  if (page == 3) { *x = 24 + (i % 3) * 90; *y = 101 + int((i / 3) * 43.5); *w = 82; *h = 36; return i < 5; }        // GARBOX3 boosters 2 x 3
-  if (page == 1) { *x = 137 + 16 + (i % 2) * 69; *y = 83 + 24; *w = 63; *h = 27; return i < 2; }                    // GARBOX1 pod windows
-  return false;
-}
-
-const Sprite* FrontEnd::cropIcon(int weapon) {  // the weapon picture of the grid cell, cut out of GARBOX2 (also used in the pod windows)
+const Sprite* FrontEnd::cropIcon(int weapon) {  // the picture of a weapon: its grid cell cut out of GARBOX2 (60 x 25, shown in the pod windows of the panel)
   auto it = icons_.find(weapon);
   if (it != icons_.end()) return &it->second;
   const Sprite* box = spr("GARBOX2.SPR");
   if (!box || weapon < 1 || weapon > 11) return nullptr;
-  int x, y, w, h;
-  garageCell(2, weapon - 1, &x, &y, &w, &h);
+  const Zone& z = kWeapZ[weapon - 1];
   Sprite ic;
-  ic.w = w; ic.h = h;
-  ic.pixels.assign(size_t(w) * size_t(h), 0);
-  for (int j = 0; j < h; ++j)
-    for (int i = 0; i < w; ++i) {
-      const int sx = x + i - box->hdr4, sy = y + j - box->hdr6;
-      if (sx >= 0 && sx < box->w && sy >= 0 && sy < box->h) ic.pixels[size_t(j) * size_t(w) + size_t(i)] = box->pixels[size_t(sy) * size_t(box->w) + size_t(sx)];
+  ic.w = 60; ic.h = 25;
+  ic.pixels.assign(size_t(ic.w) * size_t(ic.h), 0);
+  for (int j = 0; j < ic.h; ++j)
+    for (int i = 0; i < ic.w; ++i) {
+      const int sx = z.x1 + i - box->hdr4, sy = z.y1 + j - box->hdr6;
+      if (sx >= 0 && sx < box->w && sy >= 0 && sy < box->h) ic.pixels[size_t(j) * size_t(ic.w) + size_t(i)] = box->pixels[size_t(sy) * size_t(box->w) + size_t(sx)];
     }
   return &icons_.emplace(weapon, std::move(ic)).first->second;
 }
 
-void FrontEnd::drawRect(int x0, int y0, int x1, int y1, int idx) {
-  HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;
-  for (int t = 0; t < 2; ++t) {
-    c.fillIndex(x0 - t, y0 - t, x1 + t, y0 - t, idx); c.fillIndex(x0 - t, y1 + t, x1 + t, y1 + t, idx);
-    c.fillIndex(x0 - t, y0 - t, x0 - t, y1 + t, idx); c.fillIndex(x1 + t, y0 - t, x1 + t, y1 + t, idx);
+void FrontEnd::garageGo(int page, bool fromMouse) {
+  garPage_ = page;
+  garHov_ = fromMouse && mx_ >= 0 ? garageZoneAt(mx_, my_) : -1;  // the pointer stays where it was; the keyboard starts without a selection
+}
+
+void FrontEnd::garageChoose(int i, bool fromMouse) {
+  switch (garPage_) {
+    case 0:
+      if (i == 0) garageGo(1, fromMouse);
+      else if (i == 1) garageGo(3, fromMouse);
+      else if (i == 2) garageGo(4, fromMouse);
+      else { garageBuildLoadout(); race_ = true; }
+      break;
+    case 1:
+      if (i < 2) { pod_ = i; garageGo(2, fromMouse); }
+      else garageGo(0, fromMouse);
+      break;
+    case 2:
+      if (i == 11) { garageGo(1, fromMouse); break; }  // Cancel
+      if (weaponPrice(i + 1) > cash_) break;           // too expensive: the click is ignored (0x4C61B)
+      cash_ -= weaponPrice(i + 1);
+      podW_[pod_] = i + 1;
+      {
+        const int pack = table_ ? table_->w[size_t(i + 1)].pack : -1;
+        podAmmo_[pod_] = pack >= 0 && loader_ ? std::min(pack * 2, 9) : pack;
+      }
+      garageGo(1, fromMouse);
+      break;
+    case 3:
+      if (i == 5) { garageGo(0, fromMouse); break; }
+      if (i == booster_ || boosterPrice(i) > cash_) break;
+      cash_ -= boosterPrice(i);
+      booster_ = i;
+      garageGo(0, fromMouse);
+      break;
+    default:
+      if (i == 3) { garageGo(0, fromMouse); break; }
+      {
+        bool* f[3] = {&fastRecharge_, &wideLock_, &loader_};
+        if (*f[i] || kSysPrice[i] > cash_) break;
+        cash_ -= kSysPrice[i];
+        *f[i] = true;
+      }
+      break;
   }
 }
 
 void FrontEnd::garageKey(Key k) {
-  const int n = garPage_ == 0 ? 4 : garPage_ == 1 ? 2 : garPage_ == 2 ? 11 : garPage_ == 3 ? 5 : 2;
-  const int cols = garPage_ == 2 ? 4 : garPage_ == 3 ? 3 : garPage_ == 1 ? 2 : garPage_ == 0 ? 4 : 1;
-  int& sel = garPage_ == 0 ? garSel_ : garPage_ == 1 ? pod_ : grid_;
-  if (k == Key::Left) sel = (sel + n - 1) % n;
-  else if (k == Key::Right) sel = (sel + 1) % n;
-  else if (k == Key::Up) sel = sel - cols >= 0 ? sel - cols : sel;
-  else if (k == Key::Down) sel = sel + cols < n ? sel + cols : sel;
-  else if (k == Key::Back) {
-    if (garPage_ == 0) { go(Screen::Tracks); }
-    else if (garPage_ == 2) garPage_ = 1;
-    else garPage_ = 0;
+  int n;
+  garZones(garPage_, &n);
+  const int cols = garPage_ == 2 ? 4 : garPage_ == 3 ? 3 : garPage_ == 4 ? 4 : 1;
+  if (k == Key::Left || k == Key::Right || k == Key::Up || k == Key::Down) {
+    if (garHov_ < 0) { garHov_ = 0; return; }
+    const int c = garHov_ % cols;
+    if (k == Key::Left && c > 0) --garHov_;
+    else if (k == Key::Right && c < cols - 1 && garHov_ + 1 < n) ++garHov_;
+    else if (k == Key::Up && garHov_ - cols >= 0) garHov_ -= cols;
+    else if (k == Key::Down && garHov_ + cols < n) garHov_ += cols;
+  } else if (k == Key::Back) {  // the original has no Esc here; it steps back like the Ok / Cancel / Exit entries
+    if (garPage_ == 0) go(Screen::Tracks);
+    else if (garPage_ == 2) garageGo(1, false);
+    else garageGo(0, false);
   } else if (k == Key::Select) {
-    const int price = [&] { return 0; }();
-    (void)price;
-    if (garPage_ == 0) {
-      if (garSel_ == 0) { garPage_ = 1; pod_ = 0; }
-      else if (garSel_ == 1) { garPage_ = 3; grid_ = std::max(0, booster_); }
-      else if (garSel_ == 2) { garPage_ = 4; grid_ = 0; }
-      else { garageBuildLoadout(); race_ = true; }
-    } else if (garPage_ == 1) { garPage_ = 2; grid_ = podW_[pod_] > 0 ? podW_[pod_] - 1 : 0; }
-    else if (garPage_ == 2) {  // buy the weapon for this pod (selecting the same one again sells it back)
-      const int wid = grid_ + 1;
-      if (podW_[pod_] == wid) podW_[pod_] = -1;
-      else {
-        const int old = podW_[pod_];
-        podW_[pod_] = wid;
-        if (credits() < 0) podW_[pod_] = old;
-      }
-      garPage_ = 1;
-    } else if (garPage_ == 3) {
-      if (booster_ == grid_) booster_ = -1;
-      else { const int old = booster_; booster_ = grid_; if (credits() < 0) booster_ = old; }
-      garPage_ = 0;
-    } else if (garPage_ == 4) {
-      bool& f = grid_ == 0 ? fastRecharge_ : wideLock_;
-      f = !f;
-      if (credits() < 0) f = !f;
-    }
+    if (garHov_ >= 0) garageChoose(garHov_, false);
   }
 }
 
 void FrontEnd::garageClick(int x, int y) {
-  for (int i = 0; i < (garPage_ == 0 ? 4 : garPage_ == 1 ? 2 : garPage_ == 2 ? 11 : garPage_ == 3 ? 5 : 0); ++i) {
-    int cx, cy, cw, ch;
-    if (!garageCell(garPage_, i, &cx, &cy, &cw, &ch)) continue;
-    if (x >= cx && x < cx + cw && y >= cy && y < cy + ch) {
-      (garPage_ == 0 ? garSel_ : garPage_ == 1 ? pod_ : grid_) = i;
-      garageKey(Key::Select);
-      return;
-    }
+  const int i = garageZoneAt(x, y);
+  if (i >= 0) { garHov_ = i; garageChoose(i, true); }
+}
+
+void FrontEnd::drawGaragePanel(const Sprite& panel) {  // sub_4C9B2: the status panel, drawn at its final place
+  HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;
+  c.blit(panel, kPanelX, kPanelY, -1);
+  const Font* f = font("GARWEAP.FNT");
+  if (!f) return;
+  auto centre = [&](const std::string& s, int x1, int x2, int y) { drawText(*f, s, x1 + (x2 - x1 + 1 - f->textWidth(s)) / 2, y, -1); };
+  const int px = kPanelX, py = kPanelY;
+  centre("Cash: $" + std::to_string(cash_), px + 15, px + 148, py + 14);
+  const int slotX[2] = {18, 86};
+  for (int p = 0; p < 2; ++p) {
+    const int x1 = px + slotX[p], x2 = x1 + 59;
+    if (podW_[p] > 0) {
+      if (const Sprite* ic = cropIcon(podW_[p])) c.blit(*ic, x1, py + 25, -1);
+      centre(table_ ? table_->w[size_t(podW_[p])].name + " " : "", x1, x2, py + 28);
+      if (podAmmo_[p] >= 0) { const std::string a = "[" + std::to_string(podAmmo_[p]) + "]"; drawText(*f, a, x2 - f->textWidth(a), py + 40, -1); }
+    } else centre("Empty", x1, x2, py + 28);
   }
-  if (garPage_ == 4) {
-    const int row = (y - 105) / 20;
-    if (row >= 0 && row < 2 && x > 30 && x < 290) { grid_ = row; garageKey(Key::Select); }
-  }
+  const bool on[3] = {fastRecharge_, wideLock_, loader_};
+  for (int i = 0; i < 3; ++i) centre(std::string(kSysName[i]) + ": " + (on[i] ? "Fitted" : "Not Fitted"), px + 15, px + 148, py + 59 + 7 * i);
+  centre("Turbo: " + (table_ && booster_ >= 0 ? table_->boosters[size_t(booster_)].name : std::string("Not Fitted")), px + 15, px + 148, py + 88);
 }
 
 void FrontEnd::drawGarage() {
-  const Sprite* bg = spr("GARAGE" + std::to_string(setup_.ship) + (garPage_ == 0 && garSel_ == 3 ? "B" : "A") + ".SPR");  // B: the craft is lifted off for the start
-  if (!bg) bg = spr("GARAGEA.SPR");
-  if (!bg) return;
-  if (bg->palette) usePalette(*bg->palette);
+  const std::string n = std::to_string(setup_.ship);
+  const Sprite* A = spr("GARAGE" + n + "A.SPR");
+  if (!A) A = spr("GARAGEA.SPR");
+  if (!A) return;
+  const Sprite* B = spr("GARAGE" + n + "B.SPR");
+  if (!B) B = spr("GARAGEB.SPR");
+  if (!B) B = A;
+  if (A->palette) usePalette(*A->palette);
   HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;
-  c.blit(*bg, 0, 0, -1);
-  const Font* f = font("GARWEAP.FNT");
-  const int bright = brightIndex(true);
-  auto text = [&](const std::string& s, int cx, int y) { if (f) drawText(*f, s, cx - f->textWidth(s) / 2, y, -1); };
-  const char* kPanel[4] = {"BUT1", "BUT2", "BUT3", "BUT4"};
-  if (garPage_ <= 1 || garPage_ == 4) {
-    if (const Sprite* box = spr("GARBOX4.SPR")) c.blit(*box, box->hdr4, box->hdr6, transparentOf(*box));
-    for (int i = 0; i < 4; ++i) {
-      int x, y, w, h;
-      garageCell(0, i, &x, &y, &w, &h);
-      if (i == 3) text(str("GARAGE.ST0", kPanel[3]), x + w / 2, y + h / 2 - 4);
-      else if (garPage_ == 0 && i == garSel_) {}
-      if (garPage_ == 0 && i == garSel_) drawRect(x, y, x + w - 1, y + h - 1, bright);
-      if (i < 3) text(str("GARAGE.ST0", kPanel[i]), x + w / 2, y + h - 11);
+  c.blit(*A, 0, 0, -1);
+  const Font* fw = font("GARWEAP.FNT");
+  const Font* fc = font("CNFFONT.FNT");
+  const Font* fr = font("RESULTS.FNT");
+  auto centre = [&](const Font* f, const std::string& s, const Zone& z, int y, int idx = -1) { if (f) drawText(*f, s, z.x1 + (z.x2 - z.x1 + 1 - f->textWidth(s)) / 2, y, idx); };
+  auto middle = [&](const Font* f, const std::string& s, const Zone& z) { if (f) centre(f, s, z, z.y1 + (z.y2 - z.y1 + 1 - f->height) / 2); };
+  auto button = [&](const Zone& z, bool hot, const std::string& label) {  // sub_5609F
+    c.fillIndex(z.x1, z.y1, z.x1, z.y2, 0x25);
+    c.fillIndex(z.x1, z.y1, z.x2, z.y1, 0x2b);
+    c.fillIndex(z.x1, z.y2, z.x2, z.y2, 0x0a);
+    c.fillIndex(z.x2, z.y1, z.x2, z.y2, 0x0a);
+    const Sprite* src = hot ? A : B;
+    for (int y = z.y1 + 1; y < z.y2; ++y)
+      for (int x = z.x1 + 1; x < z.x2; ++x) buf_[size_t(y) * W + size_t(x)] = argb(pal_.rgba[src->pixels[size_t(y) * size_t(src->w) + size_t(x)]]);
+    centre(fc, label, z, z.y1 + 5);
+  };
+  auto price = [&](const Zone& z, int p) {  // the hover price over the item: green when affordable, red when not
+    if (fr) centre(fr, "$" + std::to_string(p), z, z.y1 + 10, p > cash_ ? 0xfd : 0xfc);
+  };
+  const Sprite* panel = spr("GARBOX1.SPR");
+  if (garPage_ == 0 || garPage_ == 1) {
+    if (panel) {
+      if (garPage_ == 1 || garOpen_ >= 1.0) drawGaragePanel(*panel);
+      else if (garOpen_ > 0) {  // the panel grows from (217,118) to its place (sub_5BA9C)
+        std::vector<uint32_t> bg(size_t(kPanelW) * kPanelH);
+        for (int y = 0; y < kPanelH; ++y) for (int x = 0; x < kPanelW; ++x) bg[size_t(y) * kPanelW + size_t(x)] = buf_[size_t(kPanelY + y) * W + size_t(kPanelX + x)];
+        drawGaragePanel(*panel);
+        std::vector<uint32_t> img(bg.size());
+        for (int y = 0; y < kPanelH; ++y) for (int x = 0; x < kPanelW; ++x) { img[size_t(y) * kPanelW + size_t(x)] = buf_[size_t(kPanelY + y) * W + size_t(kPanelX + x)]; buf_[size_t(kPanelY + y) * W + size_t(kPanelX + x)] = bg[size_t(y) * kPanelW + size_t(x)]; }
+        const double t = garOpen_;
+        const int x1 = int(217 + (kPanelX - 217) * t), y1 = int(118 + (kPanelY - 118) * t);
+        const int x2 = int(217 + (kPanelX + kPanelW - 1 - 217) * t), y2 = int(118 + (kPanelY + kPanelH - 1 - 118) * t);
+        const int dw = x2 - x1 + 1, dh = y2 - y1 + 1;
+        for (int y = 0; y < dh; ++y)
+          for (int x = 0; x < dw; ++x) buf_[size_t(y1 + y) * W + size_t(x1 + x)] = img[size_t(y * kPanelH / dh) * kPanelW + size_t(x * kPanelW / dw)];
+      }
     }
-  }
-  if (garPage_ == 1 || garPage_ == 2) {
-    if (const Sprite* box = spr("GARBOX1.SPR")) c.blit(*box, box->hdr4, box->hdr6, transparentOf(*box));
-    text(str("GARAGE.ST0", "WEP0"), 137 + 81, 83 + 12);
-    for (int p = 0; p < 2; ++p) {
-      int x, y, w, h;
-      garageCell(1, p, &x, &y, &w, &h);
-      if (podW_[p] > 0) if (const Sprite* ic = cropIcon(podW_[p])) c.blit(*ic, x + 1, y + 1, -1);
-      text(str("GARAGE.ST0", p == 0 ? "WEP1" : "WEP2"), x + w / 2, y + h + 4);
-      if (garPage_ == 1 && p == pod_) drawRect(x, y, x + w - 1, y + h - 1, bright);
+    if (garPage_ == 0) {
+      const char* tag[4] = {"BUT1", "BUT2", "BUT3", "BUT4"};
+      for (int i = 0; i < 4; ++i) button(kMainZ[i], garHov_ == i, str("GARAGE.ST0", tag[i]));
+    } else {
+      button(kMainZ[0], true, str("GARAGE.ST0", "WEP0"));  // "Load..." is only a title: always drawn with the bright picture
+      button(kPodZ[0], garHov_ == 0, str("GARAGE.ST0", "WEP1"));
+      button(kPodZ[1], garHov_ == 1, str("GARAGE.ST0", "WEP2"));
+      button(kPodZ[2], garHov_ == 2, str("GARAGE.ST0", "REP3"));
     }
-  }
-  if (garPage_ == 2) {
-    if (const Sprite* box = spr("GARBOX2.SPR")) c.blit(*box, box->hdr4, box->hdr6, transparentOf(*box));
-    int x, y, w, h;
-    garageCell(2, grid_, &x, &y, &w, &h);
-    drawRect(x, y, x + w - 1, y + h - 1, bright);
-  }
-  if (garPage_ == 3) {
-    if (const Sprite* box = spr("GARBOX3.SPR")) c.blit(*box, box->hdr4, box->hdr6, transparentOf(*box));
-    int x, y, w, h;
-    garageCell(3, grid_, &x, &y, &w, &h);
-    drawRect(x, y, x + w - 1, y + h - 1, bright);
-  }
-  if (garPage_ == 4) {
-    if (const Sprite* box = spr("GARBOX3.SPR")) c.blit(*box, box->hdr4, box->hdr6, transparentOf(*box));
-    c.fillIndex(20, 100, 299, 175, 0);
-    const char* names[2] = {"Fast recharge", "Wide lock-on"};
-    const int prices[2] = {kFastRechargePrice, kWideLockPrice};
-    const bool on[2] = {fastRecharge_, wideLock_};
-    for (int i = 0; i < 2; ++i) {
-      if (i == grid_) c.fillIndex(30, 105 + i * 20 - 2, 289, 105 + i * 20 + 14, brightIndex(false) / 2);
-      text(std::string(names[i]) + "  " + std::to_string(prices[i]) + (on[i] ? "  FITTED" : ""), 160, 105 + i * 20);
+  } else if (garPage_ == 2) {
+    if (const Sprite* box = spr("GARBOX2.SPR")) c.blit(*box, 12, 82, -1);
+    for (int i = 0; i < 11; ++i) if (table_) centre(fw, table_->w[size_t(i + 1)].name, kWeapZ[i], kWeapZ[i].y1 + 1);
+    centre(fw, str("GARAGE.ST0", "CANC"), kWeapZ[11], kWeapZ[11].y1 + 10);
+    if (garHov_ >= 0 && garHov_ < 11) price(kWeapZ[garHov_], weaponPrice(garHov_ + 1));
+  } else if (garPage_ == 3) {
+    if (const Sprite* box = spr("GARBOX3.SPR")) c.blit(*box, 13, 83, -1);
+    for (int i = 0; i < 5; ++i) if (table_) centre(fw, table_->boosters[size_t(i)].name, kTurboZ[i], kTurboZ[i].y1 + 2);
+    middle(fw, str("GARAGE.ST0", "CANC"), kTurboZ[5]);
+    if (booster_ >= 0)
+      if (const Sprite* ok = spr("GARGOT.SPR")) c.blit(*ok, kTurboCheck[booster_][0] - 24, kTurboCheck[booster_][1] - 18, 0);
+    if (garHov_ >= 0 && garHov_ < 5 && garHov_ != booster_) price(kTurboZ[garHov_], boosterPrice(garHov_));
+  } else {
+    if (const Sprite* box = spr("GARBOX4.SPR")) c.blit(*box, 12, 101, -1);
+    const bool on[3] = {fastRecharge_, wideLock_, loader_};
+    for (int i = 0; i < 3; ++i) {
+      centre(fw, kSysName[i], kSysZ[i], kSysZ[i].y1 + 2);
+      if (on[i]) if (const Sprite* ok = spr("GARGOT.SPR")) c.blit(*ok, kSysCheck[i][0] - 24, kSysCheck[i][1] - 18, 0);
     }
-  }
-  // information strip: what is under the selection, and the money left
-  std::string info;
-  if (table_) {
-    if (garPage_ == 2) { const auto& w = table_->w[size_t(grid_ + 1)]; info = w.name + "  " + std::to_string(w.price[std::clamp(difficulty_, 0, 2)]) + "  x" + std::to_string(w.pack); }
-    else if (garPage_ == 3) { const auto& b = table_->boosters[size_t(grid_)]; info = b.name + "  " + std::to_string(b.price); }
-  }
-  c.darken(0, 0, W - 1, 17, 55);
-  if (f) {
-    drawText(*f, info, 8, 4, -1);
-    const std::string cr = "Credits " + std::to_string(credits());
-    drawText(*f, cr, W - 8 - f->textWidth(cr), 4, -1);
+    middle(fw, str("GARAGE.ST0", "EXIT"), kSysZ[3]);
+    if (garHov_ >= 0 && garHov_ < 3 && !on[garHov_]) price(kSysZ[garHov_], kSysPrice[garHov_]);
   }
 }
+
 
 // ------------------------------------------------------------------------------------------------------------------ records, best drivers, results
 const Palette* FrontEnd::facePalette() {  // the pilot faces (BESTF*) have no palette of their own: they use the Best Drivers screen's

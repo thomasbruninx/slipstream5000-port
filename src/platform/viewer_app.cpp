@@ -78,7 +78,7 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
     front_ = std::make_unique<FrontEnd>();
     if (front_->init(*data_, &audio_)) {
       front_->setDefaults(track_, opt_.laps, opt.weapons == "default" ? Loadout{} : playerLoadout_);
-      front_->setEconomy(&weaponTable_, aiTables_.difficulty, 5000);
+      front_->setEconomy(&weaponTable_, aiTables_.difficulty, 750);
       front_->start(opt.skipIntro);
       frontActive_ = true;
     } else front_.reset();
