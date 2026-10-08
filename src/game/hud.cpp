@@ -47,6 +47,16 @@ bool HudAssets::load(const GameData& d, int ship, const Palette& pal) {
     ok &= loadSprite(d, c + "TN" + std::to_string(f + 1) + ".SPR", &consTop[f]);
     ok &= loadSprite(d, c + "BN" + std::to_string(f + 1) + ".SPR", &consBottom[f]);
   }
+  if (auto exe = d.read("SLIPSTRM.EXE")) {
+    constexpr size_t kBase = 0x4D854 - 0x10000;
+    auto rd = [&](size_t va) { const size_t o = kBase + va; return o + 4 <= exe->size() ? uint32_t((*exe)[o] | ((*exe)[o + 1] << 8) | ((*exe)[o + 2] << 16) | (uint32_t((*exe)[o + 3]) << 24)) : 0u; };
+    for (int i = 1; i <= 10; ++i) {
+      const uint32_t a = rd(0x55680 + 4 * size_t(i));
+      map.cx[i] = int(a & 0xFFFF); map.cy[i] = int(a >> 16);
+      map.dist[i] = int32_t(rd(0x556a8 + 4 * size_t(i)));
+    }
+    map.loaded = map.dist[1] > 0 && map.dist[1] < 0x10000000;
+  }
   loaded = ok;
   return ok;
 }
@@ -72,6 +82,24 @@ void HudCanvas::darken(int x0, int y0, int x1, int y1, int percent) const {
       const uint32_t r = ((p >> 16) & 255) * uint32_t(100 - percent) / 100, g = ((p >> 8) & 255) * uint32_t(100 - percent) / 100, b = (p & 255) * uint32_t(100 - percent) / 100;
       p = 0xff000000u | (r << 16) | (g << 8) | b;
     }
+}
+
+void HudCanvas::pixel(int x, int y, int idx, int cx0, int cy0, int cx1, int cy1) const {
+  if (x < cx0 || x > cx1 || y < cy0 || y > cy1) return;
+  fillIndex(x, y, x, y, idx);
+}
+
+void HudCanvas::line(int x0, int y0, int x1, int y1, int idx, int cx0, int cy0, int cx1, int cy1) const {
+  if (std::max(x0, x1) < cx0 || std::min(x0, x1) > cx1 || std::max(y0, y1) < cy0 || std::min(y0, y1) > cy1) return;
+  const int dx = std::abs(x1 - x0), dy = -std::abs(y1 - y0), sx_ = x0 < x1 ? 1 : -1, sy_ = y0 < y1 ? 1 : -1;
+  int err = dx + dy;
+  for (int guard = 0; guard < 2000; ++guard) {
+    pixel(x0, y0, idx, cx0, cy0, cx1, cy1);
+    if (x0 == x1 && y0 == y1) break;
+    const int e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx_; }
+    if (e2 <= dx) { err += dx; y0 += sy_; }
+  }
 }
 
 void HudCanvas::blitScaled(const Sprite& s, int x, int y, int tw, int th, int transparent) const {

@@ -17,7 +17,7 @@ its dylibs (`scripts/bundle_dylibs.py`), so the package is self-contained.
 
 ## Command line / keys
 `--soundfont FILE`, `--music NAME[.HMP]` (INGAME2/3/4/6, INTRO, WIN, LOSE), `--no-music`, `--no-sfx`, `--no-audio`,
-`--volume V`, `--music-volume V` (0.8), `--sfx-volume V`. Keys: `M` music on/off, `N` effects on/off. Headless modes
+`--volume V`, `--music-volume V` (0.8), `--sfx-volume V`. Keys: `Shift+M` music on/off, `N` effects on/off. Headless modes
 (`--screenshot`, `--bench`) never open a device. Without FluidSynth at build time (or without a soundfont) the game runs with
 effects only and says so on stderr.
 Offline rendering for checks: `slipstream_audio_dump --music INGAME2.HMP --seconds 20 --out x.wav` /

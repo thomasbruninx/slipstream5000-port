@@ -24,6 +24,9 @@ struct HudAssets {
   Sprite nsight, tsight[2], turbo, consExt;       // crosshair, lock markers (flashing), turbo indicator, bar of the external views
   Sprite consTop[2], consBottom[2];               // CON<ship>_TN1/2, CON<ship>_BN1/2 (frame 2 = dark piece)
   Palette palette;
+  // Track map placement per track 1..10, read from the executable (tables 0x55680 / 0x556A8, used by 0x3AF50): centre on the 320x200 screen and the
+  // world distance the orthographic camera is set to (units per screen pixel = dist / 256)
+  struct MapParams { int cx[11] = {}, cy[11] = {}; int32_t dist[11] = {}; bool loaded = false; } map;
   bool loaded = false;
   bool load(const GameData& data, int shipIndex, const Palette& pal);
 };
@@ -81,6 +84,8 @@ struct HudCanvas {
   void text(const Font& f, const std::string& s, int x, int y, int palIndex) const;  // x left
   void textCentered(const Font& f, const std::string& s, int x0, int x1, int y, int palIndex) const;
   void darken(int x0, int y0, int x1, int y1, int percent) const;
+  void pixel(int x, int y, int palIndex, int cx0, int cy0, int cx1, int cy1) const;  // one virtual pixel, clipped to the rectangle
+  void line(int x0, int y0, int x1, int y1, int palIndex, int cx0, int cy0, int cx1, int cy1) const;  // 1 px Bresenham line in virtual coordinates
 };
 
 }  // namespace slip

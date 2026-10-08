@@ -296,7 +296,7 @@ int main(int argc, char** argv) {
             case SDLK_F7: app.toggleAllScenery(); break;
             case SDLK_F8: app.toggleAssist(); break;
             case SDLK_F9: app.toggleAI(); break;
-            case SDLK_M: app.toggleMusic(); break;
+            case SDLK_M: if (e.key.mod & SDL_KMOD_SHIFT) app.toggleMusic(); else app.toggleMap(); break;
             case SDLK_N: app.toggleSfx(); break;
             case SDLK_X: app.cycleWeapon(); break;
             case SDLK_V: app.toggleCamera(); break;

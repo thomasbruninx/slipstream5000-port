@@ -36,7 +36,7 @@ std::vector<std::string> PauseMenu::items(const GameSettings& s) const {
     case Page::Main: return {optMain_[0], optMain_[1], optMain_[2], optMain_[3]};
     case Page::Config: return {optConfig_[0], optConfig_[1], optConfig_[2], optConfig_[4], optConfig_[5], optConfig_[3]};
     case Page::Sound: return {"Music  " + pct(s.music), "Effects  " + pct(s.sfx), optConfig_[3]};
-    case Page::General: return {std::string("Speed  ") + (s.kph ? "kph" : "mph"), optConfig_[3]};
+    case Page::General: return {std::string("Speed  ") + (s.kph ? "kph" : "mph"), std::string("Track map  ") + (s.trackMap ? "on" : "off"), optConfig_[3]};
     case Page::Difficulty: return {std::string("Level  ") + std::to_string(s.difficulty) + (s.difficulty == 0 ? " (easy)" : s.difficulty == 1 ? " (normal)" : " (hard)"), optConfig_[3]};
     case Page::Detail: return {"Detail  " + std::to_string(s.detail), optConfig_[3]};
     case Page::Controls:
@@ -81,6 +81,7 @@ PauseMenu::Action PauseMenu::key(Key k, GameSettings* s) {
       return Action::None;
     case Page::General:
       if (sel_ == 0) s->kph = !s->kph;
+      else if (sel_ == 1) s->trackMap = !s->trackMap;
       else if (k == Key::Select) { page_ = Page::Config; sel_ = 0; }
       return Action::None;
     case Page::Difficulty:

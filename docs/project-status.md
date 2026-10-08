@@ -70,3 +70,5 @@ A window/input/loop ✅ · B display original asset ✅ · C free-camera track v
 * DESIGN ONLY (not original behaviour): the protocol; the original's network code was not ported.
 * DONE: Tab player list (place, name, lap, ping), host migration (lowest remaining id takes over; `KILLHOST=1 tools/net_race_test.sh`).
 * OPEN: return to lobby after a race, names above ships, internet matchmaking (the `ITransport` / `IDiscovery` seams are in place), two-machine test.
+
+* DONE: track map overlay of the race HUD as in the original (docs/hud.md "Track map"): ortho top-down map centred on the ship, heading up, green node lines, lap-line marker, ship dots; `M` toggles it, default from `SLIPSTRM.CFG`; music toggle is now `Shift+M`.

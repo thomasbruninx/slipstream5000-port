@@ -14,6 +14,7 @@ struct GameSettings {
   float music = 0.8f, sfx = 1.0f;   // volumes 0..1
   int difficulty = 1;               // [0x492EA]: 0..2
   bool kph = false;                 // speed unit of the HUD
+  bool trackMap = true;             // General page "Track map" (config word [0x492FE]): the map overlay of the race screen (M)
   int detail = 3;                   // 0..3: scenery size cull thresholds 32 / 20 / 10 / 5 (0x350C7); 3 = highest
 };
 

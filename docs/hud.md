@@ -30,6 +30,12 @@ read from the disassembly, INFERRED, SPECULATIVE.
 | sights | `NSIGHT.SPR` centred on the projection centre (-14, -11) for weapons with a lock cone; `TSIGHT0/1.SPR` flashing at the locked ship (-6, -6) | 0x5C234, 0x522C0 |
 | shake | window centre jitter after damage | 0x440F3 |
 
+## Track map (CONFIRMED structure: RaceCameraSetup 0x3AF50, called at 0x58B52 / 0x57CBB when `[0x492FE]` is set; marker routine 0x3B2B6; projection 0x3B3D1 / 0x1CAAC)
+* Option: General menu "Track map: Off / On" (`GENERAL.ST0` CAT4), config word `[0x492FE]` = `SLIPSTRM.CFG` file offset 177 (1 in the shipped file). The port: `M` toggles it (music moved to `Shift+M`), the pause menu's General page has the entry, the CFG value is the default.
+* Camera: orthographic (`[0x180DC]` = 1 -> projection 0x1CB49: `screen = centre + (view * (0x40000000 / Z)) >> 30` with `Z = table 0x556A8[track] >> 8`, i.e. **world units per pixel = dist / 256**, 90112 on most tracks), looking straight down from above the human ship and turned with the ship's yaw only (`0x231F4` -> yaw matrix, pitched by -0x4000): the ship is always at the fixed screen point given by table 0x55680 (low word x, high word y: (70,50) Chicago, (70,56) most tracks, (70,58) Norway, (70,60) Cave, (90,56) New York) and **its heading points up**. View X = along the ship's right vector, view Y = along its forward vector (screen y grows downwards).
+* Drawn over the 3D window (clip x 4..315, y 8..166), before the console / text: every path node (TRD header +8 list, 0x32 bytes each) with a 1 px line to its `next` (+0) and `alternative` (+4) node in colour 0xFC (green); the lap-line node (TRD header +6 piece, entry +0x1E) as a white (0xFF) 3x3 square; the other ships as a 5x5 black ring with a 3x3 core without corners (a plus): AI grey 0xFB, the second human white 0xFF, and last the player in yellow 0xFE (the manual: "your position is the yellow dot").
+* Port: `ViewerApp::drawMap` (hud map parameters are read from the executable in `HudAssets::load`), `HudCanvas::line/pixel`. In multiplayer other humans are white. Not ported: the two-player layout.
+
 ## Rules found on the way
 * Damage beyond 100 on the human ship: `0x4411A` shows "GAME OVER" for 4 s (`[0x42DFC]` timer 0xFA0), the loop then ends the race (0x44022 -> 0x591D9). The port ends the race the same way (LOSE music).
 * Camera keys of the original: F1..F5 (player 1) / F6..F10 (player 2) select camera callbacks 0x44AF6 (cockpit with console), 0x44DFE (smoothed chase), 0x44F64 (rear view: the ship matrix negated, label "Rear" 0x44A25),

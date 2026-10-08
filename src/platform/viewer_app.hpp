@@ -95,6 +95,7 @@ class ViewerApp {
   void netBackspace();
   std::string netSummary() const;  // one line per ship: owner, laps, finish (used by the headless test driver)
   void toggleHud() { hudOn_ = !hudOn_; }
+  void toggleMap() { settings_.trackMap = !settings_.trackMap; }
   bool hudActive() const { return hudOn_ && driving_ && mode_ == AppMode::Track && hudAssets_.loaded; }
   void toggleAssist() { simCfg_.assist = !simCfg_.assist; }
   void togglePainter() { painter_ = !painter_; }
@@ -176,6 +177,7 @@ class ViewerApp {
   void updatePieceLights();
   int hudShakeX_ = 0, hudShakeY_ = 0;
   void drawHud();
+  void drawMap(const HudCanvas& c);
   void applySettings();
   int view_ = 0;  // 0 cockpit, 1 cockpit + own ship, 2 chase
   bool cockpit() const { return view_ != 2; }

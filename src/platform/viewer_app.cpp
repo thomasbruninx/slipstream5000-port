@@ -32,6 +32,8 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
   pause_.load(*data_);
   settings_.music = opt.audio.music; settings_.sfx = opt.audio.sfx; settings_.difficulty = aiTables_.difficulty;
   weaponTable_ = loadWeaponTable(*data_);
+  if (auto cfg = data_->read("SLIPSTRM.CFG"))  // config word [0x492FE] (file offset 177): Track map on / off
+    if (cfg->size() > 178 && (*cfg)[0] == 'V') settings_.trackMap = ((*cfg)[177] | ((*cfg)[178] << 8)) != 0;
   refPoints_ = loadShipRefPoints(*data_);
   {
     std::string spec = opt.weapons, perr;
@@ -757,6 +759,64 @@ void ViewerApp::menuKey(PauseMenu::Key k) {
   else if (act == PauseMenu::Action::ExitGame) quit_ = true;
 }
 
+// Track map (RaceCameraSetup 0x3AF50, CONFIRMED structure): an orthographic camera looking straight down from above the ship, turned with the ship's heading
+// (yaw only), so the ship sits at a fixed screen point (per-track centre, table 0x55680) with its heading pointing up; scale = (table 0x556A8 >> 8) world units per
+// pixel. Drawn: every path node's links (next, alternative) as green lines (colour 0xFC), the lap line node as a white 3x3 square (0xFF), the other ships as black
+// outlined plus-shaped dots (AI grey 0xFB, other humans white 0xFF), the player on top in yellow (0xFE). Everything is clipped to the 3D window.
+void ViewerApp::drawMap(const HudCanvas& c) {
+  const Track& t = scene_->track_data;
+  if (t.nodes.empty()) return;
+  const int ti = std::clamp(track_, 1, 10);
+  const double unitsPerPx = double(hudAssets_.map.dist[ti]) / 256.0;
+  if (unitsPerPx <= 0) return;
+  const int cx = hudAssets_.map.cx[ti], cy = hudAssets_.map.cy[ti];
+  const double* m = player_.m;
+  double fx = m[6], fz = m[8];
+  const double fl = std::sqrt(fx * fx + fz * fz);
+  if (fl < 1e-3) { fx = std::sin(player_.yaw); fz = std::cos(player_.yaw); } else { fx /= fl; fz /= fl; }
+  auto proj = [&](double x, double z, int* sx, int* sy) {  // heading up: X = along the ship's right vector, Y = along its forward vector
+    const double dx = x - player_.x, dz = z - player_.z;
+    const double X = fz * dx - fx * dz, Y = fx * dx + fz * dz;
+    *sx = cx + int(std::floor(X / unitsPerPx));
+    *sy = cy - int(std::floor(Y / unitsPerPx));
+  };
+  const int x0 = HudLayout::vx0, y0 = HudLayout::vy0, x1 = HudLayout::vx1, y1 = HudLayout::vy1;
+  for (const TrackNode& n : t.nodes) {
+    int ax, ay;
+    proj(n.pos.x, n.pos.z, &ax, &ay);
+    for (int link : {n.next, n.alt}) {
+      if (link < 0 || size_t(link) >= t.nodes.size()) continue;
+      int bx, by;
+      proj(t.nodes[size_t(link)].pos.x, t.nodes[size_t(link)].pos.z, &bx, &by);
+      c.line(ax, ay, bx, by, 0xFC, x0, y0, x1, y1);
+    }
+  }
+  if (t.lapPieceB >= 0 && size_t(t.lapPieceB) < t.pieces.size()) {
+    const int nd = t.pieces[size_t(t.lapPieceB)].node;
+    if (nd >= 0 && size_t(nd) < t.nodes.size()) {
+      int sx, sy;
+      proj(t.nodes[size_t(nd)].pos.x, t.nodes[size_t(nd)].pos.z, &sx, &sy);
+      for (int yy = sy - 1; yy <= sy + 1; ++yy) for (int xx = sx - 1; xx <= sx + 1; ++xx) c.pixel(xx, yy, 0xFF, x0, y0, x1, y1);
+    }
+  }
+  auto dot = [&](const ShipState& s, int colour) {  // 0x3B2B6: 5x5, black ring, 3x3 core without its corners
+    int sx, sy;
+    proj(s.x, s.z, &sx, &sy);
+    for (int dy = -2; dy <= 2; ++dy)
+      for (int dx = -2; dx <= 2; ++dx) {
+        const bool edge = std::abs(dx) == 2 || std::abs(dy) == 2, corner = std::abs(dx) >= 1 && std::abs(dy) >= 1;
+        if (edge && std::abs(dx) == 2 && std::abs(dy) == 2) continue;
+        if (edge && (std::abs(dx) == 2 ? std::abs(dy) > 1 : std::abs(dx) > 1)) continue;
+        c.pixel(sx + dx, sy + dy, edge || corner ? 0 : colour, x0, y0, x1, y1);
+      }
+  };
+  for (int i = 0; i < 10; ++i)
+    if (i != player_.ship && shipShown(i) && !(netplay_ && netplay_->humanSlot(i))) dot(grid_[size_t(i)], 0xFB);
+  for (int i = 0; i < 10; ++i)
+    if (i != player_.ship && shipShown(i) && netplay_ && netplay_->humanSlot(i)) dot(grid_[size_t(i)], 0xFF);
+  dot(player_, 0xFE);
+}
+
 void ViewerApp::drawHud() {
   if (!hudActive()) return;
   const ShipState& me = player_;
@@ -808,6 +868,11 @@ void ViewerApp::drawHud() {
     st.portraitPilot = sp;
     const AiState& pr = ai_[size_t(sp - 1)];
     st.portraitText = pr.finished ? "FINISHED" : std::to_string(pr.rank);
+  }
+  if (settings_.trackMap && hudAssets_.map.loaded) {  // 0x58B52: the map is drawn after the 3D view, before the console and the text
+    HudCanvas mc;
+    mc.fb = renderer_.framebuffer(); mc.w = renderer_.width(); mc.h = renderer_.height(); mc.pal = &hudAssets_.palette;
+    drawMap(mc);
   }
   hud_.draw(renderer_.framebuffer(), renderer_.width(), renderer_.height(), st, hudAssets_);
   if (netplay_) {
