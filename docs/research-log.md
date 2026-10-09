@@ -349,3 +349,10 @@ Open question: the speed bonus table `0x50252` and the AI tier from the start sl
   The tables are read from the executable (`loadSky` in `scene.cpp`). CONFIRMED: structure, tables, speeds, draw order. INFERRED: the picture is placed at its bottom centre at native pixel size, drift direction, and the sky colour:
   the "Sky" material ramp (16 colours, zenith .. horizon, its last entry equals the "Ground" colour on Canyon / Norway) is used as an elevation gradient (the original shades bands through 0x1D242); "Ground" is the flat colour below the horizon.
 * Debug switches: `SLIP_PUREDEPTH` (plain z test, no scenery / road layering), `SLIP_PICK=x,y` (prints the materials written to a pixel), `SLIP_SKYLOG`, `SLIP_SHOWHIDDEN`, `SLIP_NOVIS`, `SLIP_PORTAL_LOG`.
+
+## Session: sector transitions (visibility classes, portal walk) — CONFIRMED from 0x39A6E / 0x3A55C / 0x39D50
+* The class-8 rule ("a record with class bit 8 needs bit 8 in the camera mask", 0x39A89) exists only in the **plain far-to-near pass** (0x39A6E). The portal-reached list (0x3A55C) tests just `rec[+0x16] & mask != 0`. The port applied the class-8 rule everywhere, so a tunnel
+  (class 0x0A, entered from open ground with mask 0x02: London, Hawaii) stayed invisible until the camera was inside it. `SoftwareRenderer::class8Rule` is now set only while pass 2 draws pieces.
+* Portal walk: neighbouring cell boxes overlap, so the camera is often inside the next piece before it crosses the portal plane. Such a neighbour is entered with the unchanged window; a portal polygon that is at or behind the near plane no longer ends the walk.
+* Debug: `SLIP_CHECKPORTAL=<prefix>` (with `--drive --sim`) compares every 0.05 s the frame with a full draw and saves differing frames (`SLIP_CHECKVIS=1`: reference with the visibility classes off); `SLIP_CELLLOG`, `SLIP_HINTLOG`, `SLIP_PORTAL_LOG` print the cell / portal decisions.
+  Differences after a crash are false alarms (screen shake changes between the two renders).

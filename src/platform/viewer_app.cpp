@@ -1459,7 +1459,9 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
           const auto& pb = sc.pieceBoxes[it.idx];
           if (!renderer_.boxInFrustum(sc, pb.lo, pb.hi)) continue;
           renderer_.setPieceWindow(it.idx, uni);
+          renderer_.class8Rule = true;
           renderer_.drawMesh(sc, sc.track, xf, &sc.piecePolys[it.idx], itemId++);
+          renderer_.class8Rule = false;
         } else {
           renderer_.setSceneryWindow(&uni);
           drawScenery(it);

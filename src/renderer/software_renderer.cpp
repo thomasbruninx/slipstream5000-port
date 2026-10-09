@@ -104,7 +104,7 @@ void SoftwareRenderer::drawSky(const Scene& scene, double seconds) {
 bool SoftwareRenderer::visAllows(uint16_t vis) const {
   if (vis == 0xFFFF || visMask == 0xFFFF) return true;
   if ((vis & visMask) == 0) return false;
-  if (!(visMask & 8) && (vis & 8)) return false;  // class 8 only visible from class-8 records (0x39A89)
+  if (class8Rule && !(visMask & 8) && (vis & 8)) return false;  // class 8 only visible from class-8 records (0x39A89, second pass only)
   return true;
 }
 
@@ -387,7 +387,15 @@ void SoftwareRenderer::computePortalVisibility(const Scene& scene) {
     for (int j = 0; j < 3 && cand < 0; ++j)
       if (hb.link[j] >= 0 && size_t(hb.link[j]) < inGraph.size() && inGraph[size_t(hb.link[j])] && !scene.pieceBoxes[size_t(hb.link[j])].empty && scene.pieceContains(size_t(hb.link[j]), cp)) cand = hb.link[j];
     if (cand < 0 && scene.pieceContains(size_t(pieceHint), cp, 4000.0f)) cand = pieceHint;  // a camera close to a wall may fail the cell test of its own piece and pass the test of a large decor piece: the walk would start there and draw nothing
+    if (std::getenv("SLIP_HINTLOG") && cand != start) std::fprintf(stderr, "hint %d point-start %d chosen %d\n", pieceHint, start, cand);
     if (cand >= 0) start = cand;
+  }
+  if (std::getenv("SLIP_CELLLOG")) {
+    for (size_t i = 0; i < scene.pieceBoxes.size(); ++i)
+      if (inGraph[i] && !scene.pieceBoxes[i].empty && scene.pieceContains(i, cp, 20000.0f)) {
+        const auto& b = scene.pieceBoxes[i];
+        std::fprintf(stderr, "cell piece %zu flags=%02x exact=%d vol=%.3g links %d %d %d\n", i, unsigned(b.flags), int(scene.pieceContains(i, cp)), (double(b.hi[0] - b.lo[0]) * double(b.hi[1] - b.lo[1]) * double(b.hi[2] - b.lo[2])), b.link[0], b.link[1], b.link[2]);
+      }
   }
   if (start < 0) return;  // camera outside every piece: draw everything (the original also has no cell then)
   pieceWin_.assign(scene.pieceBoxes.size(), WinRect{});
@@ -415,9 +423,42 @@ void SoftwareRenderer::computePortalVisibility(const Scene& scene) {
         const MeshPoly& p = sc.track.polys[size_t(box.linkPoly[j])];
         const Vec3& v0 = sc.track.verts[p.first];
         // portal normals point back into the piece that owns them (verified on all tracks), so the camera must be on that side
-        if (p.normal.x * (cp[0] - v0.x) + p.normal.y * (cp[1] - v0.y) + p.normal.z * (cp[2] - v0.z) <= 0) continue;
+        const float side = p.normal.x * (cp[0] - v0.x) + p.normal.y * (cp[1] - v0.y) + p.normal.z * (cp[2] - v0.z);
+        static const bool plog = std::getenv("SLIP_PORTAL_LOG") != nullptr;
+        if (plog) std::fprintf(stderr, "  piece %d link %d -> %d side %g win %d,%d-%d,%d\n", i, j, box.link[j], double(side), rect.x0, rect.y0, rect.x1, rect.y1);
+        const float nlen = std::sqrt(p.normal.x * p.normal.x + p.normal.y * p.normal.y + p.normal.z * p.normal.z);
+        if (side <= 0) {
+          // a camera that has just crossed the portal plane (within a few near distances) is already in the sector behind it
+          // (the cell boxes of neighbouring pieces overlap a little, so the camera can be inside both: the test then keeps the smaller one, the one it left)
+          const size_t nb = size_t(box.link[j]);
+          if ((nlen > 0 && -side / nlen < r.cam_.nearPlane * 4.0f) || (nb < sc.pieceBoxes.size() && !sc.pieceBoxes[nb].empty && sc.pieceContains(nb, cp, 4000.0f))) visit(box.link[j], rect, i, depth + 1);
+          continue;
+        }
         WinRect pr;
-        if (!r.polyRect(sc, p, cp, rect, &pr)) continue;
+        {
+          // the cell boxes of neighbouring pieces overlap: a camera that is already inside the neighbour sees it unrestricted (the portal polygon is then at the camera and its projection covers only a part of the screen)
+          const size_t nb0 = size_t(box.link[j]);
+          if (nb0 < sc.pieceBoxes.size() && !sc.pieceBoxes[nb0].empty && sc.pieceContains(nb0, cp)) { visit(box.link[j], rect, i, depth + 1); continue; }
+        }
+        if (!r.polyRect(sc, p, cp, rect, &pr)) {
+          // A camera on (or within the near distance of) the portal plane, e.g. just leaving a caged section, has the whole portal polygon at or behind the near plane: nothing is left to
+          // project, but the sector behind the portal is right in front of the camera, so the window stays unchanged.
+          const float nl = std::sqrt(p.normal.x * p.normal.x + p.normal.y * p.normal.y + p.normal.z * p.normal.z);
+          const size_t nb = size_t(box.link[j]);
+          if ((nl > 0 && side / nl < r.cam_.nearPlane * 4.0f) || (nb < sc.pieceBoxes.size() && !sc.pieceBoxes[nb].empty && sc.pieceContains(nb, cp, 4000.0f))) pr = rect;
+          else {
+            if (plog) {
+              std::fprintf(stderr, "    polyRect failed (count %d):", int(p.count));
+              for (uint16_t k = 0; k < p.count; ++k) {
+                const Vec3& v = sc.track.verts[p.first + k];
+                const float rx = v.x - cp[0], ry = v.y - cp[1], rz = v.z - cp[2];
+                std::fprintf(stderr, " (%.0f %.0f z=%.0f)", double(rx * r.right_[0] + ry * r.right_[1] + rz * r.right_[2]), double(rx * r.up_[0] + ry * r.up_[1] + rz * r.up_[2]), double(rx * r.fwd_[0] + ry * r.fwd_[1] + rz * r.fwd_[2]));
+              }
+              std::fprintf(stderr, "\n");
+            }
+            continue;
+          }
+        }
         visit(box.link[j], pr, i, depth + 1);
       }
     }
@@ -426,6 +467,7 @@ void SoftwareRenderer::computePortalVisibility(const Scene& scene) {
   if (std::getenv("SLIP_PORTAL_LOG")) {
     int vis = 0;
     for (size_t i = 0; i < pieceWin_.size(); ++i) if (inGraph[i] && pieceWin_[i].vis) ++vis;
+    if (std::getenv("SLIP_CELLLOG")) for (size_t i = 0; i < pieceWin_.size(); ++i) if (inGraph[i] && pieceWin_[i].vis) std::fprintf(stderr, "reached %zu flags=%02x\n", i, unsigned(scene.pieceBoxes[i].flags));
     std::fprintf(stderr, "portal: camera %.0f %.0f %.0f start piece %d, %d pieces reached\n", cp[0], cp[1], cp[2], start, vis);
   }
   if (!union_.vis) {

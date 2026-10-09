@@ -260,7 +260,30 @@ int main(int argc, char** argv) {
     drive.throttle = 1;
     drive.fire = std::getenv("SLIP_FIRE") != nullptr;  // test hook: hold the trigger during --sim
     if (const char* st = std::getenv("SLIP_STEER")) drive.steer = float(std::atof(st));  // test hook: steer during --sim
-    for (double t = 0; t < simSeconds; t += 1.0 / 60.0) app.update(1.0 / 60.0, drive);
+    const char* chk = std::getenv("SLIP_CHECKPORTAL");  // debug: every 0.05 s compare the frame with the portal-culled one against a full draw, write the bad ones to <chk>_<t>_a/b.ppm
+    int step = 0;
+    for (double t = 0; t < simSeconds; t += 1.0 / 60.0) {
+      app.update(1.0 / 60.0, drive);
+      if (chk && ++step % 3 == 0) {
+        app.render();
+        const std::vector<uint32_t> a(app.renderer().pixels(), app.renderer().pixels() + size_t(app.renderer().width()) * size_t(app.renderer().height()));
+        const bool visRef = std::getenv("SLIP_CHECKVIS") != nullptr;  // reference = the visibility classes off as well (F5)
+        if (visRef) app.toggleVisibility(); else setenv("SLIP_NOPORTAL", "1", 1);
+        app.render();
+        if (visRef) app.toggleVisibility(); else unsetenv("SLIP_NOPORTAL");
+        size_t diff = 0;
+        const uint32_t* b = app.renderer().pixels();
+        for (size_t i = 0; i < a.size(); ++i) diff += a[i] != b[i];
+        if (diff > 1500) {
+          std::fprintf(stderr, "checkportal t=%.2f diff=%zu\n", t, diff);
+          writePPM(std::string(chk) + "_" + std::to_string(int(t * 100)) + "_b.ppm", app.renderer());
+          setenv("SLIP_NOPORTAL_OFF", "1", 1);
+          unsetenv("SLIP_NOPORTAL_OFF");
+          app.render();
+          writePPM(std::string(chk) + "_" + std::to_string(int(t * 100)) + "_a.ppm", app.renderer());
+        }
+      }
+    }
     app.update(1.0 / 60.0, simSeconds > 0 ? drive : InputState{});
     if (const char* pk = std::getenv("SLIP_PAUSE")) {  // test hook: open the pause menu, then press the listed keys (u d l r s b)
       app.openPause();

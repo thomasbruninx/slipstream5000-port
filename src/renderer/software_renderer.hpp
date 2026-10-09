@@ -63,6 +63,9 @@ class SoftwareRenderer {
   // threshold 0x20/0x14/0x0A/5 for detail 0..3; objects at or in front of the near distance are always drawn).
   float minScenerySize = 5.0f;
   bool sceneryBigEnough(const double centerWorld[3], float radius) const;
+  // class-8 records need class 8 in the camera mask only in the plain far-to-near pass (0x39A89); the portal-reached list (0x3A55C) and the scenery test (0x37931) check just the intersection,
+  // so a tunnel entered from outside (class 0x0A seen from class 0x02) is drawn through its portal.
+  bool class8Rule = false;
   bool visAllows(uint16_t vis) const;
   // Portal visibility (CONFIRMED structure, 0x39C58/0x39E67/0x3A065): starting from the piece containing the
   // camera, walk through portal polygons (TRC polygon flag bit 0) that face the camera; a neighbour is visited
