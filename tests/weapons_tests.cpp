@@ -71,6 +71,22 @@ int main() {
     NEAR(r.b.damageB, 2.0, 1e-9);
     CHECK(r.b.invuln > 2.0);
   }
+  {  // a drone between the ships: the blaster beam hits it first (0x202) and it drops a bonus; a missile only destroys it (0x106); bonus types never include the last table entry
+    Rig r;
+    std::vector<DroneTarget> drones(1);
+    drones[0].pos[2] = 100000;
+    drones[0].radius = 3000;
+    r.ctx.drones = &drones;
+    r.ctx.controls[0].fire = true;
+    r.run(0.5);
+    CHECK(drones[0].hit == 1);
+    for (int i = 0; i < 40; ++i) { const int t = r.w.randomBonusType(false); CHECK(t >= 0 && t <= 3); const int c = r.w.randomBonusType(true); CHECK(c >= 0 && c <= 4); }
+    const double at[3] = {0, 0, 100000};
+    r.w.dropPickup(at, 2, 15.0);
+    CHECK(r.w.pickups.size() == 1);
+    r.run(15.5);
+    CHECK(r.w.pickups.empty());  // the bonus lasts 15 s
+  }
   {  // lock-on: Seeker locks a ship straight ahead inside the 0x145 cone, not one far to the side; the human cannot lock for 15 s
     Rig r;
     Loadout l; l.weaponA = kSeeker; l.ammoA = 3;

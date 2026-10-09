@@ -254,9 +254,11 @@ void FrontEnd::mouseMove(int x, int y) {
   }
   if (screen_ == Screen::Garage) { garHov_ = x < 0 ? -1 : garageZoneAt(x, y); return; }
   if (screen_ == Screen::Reporters) { skipReporters(); return; }
+  if (screen_ == Screen::Best) { const int z = bestZoneAt(x, y); if (z >= 0) bestActivate(z); return; }
   if (screen_ == Screen::Config) { const int z = cfgZoneAt(x, y); if (z >= 0) { cfgHov_ = z; cfgActivate(z, 1); } return; }
   if (screen_ == Screen::Slots) { if (!slotEntry_ && slotChosen_ < 0) slotHover_ = x < 0 ? -1 : slotZoneAt(x, y); return; }
   if (screen_ == Screen::Config) { cfgHov_ = x < 0 ? -1 : cfgZoneAt(x, y); return; }
+  if (screen_ == Screen::Best) { bestHov_ = x < 0 ? -1 : bestZoneAt(x, y); return; }
   if (screen_ == Screen::Results || screen_ == Screen::ChampPos || screen_ == Screen::FinalPos) { const int z = x < 0 ? -1 : resultZoneAt(x, y); if (z >= 0) resSel_ = z; return; }
   const int h = hit(x, y);
   if (h >= 0 && btns_[size_t(h)].enabled) sel_ = h;
@@ -320,9 +322,10 @@ void FrontEnd::key(Key k) {
     case Screen::Reporters: if (k == Key::Select || k == Key::Back) skipReporters(); break;
     case Screen::Config: cfgKey(k); break;
     case Screen::Best:
-      if (k == Key::Left) bestTrack_ = (bestTrack_ + 8) % 10 + 1;
-      else if (k == Key::Right) bestTrack_ = bestTrack_ % 10 + 1;
-      else if (k == Key::Select || k == Key::Back) go(Screen::Main);
+      if (bestEdit_ >= 0) { if (k == Key::Select || k == Key::Back) finishRecordEntry(); }
+      else if (k == Key::Left) bestActivate(1);
+      else if (k == Key::Right) bestActivate(2);
+      else if (k == Key::Select || k == Key::Back) bestActivate(3);
       break;
     case Screen::Results:
     case Screen::ChampPos:
@@ -947,12 +950,42 @@ static std::string recordsPath() {
   return std::string(home ? home : ".") + "/Library/Application Support/Slipstream/records.txt";
 }
 
+// Records: SLIPSTRM.CFG holds the table (0x493EA + 0x78 per track, three entries of 0x28 bytes: u16 craft, 32 byte name, u32 time in ms at +0x22) with the
+// shipped defaults ("Slipstream 5000", "Gremlin Interactive", "The Software Refinery"); the port keeps its own copy in records.txt ("v2" + "track ship ms name").
 void FrontEnd::loadRecords() {
+  for (auto& v : records_) v.clear();
+  if (auto cfg = data_->read("SLIPSTRM.CFG"))
+    if (cfg->size() > 0x19d + 0x78 * 10 && (*cfg)[0] == 'V')
+      for (int t = 1; t <= 10; ++t)
+        for (int e = 0; e < 3; ++e) {
+          const size_t o = 0x19d + size_t(0x78 * (t - 1) + 0x28 * e);
+          Record r;
+          r.ship = (*cfg)[o] | ((*cfg)[o + 1] << 8);
+          for (size_t i = 0; i < 32 && (*cfg)[o + 2 + i]; ++i) r.name += char((*cfg)[o + 2 + i]);
+          r.ms = int((*cfg)[o + 0x22] | ((*cfg)[o + 0x23] << 8) | ((*cfg)[o + 0x24] << 16) | (uint32_t((*cfg)[o + 0x25]) << 24));
+          if (r.ship >= 0 && r.ship < 10 && r.ms > 0) records_[t].push_back(r);
+        }
   std::ifstream f(recordsPath());
-  int t, ship, ms;
-  while (f >> t >> ship >> ms)
-    if (t >= 1 && t <= 10 && ship >= 0 && ship < 10) records_[t].push_back({ship, ms});
-  for (auto& v : records_) { std::sort(v.begin(), v.end(), [](const Record& a, const Record& b) { return a.ms < b.ms; }); if (v.size() > 5) v.resize(5); }
+  if (f) {
+    std::string line;
+    std::vector<Record> fileRec[11];
+    bool v2 = false;
+    while (std::getline(f, line)) {
+      if (line == "v2") { v2 = true; continue; }
+      std::istringstream in(line);
+      int t, ship, ms;
+      if (!(in >> t >> ship >> ms) || t < 1 || t > 10 || ship < 0 || ship > 9) continue;
+      Record r{ship, ms, ""};
+      std::getline(in >> std::ws, r.name);
+      if (r.name.empty()) r.name = pilotName(ship);  // the first version of the port stored no names
+      fileRec[t].push_back(r);
+    }
+    for (int t = 1; t <= 10; ++t) {
+      if (v2 && !fileRec[t].empty()) records_[t].clear();  // the file is the whole table
+      for (const Record& r : fileRec[t]) records_[t].push_back(r);
+    }
+  }
+  for (auto& v : records_) { std::stable_sort(v.begin(), v.end(), [](const Record& a, const Record& b) { return a.ms < b.ms; }); if (v.size() > 3) v.resize(3); }
 }
 
 void FrontEnd::saveRecords() const {
@@ -961,21 +994,35 @@ void FrontEnd::saveRecords() const {
   std::error_code ec;
   std::filesystem::create_directories(p.substr(0, slash), ec);
   std::ofstream f(p);
-  for (int t = 1; t <= 10; ++t) for (const Record& r : records_[t]) f << t << ' ' << r.ship << ' ' << r.ms << '\n';
+  f << "v2\n";
+  for (int t = 1; t <= 10; ++t) for (const Record& r : records_[t]) f << t << ' ' << r.ship << ' ' << r.ms << ' ' << r.name << '\n';
 }
 
-void FrontEnd::addRecord(int track, int ship, double seconds) {
-  if (track < 1 || track > 10 || seconds <= 0) return;
+// 0x422EC: a lap that beats one of the three entries is inserted (an equal time stays behind); the new entry starts with an empty name that the player types.
+int FrontEnd::insertRecord(int track, int ship, int ms) {
+  if (track < 1 || track > 10 || ms <= 0) return -1;
   auto& v = records_[track];
-  v.push_back({ship, int(seconds * 1000 + 0.5)});
-  std::sort(v.begin(), v.end(), [](const Record& a, const Record& b) { return a.ms < b.ms; });
-  if (v.size() > 5) v.resize(5);
+  size_t pos = 0;
+  while (pos < v.size() && ms >= v[pos].ms) ++pos;
+  if (pos >= 3) return -1;
+  v.insert(v.begin() + long(pos), Record{ship, ms, ""});
+  if (v.size() > 3) v.resize(3);
+  return int(pos);
+}
+
+// The name was typed (Enter or Esc, 0x42553): an empty name becomes the pilot's, the table is saved and the game goes on.
+void FrontEnd::finishRecordEntry() {
+  if (bestEdit_ < 0) return;
+  Record& r = records_[bestTrack_][size_t(bestEdit_)];
+  if (r.name.empty()) r.name = pilotName(r.ship);
+  bestEdit_ = -1;
   saveRecords();
+  if (bestAfterChamp_) { bestAfterChamp_ = false; champRaceFinished(); }
+  else go(Screen::Main);
 }
 
 void FrontEnd::showResults(const RaceResult& r) {
   result_ = r;
-  addRecord(r.track, r.ship, r.bestLap);
   resSel_ = 1;
   if (!champ_.active() && mode_ == 1 && !r.projected[std::clamp(r.ship, 0, 9)] && r.place[std::clamp(r.ship, 0, 9)] <= 4 && progress_ < 10 && r.track == kChampTrackOrder[progress_ - 1]) {
     ++progress_;  // 0x5A85B: the human finished in the first four on the newest track
@@ -983,35 +1030,95 @@ void FrontEnd::showResults(const RaceResult& r) {
   }
   go(Screen::Results);
   if (audio_) audio_->playMusic(r.place[std::clamp(r.ship, 0, 9)] > 3 ? "LOSE.HMP" : "WIN.HMP", false);  // results screen 0x5A820: WIN.HMP for the first three places, else LOSE.HMP
+  if (audio_ && (!cfg_ || cfg_->speech) && !r.noVoice) {  // 0x5A9A9..0x5A9CC: the pilot's line for the place (first place: one of two), when the results screen opens
+    const int pl = r.place[std::clamp(r.ship, 0, 9)];
+    audio_->playCue(pl == 1 ? (std::rand() & 1) : pl + 1, true);
+  }
+}
+
+// BESTDRV (0x4208E): the sky BESTBACK with the title button "Fastest Laps - <track>" (40,5)-(278,23), "<" (88,177)-(109,195), "Ok" (115,177)-(200,195), ">"
+// (206,177)-(227,195) (buttons are regions of the darker sky BESTDARK, the hovered one of BESTBACK, 1 px frame); three strips of 256 x 46 at x 32, y 30 / 78 / 126
+// (0x1E + 0x30 n): BESTDARK region, the pilot BESTF<n> at (1,1), name and time (RESULTS.FNT, colour 0xFF) centred in x 49..206 at y 12 / 26, the box BEST3DBK at (207,1)
+// holding the turning RACER<n>.SHP (viewport (207,1)-(254,44)). While a record is typed (0x42389) the new entry shows a blinking cursor; Enter / Esc finish.
+namespace {
+struct BZ { int x1, y1, x2, y2; };
+constexpr BZ kBestZ[4] = {{40, 5, 278, 23}, {88, 177, 109, 195}, {206, 177, 227, 195}, {115, 177, 200, 195}};
+constexpr int kStripX = 32, kStripY[3] = {30, 78, 126};
+}  // namespace
+
+int FrontEnd::bestZoneAt(int x, int y) const {
+  for (int i = 0; i < 4; ++i) if (x >= kBestZ[i].x1 && x <= kBestZ[i].x2 && y >= kBestZ[i].y1 && y <= kBestZ[i].y2) return i;
+  return -1;
+}
+
+void FrontEnd::bestActivate(int z) {
+  if (bestEdit_ >= 0) return;
+  if (z == 1) bestTrack_ = (bestTrack_ + 8) % 10 + 1;
+  else if (z == 2) bestTrack_ = bestTrack_ % 10 + 1;
+  else if (z == 3) go(Screen::Main);
+}
+
+std::vector<FrontEnd::Preview> FrontEnd::previews() const {
+  std::vector<Preview> v;
+  if (screen_ == Screen::Info) { Preview p; p.ship = previewShip(&p.angle, p.rect); v.push_back(p); }
+  if (screen_ == Screen::Best)
+    for (size_t i = 0; i < records_[std::clamp(bestTrack_, 1, 10)].size() && i < 3; ++i) {
+      Preview p;
+      p.ship = records_[std::clamp(bestTrack_, 1, 10)][i].ship;
+      p.angle = 0.7 + t_ * 1.18 - double(i) * 0.0;  // 0.1875 turn per second (0x3000 per second of 0x10000)
+      p.fit = 0.45;
+      p.rect[0] = kStripX + 207; p.rect[1] = kStripY[i] + 1; p.rect[2] = kStripX + 254; p.rect[3] = kStripY[i] + 44;
+      v.push_back(p);
+    }
+  return v;
 }
 
 void FrontEnd::drawBest() {
   const Sprite* bg = spr("BESTBACK.SPR");
+  const Sprite* dark = spr("BESTDARK.SPR");
   if (!bg) return;
+  if (!dark) dark = bg;
   if (bg->palette) usePalette(*bg->palette);
   HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;
   c.blit(*bg, 0, 0, -1);
-  c.darken(8, 4, W - 9, H - 8, 35);
   const Font* f = font("BESTDRV.FNT");
-  const Font* sm = font("SMALL.FNT");
+  const Font* rf = font("RESULTS.FNT");
   const int tr = std::clamp(bestTrack_, 1, 10);
-  std::string title = str("BESTDRV.ST0", "BU" + std::to_string(tr - 1) + "1");
-  if (f) drawText(*f, title, 160 - f->textWidth(title) / 2, 8, -1);
-  for (int i = 0; i < 5; ++i) {
-    const int y = 32 + i * 32;
-    const bool have = i < int(records_[tr].size());
+  auto button = [&](int i, bool hot, const std::string& label) {
+    const BZ& z = kBestZ[i];
+    c.fillIndex(z.x1, z.y1, z.x1, z.y2, 0x25);
+    c.fillIndex(z.x1, z.y1, z.x2, z.y1, 0x2b);
+    c.fillIndex(z.x1, z.y2, z.x2, z.y2, 0x0a);
+    c.fillIndex(z.x2, z.y1, z.x2, z.y2, 0x0a);
+    const Sprite* src = hot ? bg : dark;
+    for (int y = z.y1 + 1; y < z.y2; ++y) for (int x = z.x1 + 1; x < z.x2; ++x) buf_[size_t(y) * W + size_t(x)] = argb(pal_.rgba[src->pixels[size_t(y) * size_t(src->w) + size_t(x)]]);
+    if (f) drawText(*f, label, z.x1 + (z.x2 - z.x1 + 1 - f->textWidth(label)) / 2, z.y1 + 4, -1);
+  };
+  button(0, false, str("BESTDRV.ST0", "BU" + std::to_string(tr - 1) + "1"));
+  button(1, bestHov_ == 1, str("BESTDRV.ST0", "BUT2"));
+  button(2, bestHov_ == 2, str("BESTDRV.ST0", "BUT3"));
+  button(3, bestHov_ == 3, str("BESTDRV.ST0", "BUT4"));
+  const Palette* fp = facePalette();
+  for (int i = 0; i < 3; ++i) {
+    const int y0 = kStripY[i];
+    for (int y = 0; y < 46; ++y) for (int x = 0; x < 256; ++x) buf_[size_t(y0 + y) * W + size_t(kStripX + x)] = argb(pal_.rgba[dark->pixels[size_t(y0 + y) * size_t(dark->w) + size_t(kStripX + x)]]);
+    if (i >= int(records_[tr].size())) continue;
+    const Record& r = records_[tr][size_t(i)];
     HudCanvas fcv = c;
-    fcv.pal = facePalette();
-    if (const Sprite* b3 = spr("BEST3DBK.SPR")) fcv.blitScaled(*b3, 40, y, 36, 30, transparentOf(*b3));
-    if (have) if (const Sprite* fc = spr("BESTF" + std::to_string(records_[tr][size_t(i)].ship) + ".SPR")) fcv.blitScaled(*fc, 40, y, 36, 30, transparentOf(*fc));
-    if (f) {
-      drawText(*f, std::to_string(i + 1), 20, y + 8, -1);
-      drawText(*f, have ? timeText(records_[tr][size_t(i)].ms / 1000.0) : "-'--\"--", 100, y + 8, -1);
+    fcv.pal = fp;
+    if (const Sprite* fc = spr("BESTF" + std::to_string(r.ship) + ".SPR")) fcv.blit(*fc, kStripX + 1, y0 + 1, transparentOf(*fc));
+    if (const Sprite* b3 = spr("BEST3DBK.SPR")) fcv.blit(*b3, kStripX + 207, y0 + 1, transparentOf(*b3));
+    if (!rf) continue;
+    auto centre = [&](const std::string& s, int y) { drawText(*rf, s, kStripX + 49 + (206 - 49 + 1 - rf->textWidth(s)) / 2, y0 + y, 0xFF); };
+    centre(r.name, 12);
+    if (bestEdit_ == i && (int(t_ / 0.6) & 1)) {  // the cursor: a bar after the text (0x42889)
+      const int x = kStripX + 49 + (206 - 49 + 1 + rf->textWidth(r.name)) / 2;
+      c.fillIndex(x, y0 + 12, x + 6, y0 + 13 + rf->height - 4, 0xFF);
     }
-  }
-  if (sm) {
-    const std::string hint = str("BESTDRV.ST0", "BUT2") + "  " + str("BESTDRV.ST0", "BUT3") + "  " + str("BESTDRV.ST0", "BUT4");
-    drawText(*sm, hint, 160 - sm->textWidth(hint) / 2, 190, -1);
+    char t[32];
+    const int cs = (r.ms + 5) / 10;
+    std::snprintf(t, sizeof t, "%02d'%02d\"%02d", cs / 6000, (cs / 100) % 60, cs % 100);
+    centre(t, 26);
   }
 }
 
@@ -1036,9 +1143,13 @@ int FrontEnd::resultZoneAt(int x, int y) const {
 
 void FrontEnd::resultChoose(int i) {
   if (screen_ == Screen::Results) {
-    if (i == 0) { if (!champ_.active()) race_ = true; }  // Replay: the same race again
-    else if (champ_.active()) champRaceFinished();
-    else go(Screen::Main);
+    if (i == 0) replay_ = true;  // Replay: the recorded race again (0x5A80C), then the results screen once more
+    else {  // 0x422EC: a lap in the first three of the track's table asks for a name first
+      const int pos = insertRecord(result_.track, result_.ship, int(result_.bestLap * 1000 + 0.5));
+      if (pos >= 0) { bestTrack_ = result_.track; bestEdit_ = pos; bestAfterChamp_ = champ_.active(); go(Screen::Best); }
+      else if (champ_.active()) champRaceFinished();
+      else go(Screen::Main);
+    }
   } else if (screen_ == Screen::ChampPos) {
     if (i == 0) openSlots(true);
     else { champ_.nextRace(); champBeginRace(); }  // 0x55DAD

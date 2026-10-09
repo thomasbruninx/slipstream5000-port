@@ -1,6 +1,7 @@
 // Application logic of the viewer/driver demo. SDL-free so it can also render headlessly.
 #pragma once
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <array>
 #include <string>
@@ -10,6 +11,7 @@
 #include "game/ship_params.hpp"
 #include "audio/audio_system.hpp"
 #include "game/doors.hpp"
+#include "game/drones.hpp"
 #include "original_formats/ann.hpp"
 #include "game/ship_ai.hpp"
 #include "game/ship_sim.hpp"
@@ -84,11 +86,18 @@ class ViewerApp {
   void toggleSfx() { audio_.toggleSfx(); }
   AudioSystem& audio() { return audio_; }
   void cycleWeapon() { cyclePending_ = true; }
-  void toggleCamera() { view_ = (view_ + 1) % 3; }
+  void toggleCamera() { view_ = (view_ + 1) % 4; }
+  // F1 cockpit, F2 chase (pressed again: the far chase), F3 rear, F4 TV camera, F5 free camera (docs/controls in docs/frontend.md)
+  void setView(int v) { view_ = std::clamp(v, 0, 5); }
+  int view() const { return view_; }
+  const KeyMap& keymap() const { return settings_.keys; }
   // pause menu (Esc while driving): the race stands still, the menu is the original's PAUSED / CONFIG entries
   // Esc / Enter after the player has finished (the craft keeps flying on autopilot) or the race is over: the results screen. Returns true when it opened.
   bool tryShowResults();
   bool introActive() const { return introMode_; }
+  bool replayActive() const { return replayMode_; }
+  void frontDebugEndRace() { if (driving_ && front_ && !frontActive_) showResultsScreen(); }
+  void stopReplay() { endReplay(); }
   void endFlyThrough(bool skipped);  // Esc / Enter / click, or the script ended: back to the front end
   void frontDebugResults();
   void frontDebugLast() { if (front_) front_->debugChampLastRace(); }
@@ -101,6 +110,9 @@ class ViewerApp {
   bool netActive() const { return session_ != nullptr; }
   bool netRacing() const { return netplay_ != nullptr; }
   bool netUiOpen() const { return netUi_ != NetUi::None; }
+  bool frontWantsKey() const { return front_ && frontActive_ && front_->wantsKey(); }
+  void frontRawKey(int sc) { if (front_) front_->rawKey(sc); }
+  void setKeyNamer(std::function<std::string(int)> f) { if (front_) front_->setKeyNamer(std::move(f)); }
   bool frontWantsText() const { return front_ && frontActive_ && front_->wantsText(); }
   void frontText(const std::string& t) { if (front_) front_->textInput(t); }
   void frontBackspace() { if (front_) front_->backspace(); }
@@ -144,10 +156,23 @@ class ViewerApp {
   ShipState player_;
   std::unique_ptr<FrontEnd> front_;
   bool frontActive_ = false;
-  void startRaceFromFront(const RaceSetup& s);
+  void startRaceFromFront(const RaceSetup& s, bool replay = false);
+  void toggleDriveIfRacing() { if (driving_) toggleDrive(); }
+  RaceResult lastResult_;
   void returnToFront();
-  void showResultsScreen();
+  void showResultsScreen(bool again = false);
   void placeGrid();
+  // Replay (RunRaceReplay 0x5A80C / ReplayRecordStart 0x5BCDC): the original re-runs the race with the recorded controls and the same random seed. The port records the
+  // controls of every 1/120 s simulation step and the combat seed, restarts the race with the same setup and feeds the recording back; Esc / the end of the recording leave it.
+  struct StepRec { float throttle = 0, brake = 0, steer = 0, pitch = 0; bool fire = false, cycle = false, held = false; };
+  std::vector<StepRec> replayRec_;
+  size_t replayPos_ = 0;
+  bool replayMode_ = false, replayEnded_ = false;
+  unsigned raceSeed_ = 1;   // the combat seed of the race that is recorded / replayed
+  RaceSetup lastSetup_;
+  bool haveSetup_ = false;
+  void startReplay();
+  void endReplay();
   // TV fly-through before a championship race (PlayTrackIntro 0x57A79, viewer_intro.cpp): one ship flies the lap on the autopilot, the TV camera cuts between the
   // track's 60 camera positions and the commentators speak (the track's .ANN script, subtitles from the *PREV string table).
   bool introMode_ = false;
@@ -160,9 +185,13 @@ class ViewerApp {
   std::vector<std::array<int32_t, 3>> tvCams_;
   int tvCam_ = -1;
   double tvZoom_ = 1.0;
+  double freeAz_ = 0.0, freeEl_ = 0.35, freeDist_ = 90000.0;  // the free camera (F5): orbit around the ship
+  DroneWorld drones_;  // the little craft that fly ahead of the player (game/drones)
   void startFlyThrough(int track);
   void updateFlyThrough(double dt);
   void updateTvCamera();
+  bool tvInPiece(const double p[3]) const;
+  bool tvVisible(const std::array<int32_t, 3>& cam, const double ship[3]) const;
   void drawIntroOverlay();  // ships on the start grid by gridSlot_
   std::array<int, 10> gridSlot_ = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};  // start slot (0 = pole) of every ship
   double resultsTimer_ = 0;
@@ -170,7 +199,8 @@ class ViewerApp {
   void renderFront();
   std::unique_ptr<Scene> previewScene_;
   int previewShip_ = -1;
-  void renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh);
+  void renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh, double fit = 0.80);
+  std::array<std::unique_ptr<Scene>, 10> previewCache_;
   // multiplayer state
   enum class NetUi { None, Main, Browse, Address, Lobby };
   std::unique_ptr<net::Session> session_;

@@ -98,6 +98,8 @@ struct Scene {
   // Projectile models: AIRMINE, AMBLER, BOMBER, FRAG, HYPER, SCRAMBLE, SEEKER (the .SHP names the launchers load at 0x5BF5E),
   // scaled like the ships. Index = Scene::weaponMeshIndex(weapon id).
   std::array<Mesh, 7> weaponMeshes;
+  Mesh droneMesh;                     // DRONE.SHP: the little flying craft that appear during a race (0x4A240)
+  float droneRadius = 3000;
   std::array<float, 7> weaponMeshRadius{};  // half the largest extent in unscaled model units (collision radius)
   static int weaponMeshIndex(int weapon) {  // 0x5BF34 table order
     switch (weapon) { case 11: return 0; case 6: return 1; case 10: return 2; case 2: case 3: return 3; case 8: return 4; case 7: return 5; case 4: case 5: return 6; default: return -1; }

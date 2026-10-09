@@ -51,6 +51,20 @@ std::vector<FrontEnd::CfgRow> FrontEnd::cfgRows() {
       r.push_back({"CAT1", text("DIFF.ST0", "LEV" + std::to_string(s.difficulty)), [&s](int d) { s.difficulty = (s.difficulty + d + 3) % 3; }});
       r.push_back({"CAT2", onOff("DIFF.ST0", s.damage), flip(&s.damage)});
       break;
+    case CfgPage::Controls:
+      r.push_back({"REVA", onOff("CONTROLS.ST0", s.keys.reverseAccel), flip(&s.keys.reverseAccel)});
+      r.push_back({"PLY1", "", [this](int) { cfgPage_ = CfgPage::Keys; cfgHov_ = -1; }});  // "Player 1 Controls": the key page
+      break;
+    case CfgPage::Keys:
+      for (int a = 0; a < kKeyActions; ++a) {
+        const int sc = cfg_->keys.sc[size_t(a)];
+        std::string label = a < 7 ? text("CONTROLS.ST0", "DEF" + std::to_string(a)) : std::string("Brake: %s");
+        const std::string nm = keyKeep_ == a && keyWait_ ? "..." : sc ? (keyName_ ? keyName_(sc) : std::to_string(sc)) : "-";
+        const size_t p = label.find("%s");
+        if (p != std::string::npos) label.replace(p, 2, nm);
+        r.push_back({"", label, [this, a](int) { keyWait_ = true; keyKeep_ = a; }});
+      }
+      break;
     case CfgPage::Sound:
       r.push_back({"CAT1", onOff("SOUND.ST0", s.sfxOn), flip(&s.sfxOn)});
       r.push_back({"CAT2", text("SOUND.ST0", "ENG" + std::to_string(s.engine)), [&s](int d) { s.engine = (s.engine + d + 3) % 3; }});
@@ -65,7 +79,7 @@ std::vector<FrontEnd::CfgRow> FrontEnd::cfgRows() {
 const char* FrontEnd::cfgFile() const {
   switch (cfgPage_) {
     case CfgPage::General: return "GENERAL.ST0";
-    case CfgPage::Controls: return "CONTROLS.ST0";
+    case CfgPage::Controls: case CfgPage::Keys: return "CONTROLS.ST0";
     case CfgPage::Detail: return "DETAIL.ST0";
     case CfgPage::Difficulty: return "DIFF.ST0";
     case CfgPage::Sound: return "SOUND.ST0";
@@ -80,6 +94,9 @@ void FrontEnd::openConfig() {
   go(Screen::Config);
 }
 
+// vertical extent of row i of the current page: the key page packs eight rows
+static void rowSpan(bool keys, int i, int* y1, int* y2) { *y1 = keys ? 32 + 17 * i : 43 + 20 * i; *y2 = *y1 + (keys ? 14 : 16); }
+
 // zone index under (x, y): rows 0.., then the Ok button (index = rows), -1 for none; on the main page 0..5 are the six buttons
 int FrontEnd::cfgZoneAt(int x, int y) {
   auto in = [&](const Z& z) { return x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2; };
@@ -87,9 +104,8 @@ int FrontEnd::cfgZoneAt(int x, int y) {
     for (int i = 0; i < 6; ++i) if (in(kMainZ[i])) return i;
     return -1;
   }
-  if (cfgPage_ == CfgPage::Controls) return in(kOkZ) ? 0 : -1;
   const int n = int(cfgRows().size());
-  for (int i = 0; i < n; ++i) if (in(Z{25, 43 + 20 * i, 281, 59 + 20 * i})) return i;
+  for (int i = 0; i < n; ++i) { int y1, y2; rowSpan(cfgPage_ == CfgPage::Keys, i, &y1, &y2); if (in(Z{25, y1, 281, y2})) return i; }
   return in(kOkZ) ? n : -1;
 }
 
@@ -102,9 +118,9 @@ void FrontEnd::cfgActivate(int i, int dir) {
     cfgHov_ = -1;
     return;
   }
-  const int n = cfgPage_ == CfgPage::Controls ? 0 : int(cfgRows().size());
-  if (i >= n) {  // Ok: back to the main page
-    cfgPage_ = CfgPage::Main;
+  const int n = int(cfgRows().size());
+  if (i >= n) {  // Ok: back (the key page to the controls page, the others to the main page)
+    cfgPage_ = cfgPage_ == CfgPage::Keys ? CfgPage::Controls : CfgPage::Main;
     cfgHov_ = -1;
     return;
   }
@@ -113,10 +129,11 @@ void FrontEnd::cfgActivate(int i, int dir) {
 }
 
 void FrontEnd::cfgKey(Key k) {
-  const int n = cfgPage_ == CfgPage::Main ? 6 : cfgPage_ == CfgPage::Controls ? 1 : int(cfgRows().size()) + 1;
+  const int n = cfgPage_ == CfgPage::Main ? 6 : int(cfgRows().size()) + 1;
+  if (keyWait_) { keyWait_ = false; return; }  // Esc cancels the key capture (a pressed key arrives through rawKey)
   if (k == Key::Back) {
     if (cfgPage_ == CfgPage::Main) { cfgChanged_ = true; go(Screen::Main); }
-    else { cfgPage_ = CfgPage::Main; cfgHov_ = -1; }
+    else { cfgPage_ = cfgPage_ == CfgPage::Keys ? CfgPage::Controls : CfgPage::Main; cfgHov_ = -1; }
   } else if (k == Key::Up) cfgHov_ = cfgHov_ <= 0 ? n - 1 : cfgHov_ - 1;
   else if (k == Key::Down) cfgHov_ = cfgHov_ < 0 || cfgHov_ >= n - 1 ? 0 : cfgHov_ + 1;
   else if (k == Key::Left) { if (cfgPage_ == CfgPage::Main) { if (cfgHov_ == 1 || cfgHov_ == 4) cfgHov_ -= 1; else if (cfgHov_ < 0) cfgHov_ = 0; } else cfgActivate(cfgHov_, -1); }
@@ -150,22 +167,34 @@ void FrontEnd::drawConfig() {
     for (int i = 0; i < 6; ++i) frameButton(kMainZ[i].x1, kMainZ[i].y1, kMainZ[i].x2, kMainZ[i].y2, cfgHov_ == i ? A : B, text("CONFIG.ST0", kMainTag[i]));
     return;
   }
-  if (cfgPage_ == CfgPage::Controls) {  // the port's fixed keys, in the form of the original's list (CONTROLS.ST0 DEF0..DEF6)
-    static const char* kLines[7] = {"Accelerate: W", "Brake: S", "Steer: A / D  (or the arrows)", "Pitch up / down: E / Q", "Fire: F", "Next weapon: X", "View: V   Pause: Esc"};
-    for (int i = 0; i < 7; ++i) frameButton(25, 43 + 17 * i - 4, 281, 43 + 17 * i + 11, B, kLines[i]);
-    frameButton(kOkZ.x1, kOkZ.y1, kOkZ.x2, kOkZ.y2, cfgHov_ == 0 ? A : B, text(file, "BUT1"));
-    return;
-  }
   const auto rows = cfgRows();
+  const bool keysPage = cfgPage_ == CfgPage::Keys;
   for (size_t i = 0; i < rows.size(); ++i) {
-    const int y = 43 + 20 * int(i);
-    frameButton(25, y, 281, y + 16, cfgHov_ == int(i) ? A : B, "");
-    if (f) {
+    int y, y2;
+    rowSpan(keysPage, int(i), &y, &y2);
+    frameButton(25, y, 281, y2, cfgHov_ == int(i) ? A : B, "");
+    if (!f) continue;
+    if (keysPage) drawText(*f, rows[i].value, 25 + (257 - f->textWidth(rows[i].value)) / 2, y + 1, -1);   // "Up: Left Arrow"
+    else if (rows[i].tag == "PLY1") { const std::string t = text(file, "PLY1"); drawText(*f, t, 25 + (257 - f->textWidth(t)) / 2, y + 3, -1); }
+    else {
       drawText(*f, text(file, rows[i].tag), 31, y + 3, -1);
       drawText(*f, rows[i].value, 165 + (281 - 165 + 1 - f->textWidth(rows[i].value)) / 2, y + 5, -1);  // the value in the right part: long category names would run into it
     }
   }
   frameButton(kOkZ.x1, kOkZ.y1, kOkZ.x2, kOkZ.y2, cfgHov_ == int(rows.size()) ? A : B, text(file, "BUT1"));
+}
+
+// a key was pressed while a key row waits for it: bind it (a key that another action uses is swapped over)
+void FrontEnd::rawKey(int sc) {
+  if (!keyWait_ || screen_ != Screen::Config) return;
+  keyWait_ = false;
+  if (keyKeep_ < 0 || keyKeep_ >= kKeyActions || !cfg_) return;
+  auto& m = cfg_->keys.sc;
+  if (sc != 0)
+    for (int a = 0; a < kKeyActions; ++a)
+      if (a != keyKeep_ && m[size_t(a)] == sc) m[size_t(a)] = m[size_t(keyKeep_)];
+  m[size_t(keyKeep_)] = sc;
+  cfgChanged_ = true;
 }
 
 }  // namespace slip

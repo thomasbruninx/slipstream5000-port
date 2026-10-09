@@ -314,6 +314,7 @@ void CombatWorld::addExplosion(const double* pos, int kind) {
 
 void CombatWorld::step(const CombatContext& ctx, double dt) {
   if (!table_) return;
+  stepDt_ = dt;
   for (int i = 0; i < int(ctx.ships.size()) && i < 10; ++i)
     if (ctx.ships[size_t(i)] && !isRemote(ctx, i)) shipLogic(ctx, i, dt);
   for (Projectile& p : projectiles) if (p.alive) stepProjectile(ctx, p, dt);
@@ -545,6 +546,22 @@ void CombatWorld::launch(const CombatContext& ctx, int i, int weapon) {  // laun
   for (size_t k = before; k < projectiles.size(); ++k) launched.push_back(projectiles[k]);
 }
 
+int CombatWorld::randomBonusType(bool championship) {
+  static const int kSingle[5] = {0, 1, 3, 2, 5}, kChamp[6] = {0, 1, 3, 2, 4, 5};
+  const int n = championship ? 6 : 5;
+  const int* t = championship ? kChamp : kSingle;
+  return t[rng_.next() % uint32_t(n - 1)];
+}
+
+void CombatWorld::dropPickup(const double* pos, int type, double life) {
+  Pickup p;
+  for (int k = 0; k < 3; ++k) p.pos[k] = pos[k];
+  p.type = type;
+  p.life = life;
+  p.id = 100000 + int(++dropCounter_);
+  pickups.push_back(p);
+}
+
 void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double dt) {
   p.age += dt;
   if (p.life >= 0) {
@@ -590,6 +607,30 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
   const double* f = p.m + 6;
   const double step = p.speed * dt;
   double np[3] = {p.pos[0] + f[0] * step, p.pos[1] + f[1] * step, p.pos[2] + f[2] * step};
+  // drones: a beam destroys one and the bonus it carries appears (0x202), anything else destroys it without (0x106)
+  if (ctx.drones && !p.remote && p.kind != kMiniMines) {
+    double bestD = 2.0;
+    int di = -1;
+    for (size_t i = 0; i < ctx.drones->size(); ++i) {
+      const DroneTarget& d = (*ctx.drones)[i];
+      if (!d.alive || d.hit) continue;
+      const double ab[3] = {np[0] - p.pos[0], np[1] - p.pos[1], np[2] - p.pos[2]}, ac[3] = {d.pos[0] - p.pos[0], d.pos[1] - p.pos[1], d.pos[2] - p.pos[2]};
+      const double l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+      double t = l2 > 1e-9 ? (ac[0] * ab[0] + ac[1] * ab[1] + ac[2] * ab[2]) / l2 : 0.0;
+      t = std::clamp(t, 0.0, 1.0);
+      const double q[3] = {p.pos[0] + ab[0] * t - d.pos[0], p.pos[1] + ab[1] * t - d.pos[1], p.pos[2] + ab[2] * t - d.pos[2]};
+      const double r = d.radius + (beam ? 0.0 : p.radius);
+      if (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] <= r * r && t < bestD) { bestD = t; di = int(i); }
+    }
+    if (di >= 0) {
+      DroneTarget& d = (*ctx.drones)[size_t(di)];
+      d.hit = beam ? 1 : 2;
+      for (int k = 0; k < 3; ++k) { p.pos[k] += (np[k] - p.pos[k]) * bestD; d.hitPos[k] = d.pos[k]; }
+      if (!beam) addExplosion(p.pos, 0);
+      p.alive = false;
+      return;
+    }
+  }
   // ships (message 0x106 / the ray test 0x139AD)
   double bestT = 2.0;
   int bestShip = -1;
@@ -672,6 +713,7 @@ void CombatWorld::beamHit(const CombatContext& ctx, const Projectile& p, int vic
 void CombatWorld::stepPickups(const CombatContext& ctx) {  // bonus object (0x42BD5): touching it consumes it
   for (Pickup& pk : pickups) {
     if (!pk.alive) continue;
+    if (pk.life >= 0) { pk.life -= stepDt_; if (pk.life < 0) { pk.alive = false; continue; } }
     for (int j = 0; j < int(ctx.ships.size()) && j < 10; ++j) {
       if (!ctx.ships[size_t(j)] || isRemote(ctx, j)) continue;
       const ShipState& s = *ctx.ships[size_t(j)];

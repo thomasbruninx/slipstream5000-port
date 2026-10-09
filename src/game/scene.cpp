@@ -490,6 +490,27 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     }
   }
 
+  {  // the drone model (DRONE.ART node: Drone.Shp, the first detail level)
+    auto bytes = data.read("DRONE.SHP");
+    if (bytes)
+      if (auto sh = parseShape(*bytes)) {
+        float ext = 0;
+        for (auto& poly : sh->polys) {
+          std::vector<Vec3> vs;
+          bool bad = false;
+          for (uint16_t idx : poly.index) {
+            if (idx >= sh->verts.size()) { bad = true; break; }
+            const auto& v = sh->verts[idx];
+            vs.push_back({float(v.x) * s->shipScale, float(v.y) * s->shipScale, float(v.z) * s->shipScale});
+            ext = std::max({ext, std::fabs(float(v.x)), std::fabs(float(v.y)), std::fabs(float(v.z))});
+          }
+          if (bad || vs.size() < 3) continue;
+          addPoly(s->droneMesh, vs, poly.uv, b.globalMaterial(sh->materials, poly.material), Builder::unitNormal(poly.nx, poly.ny, poly.nz));
+        }
+        s->droneRadius = ext;
+      }
+  }
+
   s->track_data = std::move(t);
   s->buildFloorIndex();
   *out = std::move(*s);

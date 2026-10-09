@@ -168,7 +168,7 @@ int ViewerApp::ambientForPlayer() const {  // 0x58CB6..0x58CED
 void ViewerApp::setupCombat() {
   std::vector<PickupSpot> spots;
   if (opt_.pickups) spots = loadPickupSpots(*data_, track_);
-  combat_.init(weaponTable_, refPoints_, track_, spots, netSeed_ ? netSeed_ : (unsigned(std::rand()) | 1u));
+  combat_.init(weaponTable_, refPoints_, track_, spots, netSeed_ ? netSeed_ : replayMode_ ? raceSeed_ : (raceSeed_ = unsigned(std::rand()) | 1u));
   combat_.difficulty = aiTables_.difficulty;
   for (int k = 0; k < kWeaponCount; ++k) {
     const int mi = Scene::weaponMeshIndex(k);
@@ -187,6 +187,7 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
   for (size_t d = 0; d < doors_.list.size(); ++d) doorBoxes.push_back(doors_.proxy(d));
   for (const ShipState& b : doorBoxes) cc.obstacles.push_back(&b);
   cc.humanShip = player_.ship;
+  cc.drones = netplay_ || introMode_ ? nullptr : &drones_.targets;
   cc.controls.assign(10, CombatControls{});
   for (int i = 0; i < 10; ++i) {
     cc.ships.push_back(netplay_ && !netplay_->present(i) ? nullptr : i == player_.ship ? &player_ : &grid_[size_t(i)]);
@@ -389,6 +390,10 @@ void ViewerApp::toggleDrive() {
     startPhase_ = 15.0;
     raceOverHandled_ = false;
     resultsTimer_ = 0;
+    if (!replayMode_) replayRec_.clear();
+    replayPos_ = 0; replayEnded_ = false;
+    drones_.reset();
+    drones_.radius = double(scene_->droneRadius) * 0.9;
     setupCombat();
   } else {
     countdown_ = 0;
@@ -406,7 +411,8 @@ void ViewerApp::update(double dt, const InputState& in0) {
     RaceSetup rs;
     if (front_->takeProgressChanged()) { progress_ = front_->progress(); applyConfig(); }
     if (front_->takeConfigChanged()) { aiTables_.difficulty = settings_.difficulty; combat_.difficulty = settings_.difficulty; applyConfig(); }
-    if (front_->takeRace(&rs)) startRaceFromFront(rs);
+    if (front_->takeReplay()) startReplay();
+    else if (front_->takeRace(&rs)) startRaceFromFront(rs);
     else if (const int it = front_->takeIntroRequest()) startFlyThrough(it);
     else if (const int nr = front_->takeNetRequest()) {
       frontActive_ = false; netFromFront_ = true; openNetMenu();
@@ -453,6 +459,19 @@ void ViewerApp::update(double dt, const InputState& in0) {
       const double step = 1.0 / 120.0;
       int guard = 0;
       while (simAccum_ >= step && guard++ < 16) {
+        // The recording for the replay (0x5BCDC): the controls of every simulation step; the replay feeds them back into the same initial state
+        StepRec cur;
+        if (replayMode_) {
+          if (replayPos_ >= replayRec_.size()) { replayEnded_ = true; simAccum_ = 0; break; }
+          cur = replayRec_[replayPos_++];
+          cyclePending_ = cur.cycle;
+        } else {
+          cur = {in.throttle, in.brake, in.steer, in.pitch, in.fire, cyclePending_, held};
+          if (!netplay_ && !introMode_) replayRec_.push_back(cur);
+        }
+        const bool sheld = cur.held;
+        InputState sin;
+        sin.throttle = cur.throttle; sin.brake = cur.brake; sin.steer = cur.steer; sin.pitch = cur.pitch; sin.fire = cur.fire;
         // ships indexed by ship number; ai_[i].human marks the player
         RaceContext ctx;
         ctx.scene = scene_.get(); ctx.tables = &aiTables_; ctx.race = &race_; ctx.doors = &doors_;
@@ -477,9 +496,9 @@ void ViewerApp::update(double dt, const InputState& in0) {
         }
         ctx.status = &raceStatus_;
         ctx.dt = step;
-        ctx.running = !held && !raceStatus_.over;
+        ctx.running = !sheld && !raceStatus_.over;
         ctx.totalLaps = opt_.laps;
-        if (!held) startPhase_ = std::max(0.0, startPhase_ - step);
+        if (!sheld) startPhase_ = std::max(0.0, startPhase_ - step);
         for (int i = 0; i < 10; ++i)  // 0x51CC2: speed factor bonus by rank during the first 15 s
           ctx.ships[size_t(i)]->startBonus = opt_.startBonus && startPhase_ > 0 ? startBonusForRank(ai_[size_t(i)].rank) : 0.0;
         doors_.step(step, all);  // door slots update before the ships move (0x3C00E)
@@ -496,12 +515,12 @@ void ViewerApp::update(double dt, const InputState& in0) {
         // a finished ship is steered by the autopilot, the player's too (0x51111: record +0xD set -> RaceAIControl)
         static const bool testPilot = std::getenv("SLIP_AUTOPILOT") != nullptr;  // test hook: the player is steered by the AI from the start
         const bool autopilot = (ai_[size_t(player_.ship)].finished || testPilot || introMode_) && aiEnabled_ && !simCfg_.assist;
-        ShipInput pin = held ? ShipInput{} : autopilot ? aiControl(ctx, size_t(player_.ship), step) : ShipInput{in.throttle, in.brake, in.steer, in.pitch};
+        ShipInput pin = sheld ? ShipInput{} : autopilot ? aiControl(ctx, size_t(player_.ship), step) : ShipInput{sin.throttle, sin.brake, sin.steer, sin.pitch};
         stepShip(player_, pin, step, params_[size_t(player_.ship)], *scene_, simCfg_);
         for (size_t k = 1; k < all.size(); ++k) {
           const int id = all[k]->ship;
           if (netplay_ && !netplay_->localAi(id)) continue;  // a remote ship: the owner steers it
-          ShipInput ci = !held && aiEnabled_ && !simCfg_.assist ? aiControl(ctx, size_t(id), step) : ShipInput{};
+          ShipInput ci = !sheld && aiEnabled_ && !simCfg_.assist ? aiControl(ctx, size_t(id), step) : ShipInput{};
           stepShip(*all[k], ci, step, params_[size_t(id)], *scene_, simCfg_);
         }
         if (!simCfg_.assist) {
@@ -526,9 +545,18 @@ void ViewerApp::update(double dt, const InputState& in0) {
           for (ShipState* sp : all)
             if (netplay_ && netplay_->remote(sp->ship)) { sp->sfxContact += remoteCopies[rc].sfxContact; sp->cueContact += remoteCopies[rc].cueContact; ++rc; }
         }
-        if (!introMode_) stepCombat(step, in, held);
+        if (!introMode_ && !netplay_ && !sheld && !raceStatus_.over) {  // the drones (0x4A291), not while the ships wait on the grid
+          std::vector<const ShipState*> dship;
+          for (ShipState* sp : all) dship.push_back(sp);
+          const double hp[3] = {player_.x, player_.y, player_.z};
+          drones_.step(*scene_, step, hp, ai_[size_t(player_.ship)].node, dship, &combat_, lastSetup_.championship);
+          for (const DroneWorld::Blast& b : drones_.blasts) combat_.explodeAt(b.pos);
+          if (std::getenv("SLIP_DRONE_LOG")) { static size_t last = 99; static int tick = 0; if (drones_.drones.size() != last || ++tick % 240 == 0) { last = drones_.drones.size(); std::fprintf(stderr, "drones %zu blasts %zu\n", last, drones_.blasts.size()); for (const Drone& d : drones_.drones) std::fprintf(stderr, "  drone at %.0f %.0f %.0f node %d dist %.0f\n", d.pos[0], d.pos[1], d.pos[2], d.node, std::sqrt((d.pos[0]-hp[0])*(d.pos[0]-hp[0])+(d.pos[2]-hp[2])*(d.pos[2]-hp[2]))); } }
+        }
+        if (!introMode_) stepCombat(step, sin, sheld);
         simAccum_ -= step;
       }
+      if (replayEnded_) { endReplay(); return; }
       {
         const double listener[3] = {player_.x, player_.y, player_.z};
         drainSounds(listener);
@@ -573,16 +601,28 @@ void ViewerApp::update(double dt, const InputState& in0) {
           raceOverHandled_ = true;
           if (!finished_) { finished_ = true; finishRank_ = me.rank; }
           if (!opt_.noMusic && (!front_ || netplay_)) audio_.playMusic(finishRank_ > 3 ? "LOSE.HMP" : "WIN.HMP", false);  // with the menus the results screen plays it
-          if (voicesOn()) audio_.playCue(finishRank_ == 1 ? (std::rand() & 1) : finishRank_ + 1);  // 0x5A9A9..0x5A9CC
+          if (voicesOn() && (!front_ || netplay_)) audio_.playCue(finishRank_ == 1 ? (std::rand() & 1) : finishRank_ + 1);  // 0x5A9A9..0x5A9CC (with the menus the results screen plays it)
         }
       }
       if (introMode_) updateFlyThrough(dt);
       if (view_ == 3) {
         updateTvCamera();
+      } else if (view_ == 5) {  // F5: free camera orbiting the ship (keypad keys)
+        cam_.roll = 0;
+        freeAz_ += in.freeAz * dt * 1.6;
+        freeEl_ = std::clamp(freeEl_ + in.freeEl * dt * 1.2, -1.4, 1.4);
+        freeDist_ = std::clamp(freeDist_ * std::exp(in.freeZoom * dt * 1.2), 15000.0, 900000.0);
+        const double az = player_.yaw + freeAz_;
+        cam_.pos[0] = player_.x - std::sin(az) * std::cos(freeEl_) * freeDist_;
+        cam_.pos[1] = player_.y + std::sin(freeEl_) * freeDist_;
+        cam_.pos[2] = player_.z - std::cos(az) * std::cos(freeEl_) * freeDist_;
+        cam_.yaw = float(az);
+        cam_.pitch = float(-freeEl_);
       } else if (cockpit()) {
         // First person view (0x44F64): camera at the ship's 'head' reference point with the ship's full orientation (incl. bank).
         const double* m = player_.m;
         double fwd[3] = {m[6], m[7], m[8]};
+        if (view_ == 4) for (double& x : fwd) x = -x;  // F3: from the cockpit, looking back (0x44F64: the head matrix negated)
         if (view_ == 1) {  // close chase: rigidly attached behind / above the ship, so it banks, pitches and yaws with it
           const double off[3] = {0, 7000, -26000};
           for (int k = 0; k < 3; ++k) cam_.pos[k] = (&player_.x)[k] + m[k] * off[0] + m[3 + k] * off[1] + m[6 + k] * off[2];
@@ -656,19 +696,37 @@ void ViewerApp::drawSprite() {
   }
 }
 
-void ViewerApp::startRaceFromFront(const RaceSetup& s) {
+void ViewerApp::startRaceFromFront(const RaceSetup& s, bool replay) {
+  lastSetup_ = s;
+  haveSetup_ = true;
+  replayMode_ = replay;
   opt_.ship = s.ship;
   opt_.laps = s.laps;
   playerLoadout_ = s.loadout;
   gridSlot_ = s.grid;
   std::string err;
   if (s.track != track_) loadTrack(s.track, &err);
-  else placeGrid();  // the same track again: the ships were left where the last race ended
+  else { placeGrid(); doors_.build(*scene_); }  // the same track again: the ships were left where the last race ended, the doors too
   audio_.stopMusic();  // 0x55E3C: the menu / pilot music ends when the race starts; DoGame3D then plays a race song (0x586F2)
   playTrackMusic();
   frontActive_ = false;
   driving_ = false;
   toggleDrive();
+  if (replay) view_ = 3;  // the replay starts with the TV camera (F1..F5 change it)
+}
+
+void ViewerApp::startReplay() {
+  if (haveSetup_ && !replayRec_.empty()) startRaceFromFront(lastSetup_, true);
+  else if (front_) { frontActive_ = true; showResultsScreen(true); }
+}
+
+// The recording is over (or Esc): back to the results screen, which does not repeat the pilot's line.
+void ViewerApp::endReplay() {
+  if (!replayMode_) return;
+  if (std::getenv("SLIP_REPLAY_TEST")) std::fprintf(stderr, "REPLAY END pos %.1f %.1f %.1f speed %.1f steps %zu rank %d\n", player_.x, player_.y, player_.z, player_.speed, replayPos_, ai_[size_t(player_.ship)].rank);
+  replayMode_ = false;
+  replayEnded_ = false;
+  showResultsScreen(true);
 }
 
 void ViewerApp::frontDebugResults() {
@@ -677,6 +735,7 @@ void ViewerApp::frontDebugResults() {
   r.track = 2; r.ship = 1;
   const double t[10] = {377.77, 383.13, 390.75, 398.12, 404.97, 407.17, 423.71, 423.73, 448.42, 453.70};
   for (int i = 0; i < 10; ++i) { r.place[i] = i + 1; r.time[i] = t[i]; }
+  r.bestLap = 49.12;
   front_->showResults(r);
   frontActive_ = true;
 }
@@ -688,8 +747,16 @@ bool ViewerApp::tryShowResults() {
   return true;
 }
 
-void ViewerApp::showResultsScreen() {
+void ViewerApp::showResultsScreen(bool again) {
   RaceResult r;
+  if (again) {
+    toggleDriveIfRacing();
+    audio_.stopMusic();
+    lastResult_.noVoice = true;
+    front_->showResults(lastResult_);
+    frontActive_ = true;
+    return;
+  }
   r.track = track_; r.ship = player_.ship;
   for (int i = 0; i < 10; ++i) {
     const AiState& a = ai_[size_t(i)];
@@ -698,6 +765,10 @@ void ViewerApp::showResultsScreen() {
     r.projected[i] = a.projected;
   }
   r.bestLap = ai_[size_t(player_.ship)].bestLap;
+  r.remaining = combat_.combat[size_t(player_.ship)].load;
+  r.haveRemaining = true;
+  lastResult_ = r;
+  if (std::getenv("SLIP_REPLAY_TEST")) std::fprintf(stderr, "RACE END   pos %.1f %.1f %.1f speed %.1f steps %zu rank %d\n", player_.x, player_.y, player_.z, player_.speed, replayRec_.size(), ai_[size_t(player_.ship)].rank);
   toggleDrive();
   audio_.stopMusic();
   front_->showResults(r);
@@ -742,21 +813,19 @@ void ViewerApp::renderFront() {
     uint32_t* dst = fb + size_t(y + dy) * size_t(fw) + size_t(dx);
     for (int x = 0; x < rw; ++x) dst[x] = row[cols[size_t(x)]];
   }
-  double ang = 0;
-  int rc[4];
-  if (const int ps = front_->previewShip(&ang, rc); ps >= 0) renderShipPreview(ps, ang, rc, dx, dy, rw, rh);
+  for (const FrontEnd::Preview& p : front_->previews()) if (p.ship >= 0) renderShipPreview(p.ship, p.angle, p.rect, dx, dy, rw, rh, p.fit);
 }
 
 // The craft turning on the pilot information card (DoViewCar 0x46A94): rendered with the card's own palette into the rectangle of the card, over the
 // already composed front end image (pixels the 3D pass leaves at the clear colour keep the card behind them).
-void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh) {
+void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh, double fit) {
   if (ship < 0 || ship >= 10) return;
-  if (previewShip_ != ship) {  // the craft with its own VIEW<n>.MAT materials
-    previewScene_ = std::make_unique<Scene>();
-    previewShip_ = buildShipPreview(*data_, ship, previewScene_.get()) ? ship : -2;
+  if (!previewCache_[size_t(ship)]) {  // the craft with its own VIEW<n>.MAT materials, built once
+    auto sc = std::make_unique<Scene>();
+    if (buildShipPreview(*data_, ship, sc.get())) previewCache_[size_t(ship)] = std::move(sc);
+    else return;
   }
-  if (previewShip_ != ship) return;
-  Scene& sc = *previewScene_;
+  Scene& sc = *previewCache_[size_t(ship)];
   sc.palette = front_->palette();  // the card's palette
   uint32_t* fb = renderer_.framebuffer();
   const int fw = renderer_.width(), fh = renderer_.height();
@@ -765,7 +834,7 @@ void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int
   const Mesh& mesh = sc.shipMeshes[0];
   double radius = 1;
   for (const Vec3& v : mesh.verts) radius = std::max(radius, std::sqrt(double(v.x) * v.x + double(v.y) * v.y + double(v.z) * v.z));
-  const double fov = 0.9, el = 0.42, dist = radius / (0.80 * 2.0 * std::tan(fov / 2.0));
+  const double fov = 0.9, el = 0.42, dist = radius / (fit * 2.0 * std::tan(fov / 2.0));
   Camera cam;
   cam.pos[0] = dist * std::sin(angle) * std::cos(el); cam.pos[1] = dist * std::sin(el); cam.pos[2] = dist * std::cos(angle) * std::cos(el);
   cam.yaw = float(std::atan2(-cam.pos[0], -cam.pos[2]));
@@ -851,7 +920,7 @@ void ViewerApp::renderFrame() {
     }
     for (int i = 0; i < 10; ++i) {
       const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
-      if (scene_->shipMeshes[size_t(i)].polys.empty() || !shipShown(i) || (driving_ && view_ == 0 && i == player_.ship)) continue;
+      if (scene_->shipMeshes[size_t(i)].polys.empty() || !shipShown(i) || (driving_ && (view_ == 0 || view_ == 4) && i == player_.ship)) continue;
       MeshTransform sx;
       sx.pos[0] = s.x; sx.pos[1] = s.y; sx.pos[2] = s.z;
       shipRenderMatrix(s, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
@@ -887,6 +956,20 @@ void ViewerApp::drawCombatOverlay() {
     for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) xf.R[i * 3 + j] = float(p.m[j * 3 + i]);
     renderer_.drawMesh(sc, sc.weaponMeshes[size_t(mi)], xf);
   }
+  if (!drones_.drones.empty() && !sc.droneMesh.polys.empty())  // the drones: DRONE.SHP, turned along their flight direction (the model faces +z)
+    for (const Drone& d : drones_.drones) {
+      MeshTransform xf;
+      for (int k = 0; k < 3; ++k) xf.pos[k] = d.pos[k];
+      double f[3] = {d.dir[0], d.dir[1], d.dir[2]};
+      double r[3] = {f[2], 0, -f[0]};
+      double rl = std::sqrt(r[0] * r[0] + r[2] * r[2]);
+      if (rl < 1e-6) { r[0] = 1; r[2] = 0; rl = 1; }
+      r[0] /= rl; r[2] /= rl;
+      const double u[3] = {f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]};
+      const double m[9] = {r[0], r[1], r[2], u[0], u[1], u[2], f[0], f[1], f[2]};
+      for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) xf.R[i * 3 + j] = float(m[j * 3 + i]);
+      renderer_.drawMesh(sc, sc.droneMesh, xf);
+    }
   for (const Pickup& pk : combat_.pickups) {  // bonus object: BONUS<type>.SPR billboard (size = the 0x2620 collision cube)
     const Sprite& sp = bonusSprites_[size_t(std::clamp(pk.type, 0, 5))];
     renderer_.drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, pk.pos, 2.0 * 0x2620, transparent(sp));
@@ -908,6 +991,11 @@ void ViewerApp::drawCombatOverlay() {
   }
   drawHud();
   if (introMode_) drawIntroOverlay();
+  if (replayMode_ && hudAssets_.loaded) {
+    HudCanvas c;
+    c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
+    c.textCentered(hudAssets_.small.height > 0 ? hudAssets_.small : hudAssets_.time, "REPLAY   Esc: end   F1..F5: cameras", 0, 319, 12, 0xFF);
+  }
 }
 
 // Piece light (0x39AE6..0x39AF8): the light of the piece, and for the refuel piece a fresh random value (14 bit) for every draw: the blue / white
@@ -1146,7 +1234,7 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
   std::vector<std::vector<int>> shipsOnPiece(sc.pieceBoxes.size());
   std::vector<int> looseShips;
   for (int i = 0; i < 10; ++i) {
-    if (sc.shipMeshes[size_t(i)].polys.empty() || !shipShown(i) || (driving_ && view_ == 0 && i == player_.ship)) continue;  // no own ship from inside the cockpit
+    if (sc.shipMeshes[size_t(i)].polys.empty() || !shipShown(i) || (driving_ && (view_ == 0 || view_ == 4) && i == player_.ship)) continue;  // no own ship from inside the cockpit
     const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
     const float p[3] = {float(s.x - sc.origin[0]), float(s.y - sc.origin[1]), float(s.z - sc.origin[2])};
     int best = -1;
@@ -1303,7 +1391,7 @@ std::vector<std::string> ViewerApp::hudLines() const {
       l.push_back(combatLine());
       std::snprintf(buf, sizeof buf, "damage engine %.0f%% steering %.0f%%  credits %d  projectiles %zu  pickups %zu", player_.damageA, player_.damageB, combat_.combat[size_t(player_.ship)].credits, combat_.projectiles.size(), combat_.pickups.size());
       l.push_back(buf);
-      l.push_back("W/S throttle/brake, A/D steer, E/Q nose up/down, F fire, X next weapon (booster: F switches it), V view: cockpit / close chase / far chase, Space = free cam");
+      l.push_back("Space accelerate, cursor keys steer / pitch (up = nose down), Alt fire, Ctrl select weapon (booster: fire switches it), F1 cockpit F2 chase F3 rear F4 TV F5 free (keypad), Esc pause; debug: Ctrl+Shift+key");
       l.push_back(aiEnabled_ ? "AI ships racing (F9 = stop them)" : "AI off (F9)");
       l.push_back(simCfg_.assist ? "hover assist ON (F8): legacy floor following, no collision" : "original-style flight model (F8 = hover assist): manual pitch, polygon collision");
     } else {

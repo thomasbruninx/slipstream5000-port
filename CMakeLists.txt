@@ -25,6 +25,7 @@ add_library(slipstream_core STATIC
   src/game/doors.cpp
   src/game/ship_ai.cpp
   src/game/weapons.cpp
+  src/game/drones.cpp
   src/game/hud.cpp
   src/game/pause_menu.cpp
   src/game/settings_file.cpp

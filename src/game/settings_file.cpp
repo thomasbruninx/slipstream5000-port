@@ -42,6 +42,8 @@ SavedConfig loadConfig() {
     else if (key == "engine") s.engine = std::clamp(i, 0, 2);
     else if (key == "shading") s.shading = std::clamp(i, 0, 2);
     else if (key == "progress") c.progress = std::clamp(i, 1, 10);
+    else if (key == "reverseAccel") s.keys.reverseAccel = i != 0;
+    else if (key.compare(0, 3, "key") == 0 && key.size() == 4 && key[3] >= '0' && key[3] < char('0' + kKeyActions)) s.keys.sc[size_t(key[3] - '0')] = std::clamp(i, 0, 511);
   }
   return c;
 }
@@ -54,7 +56,8 @@ bool saveConfig(const SavedConfig& c) {
   f << "music " << s.music << "\nsfx " << s.sfx << "\ndifficulty " << s.difficulty << "\nkph " << int(s.kph) << "\ntrackMap " << int(s.trackMap) << "\ndetail " << s.detail
     << "\nrearMonitor " << int(s.rearMonitor) << "\nweaponsMonitor " << int(s.weaponsMonitor) << "\nclouds " << int(s.clouds) << "\ntexturesCoarse " << int(s.texturesCoarse)
     << "\nwindowReduced " << int(s.windowReduced) << "\nshadows " << int(s.shadows) << "\ndamage " << int(s.damage) << "\nsfxOn " << int(s.sfxOn) << "\nspeech " << int(s.speech)
-    << "\nmusicOn " << int(s.musicOn) << "\nengine " << s.engine << "\nshading " << s.shading << "\nprogress " << c.progress << "\n";
+    << "\nmusicOn " << int(s.musicOn) << "\nengine " << s.engine << "\nshading " << s.shading << "\nprogress " << c.progress << "\nreverseAccel " << int(s.keys.reverseAccel) << "\n";
+  for (int k = 0; k < kKeyActions; ++k) f << "key" << k << " " << s.keys.sc[size_t(k)] << "\n";
   return bool(f);
 }
 

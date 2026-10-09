@@ -1,6 +1,7 @@
 #include "game/championship.hpp"
 
 #include <algorithm>
+#include <random>
 #include <sstream>
 
 namespace slip {
@@ -10,7 +11,7 @@ int champRaceCount(int difficulty) {
   return kRaces[std::clamp(difficulty, 0, 2)];
 }
 
-void Championship::start(int humanShip, int difficulty) {
+void Championship::start(int humanShip, int difficulty, unsigned seed) {
   active_ = true;
   difficulty_ = std::clamp(difficulty, 0, 2);
   race_ = 1;
@@ -27,6 +28,9 @@ void Championship::start(int humanShip, int difficulty) {
     d.load = d.human ? Loadout{} : aiLoadout(s);
     if (d.human) d.load.booster = 0;  // the roster record starts with turbo item 0 (0x585D1 clears the field, the garage shows Delphine Injection)
   }
+  std::mt19937 rng(seed ? seed : std::random_device{}());
+  for (int s = 0; s < 10; ++s) grid1_[size_t(s)] = s;
+  std::shuffle(grid1_.begin(), grid1_.end(), rng);
   rank();
 }
 
@@ -34,7 +38,7 @@ std::array<int, 10> Championship::grid() const {
   std::array<int, 10> g{};
   for (int s = 0; s < 10; ++s) {
     const ChampDriver& d = d_[size_t(s)];
-    g[size_t(s)] = race_ == 1 || d.place == 0 ? s : 10 - d.place;  // rank = 11 - place, slot = rank - 1
+    g[size_t(s)] = race_ == 1 || d.place == 0 ? grid1_[size_t(s)] : 10 - d.place;  // rank = 11 - place, slot = rank - 1
   }
   return g;
 }

@@ -28,6 +28,9 @@ struct RaceResult {  // handed to the results screen when a race ends
   double time[10] = {};      // finishing time (seconds), projected for ships that were still racing
   bool projected[10] = {};
   double bestLap = 0;        // the player's fastest lap (0 = none)
+  Loadout remaining;         // what the player's craft still carries (weapons, rounds left)
+  bool haveRemaining = false;
+  bool noVoice = false;      // the results are shown again after a replay: no new line
 };
 
 struct RaceSetup {  // what the front end hands to the race
@@ -56,7 +59,7 @@ class FrontEnd {
   bool takeRace(RaceSetup* out) { if (!race_) return false; race_ = false; *out = setup_; return true; }
   void showResults(const RaceResult& r);
   // text entry (saved game names): the application forwards typed characters while wantsText()
-  bool wantsText() const { return screen_ == Screen::Slots && slotEntry_; }
+  bool wantsText() const { return (screen_ == Screen::Slots && slotEntry_) || (screen_ == Screen::Best && bestEdit_ >= 0); }
   void textInput(const std::string& t);
   void backspace();
   bool championshipActive() const { return champ_.active(); }
@@ -65,8 +68,12 @@ class FrontEnd {
   void setProgress(int p, bool unlockAll) { progress_ = std::clamp(p, 1, 10); unlockAll_ = unlockAll; }  // tracks open for single races
   int progress() const { return progress_; }
   bool takeProgressChanged() { const bool r = progressChanged_; progressChanged_ = false; return r; }
+  void setKeyNamer(std::function<std::string(int)> f) { keyName_ = std::move(f); }  // scancode -> text for the key page
+  bool wantsKey() const { return screen_ == Screen::Config && keyWait_; }
+  void rawKey(int scancode);                                                         // the next key while wantsKey()
   void setSettings(GameSettings* s) { cfg_ = s; }  // the options the configuration screens edit
   bool takeConfigChanged() { const bool r = cfgChanged_; cfgChanged_ = false; return r; }
+  bool takeReplay() { const bool r = replay_; replay_ = false; return r; }  // Replay was chosen on the results screen
   int takeIntroRequest() { if (!introWanted_) return 0; introWanted_ = false; return setup_.track; }
   void introFinished();
   void setFlyThrough(bool on) { flyThrough_ = on; }  // the application can show the TV fly-through
@@ -74,6 +81,9 @@ class FrontEnd {
   // Pilot information screen (DoViewCar 0x46A94): the 3D craft turning in the middle of the card. The application renders it: ship number, turn angle
   // (radians) and the virtual 320x200 rectangle it may draw into. Returns -1 on every other screen.
   int previewShip(double* angle, int rect[4]) const;
+  // The 3D craft of the current screen: the pilot card's turning craft or the three record holders of the best laps screen.
+  struct Preview { int ship = 0; double angle = 0; int rect[4] = {0, 0, 0, 0}; double fit = 0.80; };
+  std::vector<Preview> previews() const;
   const Palette& palette() const { return pal_; }  // palette of the screen just drawn
   bool ready() const { return ready_; }
   Screen screen() const { return screen_; }
@@ -180,13 +190,16 @@ class FrontEnd {
   void champRaceFinished();  // results -> points and prize money -> positions / final positions
   void champStart();         // the pilot card was accepted in the championship
   // configuration screens (frontend_config.cpp): the options live in the application's GameSettings (setSettings), the screens edit them directly
-  enum class CfgPage { Main, General, Controls, Detail, Difficulty, Sound };
+  enum class CfgPage { Main, General, Controls, Keys, Detail, Difficulty, Sound };
   struct CfgRow;
   GameSettings* cfg_ = nullptr;
   GameSettings cfgLocal_;
   CfgPage cfgPage_ = CfgPage::Main;
   int cfgHov_ = -1;
   bool cfgChanged_ = false;
+  bool keyWait_ = false;       // a key row waits for the next key press
+  int keyKeep_ = -1;           // the action being bound
+  std::function<std::string(int)> keyName_;
   std::vector<CfgRow> cfgRows();
   const char* cfgFile() const;
   void openConfig();
@@ -215,7 +228,7 @@ class FrontEnd {
     bool faceOn = false;
     int frame[4] = {0, 0, 0, 0};  // mouth, eyes, lids, brows
   } rep_;
-  bool introWanted_ = false, flyThrough_ = false;
+  bool introWanted_ = false, flyThrough_ = false, replay_ = false;
   int progress_ = 1;
   bool unlockAll_ = false, progressChanged_ = false;
   // saved games (RES_GAME screen, 0x53536 / 0x53318): six slots in ~/Library/Application Support/Slipstream/slot<N>.sav
@@ -234,12 +247,18 @@ class FrontEnd {
   Screen slotBack_ = Screen::Main;
   // results and best lap records
   RaceResult result_;
-  struct Record { int ship = 0; int ms = 0; };
-  std::vector<Record> records_[11];  // per track 1..10, fastest first (at most 5)
-  int bestTrack_ = 1;
+  // Best laps (0x422EC / 0x42389 / 0x4208E): the three fastest laps of every track with the driver's craft and name; the defaults come from SLIPSTRM.CFG
+  struct Record { int ship = 0; int ms = 0; std::string name; };
+  std::vector<Record> records_[11];  // per track 1..10, fastest first (at most 3)
+  int bestTrack_ = 1, bestEdit_ = -1, bestHov_ = -1;
+  std::string bestAfterNote_;
+  bool bestAfterChamp_ = false;      // after the name entry: the championship goes on with the points
   void loadRecords();
   void saveRecords() const;
-  void addRecord(int track, int ship, double seconds);
+  int insertRecord(int track, int ship, int ms);  // position 0..2 or -1 when the lap is not in the first three
+  void finishRecordEntry();
+  int bestZoneAt(int x, int y) const;
+  void bestActivate(int zone);
   void drawRanking();
   int resultZoneAt(int x, int y) const;
   void resultChoose(int i);

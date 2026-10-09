@@ -60,7 +60,27 @@ CFG word `0x493E6` = number of tracks open (1 in a fresh install): only the firs
 four on the newest open track opens the next (`0x5A85B`; not in the championship, not in practice, which has no results screen). The port stores the number in `config.txt` (`progress`) and
 offers `--unlock-all`.
 
+## Second round (2026-10-09)
+* **First grid random**: race 1 puts the ten ships in a random order (`0x58448` shuffles the roster); later races reverse the previous result.
+* **Weapons are not refilled for free**: what is left after a race (weapons, rounds) is what the garage shows next (SPECULATIVE that the original behaves the same; the money, parts
+  and loader flag persisted already). Prize money and bought parts carry over.
+* **Results voice**: the pilot's line for the place (`0x5A9A9..0x5A9CC`, first place: one of two) plays when the results screen opens (all modes), not at the finish.
+* **Replay** (`RunRaceReplay 0x5A80C`, `ReplayRecordStart 0x5BCDC`): the original re-runs the race from the recorded controls and the saved random seed. The port records the controls of every 1/120 s step
+  (throttle, brake, steer, pitch, fire, weapon cycle, "waiting on the grid") and the combat seed, restarts the race with the same setup and feeds the recording back; the result is bit-identical
+  (checked with `SLIP_REPLAY_TEST=1`: the end position of the race and of its replay match). The replay starts with the TV camera, F1..F5 switch, Esc or the end of the recording returns to the results
+  screen (no second voice line, no second record). Available in the championship too.
+* **Best laps with names** (`0x422EC`, `0x42389`, `0x4208E`): the three fastest laps of every track (defaults from `SLIPSTRM.CFG`: table `0x493EA` + `0x78` per track, three 0x28 byte entries
+  {u16 craft, 32 byte name, u32 ms at +0x22} - "Slipstream 5000", "Gremlin Interactive", "The Software Refinery", 0'50"00..1'30"00). A human lap that beats an entry (an equal time stays behind) opens the track's
+  screen with a new empty entry where the name is typed (blinking cursor; Enter or Esc finish, an empty name becomes the pilot's) before the points are awarded. Screen layout: sky `BESTBACK` / `BESTDARK`,
+  title button (40,5)-(278,23), `<` (88,177)-(109,195), Ok (115,177)-(200,195), `>` (206,177)-(227,195); three strips 256 x 46 at x 32, y 30 / 78 / 126: portrait `BESTF<n>` at (1,1), name and
+  time centred in x 49..206 at y 12 / 26 (`RESULTS.FNT`, colour 0xFF), `BEST3DBK` box at (207,1) with the craft turning in it (about 0.19 turn per second, INFERRED from `0x4292A`; the original also wipes the strips in one after the other, not ported).
+  The port keeps its own copy in `records.txt` (`v2` + `track ship ms name`).
+* **TV camera line of sight**: the original tests that the camera lies inside a track piece (`0x36669`) and a line of sight through the collision system (`0x140B2`, a run-time function pointer,
+  not decoded). The port samples the camera -> ship segment against the piece volumes (every sample must lie inside a piece), takes the nearest camera that sees the ship (first eight), keeps the
+  current one while it still sees the ship and is within 1.3x of the best distance.
+* **Controls**: docs/controls.md (original default keys, remapping, cameras F1..F5, debug shortcuts moved to Ctrl+Shift).
+* **Drones** (`0x4A240..0x4A847`): see docs/weapons.md "Drones".
+
 ## Not done
-Records: the original keeps the best three laps of every track with a name entry (`0x422EC` / `0x42389`); the port keeps its own top five without names. The original's replay (`RunRaceReplay`),
-the two-player championship, the line-of-sight test of the TV camera, the language switch (the `.ST1` / `.ST2` French and German tables and samples exist), key remapping in the Controls page
-(it lists the port's fixed keys) and the copy-protection code screen (`CWL`, no callers) are not ported.
+The original's two-player championship, language switching (the `.ST1` / `.ST2` tables and samples exist), joystick calibration, the wipe-in of the best-lap strips, the original's exact TV camera
+line of sight (`0x140B2`), the drone's exact curvature-dependent speed along the lateral path offset and its removal rule.

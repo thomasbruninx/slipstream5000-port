@@ -30,7 +30,7 @@ class Championship {
  public:
   // The human flies `humanShip`; the nine other ships are the AI drivers. The roster order (used for ties, 0x56217: later entries win) is the human first, then the
   // ships by number.
-  void start(int humanShip, int difficulty);
+  void start(int humanShip, int difficulty, unsigned seed = 0);  // seed 0: random
   bool active() const { return active_; }
   int difficulty() const { return difficulty_; }
   int raceNumber() const { return race_; }                    // 1-based
@@ -40,7 +40,7 @@ class Championship {
   int humanShip() const { return human_; }
   ChampDriver& driver(int ship) { return d_[size_t(ship)]; }
   const ChampDriver& driver(int ship) const { return d_[size_t(ship)]; }
-  // Start slot (0 = pole) of every ship in the coming race: race 1 by ship number (the port's single race grid), later races the reversed result of the
+  // Start slot (0 = pole) of every ship in the coming race: race 1 a random order (0x58448 shuffles the roster), later races the reversed result of the
   // previous race (record +0x24 = 11 - place, 0x55DC8).
   std::array<int, 10> grid() const;
   // The race is over: `place[ship]` = finishing place 1..10. Awards points and prize money (0x561CF) and ranks the championship.
@@ -57,6 +57,7 @@ class Championship {
   int difficulty_ = 1, race_ = 1, human_ = 0;
   std::array<ChampDriver, 10> d_{};
   std::array<int, 10> order_{};  // roster order (ship numbers)
+  std::array<int, 10> grid1_{};  // the first race's start slots
 };
 
 }  // namespace slip

@@ -121,3 +121,14 @@ line plays) and 4 s later the result line (rank 1: cue 0/1 at random, otherwise 
 ## 9. Controls
 `F` fire (gamepad X/west), `X` next weapon (gamepad B/east). With the booster selected `F` switches it. HUD line: energy pools, rounds,
 booster fuel, lock, active effects. Red square = lock target.
+
+## Drones (`0x4A240..0x4A847`, `DRONE.ART` / `DRONE.SHP`) - added with the championship phase
+Little white-and-red craft (`DRONE.SHP`: WHITEPLASTIC, REDMETAL, BLUEGLASS; `DRONEA.SHP` is the damaged level of detail, `DRONES / DRONESS` the shadow shapes, `DRFRG00..07` debris) that fly along the track.
+* **Spawning** (`0x4A291`): the first one 1 s after the race starts, then one every 10 s (`[0x4A22C]` = `0x3E8` / `0x2710`) while fewer than 6 live (`0x4A29F`); it is created 10 path nodes ahead of the human
+  ship (`0x36282`, ECX = 10; if the chain is shorter the attempt repeats after 1 s). Not while the ships wait on the grid. Not in multiplayer (the port keeps drones local).
+* **Flight** (`0x4A4CF`): along the path nodes; the node counts as reached within `0x11DF0`; speed `0xAE8F8` while the node is farther than `0x3B920`, else `0x1F6BC + 0x2F21A * (0x4000 - sum (0x8000 - node.straight) over the next 0x5F500 units) / 0x4000`
+  (the AI's formula with fixed constants), never above `0x2BA3E`. The port turns the heading smoothly (rate 2.5 / s) and removes a drone that is 3.5 million units away from the human (own rule).
+* **Hits** (`0x4A3B2`): message `0x202` (a **beam**: blaster or disrupter) -> explosion + a bonus object (`0x42A9A`, lifetime `0x3A98` ms = 15 s) whose type is `table[Random(count - 1)]`: single races `{0, 1, 3, 2, 5}`,
+  championship `{0, 1, 3, 2, 4, 5}` (repair engine, repair steering, reversed controls, booster fuel, +50 credits, free booster); `Random(count - 1)` never reaches the last entry, so the free booster
+  never drops. Message `0x106` (a missile, mine or ship touching it) -> explosion only. Message `0x107` (wall) -> a burst. The hit sphere is 0.9 of the model's radius (own estimate).
+Port: `src/game/drones.*` (flight, spawning, ship collisions), `CombatWorld::stepProjectile` (drone hits), `dropPickup / randomBonusType`; test in `tests/weapons_tests.cpp`.

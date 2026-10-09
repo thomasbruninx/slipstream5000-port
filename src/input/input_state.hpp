@@ -8,5 +8,6 @@ struct InputState {
   float throttle = 0, brake = 0, steer = 0, pitch = 0;          // drive mode
   bool showList = false;                                        // Tab held: multiplayer player list
   bool fire = false;                                            // weapon trigger (held)
+  float freeAz = 0, freeEl = 0, freeZoom = 0;                   // free camera (F5): keypad Ins / Del, PgUp / PgDn, + / - (-1..1)
 };
 }  // namespace slip

@@ -39,6 +39,7 @@ void FrontEnd::champRaceFinished() {
   std::array<int, 10> place{};
   for (int s = 0; s < 10; ++s) place[size_t(s)] = result_.place[s];
   champ_.applyRace(place);
+  if (result_.haveRemaining) champ_.driver(champ_.humanShip()).load = result_.remaining;  // the rounds that were fired are gone: the garage shows what is left
   resSel_ = 1;
   go(champ_.lastRace() ? Screen::FinalPos : Screen::ChampPos);
   if (audio_ && screen_ == Screen::ChampPos) audio_->playMusic("WIN.HMP", false);  // 0x5623E
@@ -118,11 +119,15 @@ void FrontEnd::slotsFinish() {
 
 void FrontEnd::textInput(const std::string& t) {
   if (!wantsText()) return;
-  for (char c : t) if (c >= 32 && c < 127 && slotText_.size() < 20) slotText_ += c;
+  std::string& s = screen_ == Screen::Best ? records_[std::clamp(bestTrack_, 1, 10)][size_t(bestEdit_)].name : slotText_;
+  const size_t max = screen_ == Screen::Best ? 31 : 20;
+  for (char c : t) if (c >= 32 && c < 127 && s.size() < max) s += c;
 }
 
 void FrontEnd::backspace() {
-  if (wantsText() && !slotText_.empty()) slotText_.pop_back();
+  if (!wantsText()) return;
+  std::string& s = screen_ == Screen::Best ? records_[std::clamp(bestTrack_, 1, 10)][size_t(bestEdit_)].name : slotText_;
+  if (!s.empty()) s.pop_back();
 }
 
 void FrontEnd::slotsKey(Key k) {

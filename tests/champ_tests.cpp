@@ -10,11 +10,20 @@ static int failures = 0;
 int main() {
   CHECK(champRaceCount(0) == 6 && champRaceCount(1) == 8 && champRaceCount(2) == 10);
   Championship c;
-  c.start(3, 1);
+  c.start(3, 1, 7);
   CHECK(c.raceNumber() == 1 && c.track() == 6 && c.raceCount() == 8 && !c.lastRace());
   CHECK(c.driver(3).human && c.driver(3).money == 750 && c.driver(3).points == 0);
   auto g = c.grid();
-  for (int s = 0; s < 10; ++s) CHECK(g[size_t(s)] == s);
+  {  // race 1: a random permutation of the ten slots
+    std::array<bool, 10> seen{};
+    for (int s = 0; s < 10; ++s) { CHECK(g[size_t(s)] >= 0 && g[size_t(s)] < 10); seen[size_t(g[size_t(s)])] = true; }
+    for (bool b : seen) CHECK(b);
+    Championship c2;
+    c2.start(3, 1, 7);
+    CHECK(c2.grid() == g);  // the same seed gives the same grid
+    c2.start(3, 1, 8);
+    CHECK(c2.grid() != g);
+  }
   // race 1: ship s finishes in place 10 - s (ship 9 wins)
   std::array<int, 10> place{};
   for (int s = 0; s < 10; ++s) place[size_t(s)] = 10 - s;

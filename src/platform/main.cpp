@@ -150,6 +150,12 @@ int main(int argc, char** argv) {
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Slipstream", (err + "\n\nStart from Terminal with:  slipstream --data /path/to/your/Slipstream5000/folder").c_str(), nullptr);
     return 1;
   }
+  app.setKeyNamer([](int sc) -> std::string {  // the key page shows the keyboard's own names
+    const char* n = SDL_GetKeyName(SDL_GetKeyFromScancode(SDL_Scancode(sc), SDL_KMOD_NONE, false));
+    if (n && *n) return n;
+    n = SDL_GetScancodeName(SDL_Scancode(sc));
+    return n && *n ? n : std::to_string(sc);
+  });
 
   if (netRun > 0) {  // headless multiplayer test: real time, the autopilot flies, results are printed at the end
     setenv("SLIP_AUTOPILOT", "1", 0);
@@ -183,6 +189,7 @@ int main(int argc, char** argv) {
   if (!screenshot.empty() && app.frontActive()) {  // headless front end: --front-sim SEC, --front-keys "dds." (u d l r s=select b=back .=0.5 s)
     for (double t = 0; t < frontSim; t += 1.0 / 60.0) app.update(1.0 / 60.0, InputState{});
     for (char k : frontKeys) {
+      if (k == 'Z') { app.frontDebugEndRace(); continue; }  // test hook: end the race (results screen)
       if (k == 'E') { if (app.introActive()) app.endFlyThrough(true); continue; }  // test hook: Esc during the fly-through
       if (k == 'N') { app.frontText("Game one"); continue; }  // test hook: type a name
       if (k == 'L') { app.frontDebugLast(); continue; }
@@ -271,7 +278,7 @@ int main(int argc, char** argv) {
             break;
           }
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START && app.pausable()) { app.openPause(); break; }
-          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) app.toggleDrive();
+          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH && !app.pausable()) app.toggleDrive();
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) app.cycleWeapon();
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_NORTH) app.toggleCamera();
           if (e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) app.nextItem(1);
@@ -287,6 +294,11 @@ int main(int argc, char** argv) {
           else if (app.frontActive()) app.frontText(e.text.text);
           break;
         case SDL_EVENT_KEY_DOWN:
+          if (app.frontActive() && app.frontWantsKey()) {  // binding a race control
+            if (e.key.key == SDLK_ESCAPE) app.frontKey(PauseMenu::Key::Back);
+            else app.frontRawKey(int(e.key.scancode));
+            break;
+          }
           if (app.frontActive() && app.frontWantsText()) {  // typing a saved game name
             switch (e.key.key) {
               case SDLK_BACKSPACE: app.frontBackspace(); break;
@@ -343,34 +355,65 @@ int main(int argc, char** argv) {
             break;
           }
           if (e.key.repeat) break;
-          switch (e.key.key) {
-            case SDLK_ESCAPE: if (app.tryShowResults()) break; if (app.pausable()) app.openPause(); else running = false; break;
-            case SDLK_RETURN: case SDLK_KP_ENTER: app.tryShowResults(); break;
-            case SDLK_H: app.toggleHud(); break;
-            case SDLK_F10: app.openNetMenu(); break;
-            case SDLK_RIGHTBRACKET: app.nextItem(1); break;
-            case SDLK_LEFTBRACKET: app.nextItem(-1); break;
-            case SDLK_SPACE: app.toggleDrive(); break;
-            case SDLK_F1: app.setMode(AppMode::Track); break;
-            case SDLK_F2: app.setMode(AppMode::Model); break;
-            case SDLK_F3: app.setMode(AppMode::Sprite); break;
-            case SDLK_TAB: if (!app.netRacing()) app.toggleCulling(); break;
-            case SDLK_F4: copyDebug(app); break;
-            case SDLK_F5: app.toggleVisibility(); break;
-            case SDLK_F6: app.togglePainter(); break;
-            case SDLK_F7: app.toggleAllScenery(); break;
-            case SDLK_F8: app.toggleAssist(); break;
-            case SDLK_F9: app.toggleAI(); break;
-            case SDLK_M: if (e.key.mod & SDL_KMOD_SHIFT) app.toggleMusic(); else app.toggleMap(); break;
-            case SDLK_N: app.toggleSfx(); break;
-            case SDLK_X: app.cycleWeapon(); break;
-            case SDLK_V: app.toggleCamera(); break;
-            case SDLK_C:
-              if (e.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) copyDebug(app);
+          {
+            const SDL_Keymod mod = e.key.mod;
+            const bool ctrl = (mod & SDL_KMOD_CTRL) != 0, shift = (mod & SDL_KMOD_SHIFT) != 0;
+            if (ctrl && e.key.key == SDLK_Q) { running = false; break; }  // Ctrl + Q leaves the game at any point (READ.ME)
+            // debug / viewer shortcuts: Ctrl + Shift + key (they used to sit on plain keys that the original uses for the race)
+            if (ctrl && shift) {
+              switch (e.key.key) {
+                case SDLK_H: app.toggleHud(); break;
+                case SDLK_M: app.toggleMap(); break;
+                case SDLK_U: app.toggleMusic(); break;
+                case SDLK_N: app.toggleSfx(); break;
+                case SDLK_C: copyDebug(app); break;
+                case SDLK_V: if (!app.netRacing()) app.toggleCulling(); break;
+                case SDLK_B: app.toggleVisibility(); break;
+                case SDLK_P: app.togglePainter(); break;
+                case SDLK_S: app.toggleAllScenery(); break;
+                case SDLK_A: app.toggleAssist(); break;
+                case SDLK_I: app.toggleAI(); break;
+                case SDLK_D: app.toggleDrive(); break;
+                case SDLK_LEFTBRACKET: app.nextItem(-1); break;
+                case SDLK_RIGHTBRACKET: app.nextItem(1); break;
+                case SDLK_T: app.toggleCamera(); break;
+                default:
+                  if (e.key.key >= SDLK_1 && e.key.key <= SDLK_9) app.selectShip(int(e.key.key - SDLK_1));
+                  if (e.key.key == SDLK_0) app.selectShip(9);
+              }
               break;
-            default:
-              if (e.key.key >= SDLK_1 && e.key.key <= SDLK_9) app.selectShip(int(e.key.key - SDLK_1));
-              if (e.key.key == SDLK_0) app.selectShip(9);
+            }
+            if (app.pausable()) {  // racing: the original's keys
+              if (e.key.scancode == SDL_Scancode(app.keymap().sc[int(KeyAction::Select)])) { app.cycleWeapon(); break; }
+              switch (e.key.key) {
+                case SDLK_ESCAPE: if (app.replayActive()) { app.stopReplay(); break; } if (app.tryShowResults()) break; app.openPause(); break;
+                case SDLK_RETURN: case SDLK_KP_ENTER: app.tryShowResults(); break;
+                case SDLK_F1: app.setView(0); break;
+                case SDLK_F2: app.setView(app.view() == 1 ? 2 : 1); break;
+                case SDLK_F3: app.setView(4); break;
+                case SDLK_F4: app.setView(3); break;
+                case SDLK_F5: app.setView(5); break;
+                case SDLK_F10: app.openNetMenu(); break;
+                case SDLK_PLUS: case SDLK_EQUALS: case SDLK_MINUS: break;  // free camera zoom: held keys, see below
+                default: break;
+              }
+              break;
+            }
+            switch (e.key.key) {  // not in a race: menus of the viewer, multiplayer
+              case SDLK_ESCAPE: running = false; break;
+              case SDLK_RETURN: case SDLK_KP_ENTER: app.tryShowResults(); break;
+              case SDLK_F10: app.openNetMenu(); break;
+              case SDLK_RIGHTBRACKET: app.nextItem(1); break;
+              case SDLK_LEFTBRACKET: app.nextItem(-1); break;
+              case SDLK_SPACE: app.toggleDrive(); break;
+              case SDLK_F1: app.setMode(AppMode::Track); break;
+              case SDLK_F2: app.setMode(AppMode::Model); break;
+              case SDLK_F3: app.setMode(AppMode::Sprite); break;
+              case SDLK_TAB: if (!app.netRacing()) app.toggleCulling(); break;
+              default:
+                if (e.key.key >= SDLK_1 && e.key.key <= SDLK_9) app.selectShip(int(e.key.key - SDLK_1));
+                if (e.key.key == SDLK_0) app.selectShip(9);
+            }
           }
           break;
         default: break;
@@ -388,17 +431,34 @@ int main(int argc, char** argv) {
 
     const bool* k = SDL_GetKeyboardState(nullptr);
     InputState in;
-    in.moveForward = float(k[SDL_SCANCODE_W] || k[SDL_SCANCODE_UP]) - float(k[SDL_SCANCODE_S] || k[SDL_SCANCODE_DOWN]);
-    in.moveRight = float(k[SDL_SCANCODE_D] || k[SDL_SCANCODE_RIGHT]) - float(k[SDL_SCANCODE_A] || k[SDL_SCANCODE_LEFT]);
-    in.moveUp = float(k[SDL_SCANCODE_E]) - float(k[SDL_SCANCODE_Q]);
-    in.fast = k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT];
+    {  // the race controls from the key map (defaults: the original's: cursor keys, Space, Alt, Ctrl); the camera keys of the viewer's free fly are the same keys
+      const KeyMap& km = app.keymap();
+      auto held = [&](KeyAction a) { const int sc = km.sc[size_t(a)]; return sc > 0 && sc < SDL_SCANCODE_COUNT && k[sc]; };
+      const float up = held(KeyAction::Up), down = held(KeyAction::Down), left = held(KeyAction::Left), right = held(KeyAction::Right);
+      const bool accel = held(KeyAction::Accel) != km.reverseAccel;
+      in.moveForward = accel ? 1.0f : 0.0f; in.moveForward -= held(KeyAction::Brake) ? 1.0f : 0.0f;
+      in.moveRight = right - left;
+      in.moveUp = down - up;
+      in.fast = k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT];
+      in.throttle = accel ? 1.0f : 0.0f;
+      in.brake = held(KeyAction::Brake) ? 1.0f : 0.0f;
+      in.pitch = down - up;  // cursor up = nose down (READ.ME)
+      in.steer = right - left;
+      in.fire = held(KeyAction::Fire);
+      // free camera (F5): keypad Ins / Del turn, PgUp / PgDn raise / lower, + / - zoom (also Insert / Delete / PageUp / PageDown / = / - for keyboards without a keypad)
+      in.freeAz = float(k[SDL_SCANCODE_KP_0] || k[SDL_SCANCODE_INSERT]) - float(k[SDL_SCANCODE_KP_PERIOD] || k[SDL_SCANCODE_DELETE]);
+      in.freeEl = float(k[SDL_SCANCODE_KP_9] || k[SDL_SCANCODE_PAGEUP]) - float(k[SDL_SCANCODE_KP_3] || k[SDL_SCANCODE_PAGEDOWN]);
+      in.freeZoom = float(k[SDL_SCANCODE_KP_PLUS] || k[SDL_SCANCODE_EQUALS]) - float(k[SDL_SCANCODE_KP_MINUS] || k[SDL_SCANCODE_MINUS]);
+      in.freeZoom = -in.freeZoom;  // + brings the camera closer
+    }
+    if (!app.pausable()) {  // the viewer's free fly (not a race): the old WASD / E Q keys
+      in.moveForward = float(k[SDL_SCANCODE_W] || k[SDL_SCANCODE_UP]) - float(k[SDL_SCANCODE_S] || k[SDL_SCANCODE_DOWN]);
+      in.moveRight = float(k[SDL_SCANCODE_D] || k[SDL_SCANCODE_RIGHT]) - float(k[SDL_SCANCODE_A] || k[SDL_SCANCODE_LEFT]);
+      in.moveUp = float(k[SDL_SCANCODE_E]) - float(k[SDL_SCANCODE_Q]);
+    }
     in.lookDX = mouseDX * 0.0025f;
     in.lookDY = mouseDY * 0.0025f;
     mouseDX = mouseDY = 0;
-    in.throttle = float(k[SDL_SCANCODE_W] || k[SDL_SCANCODE_UP]);
-    in.brake = float(k[SDL_SCANCODE_S] || k[SDL_SCANCODE_DOWN]);
-    in.pitch = float(k[SDL_SCANCODE_E]) - float(k[SDL_SCANCODE_Q]);  // nose up / down (drive mode)
-    in.steer = float(k[SDL_SCANCODE_D] || k[SDL_SCANCODE_RIGHT]) - float(k[SDL_SCANCODE_A] || k[SDL_SCANCODE_LEFT]);
     if (pad) {
       auto ax = [&](SDL_GamepadAxis a) { float v = float(SDL_GetGamepadAxis(pad, a)) / 32767.0f; return std::fabs(v) < 0.12f ? 0.0f : v; };
       in.moveRight += ax(SDL_GAMEPAD_AXIS_LEFTX);
@@ -410,7 +470,7 @@ int main(int argc, char** argv) {
       in.brake = std::max(in.brake, ax(SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
     }
     in.showList = k[SDL_SCANCODE_TAB];
-    in.fire = k[SDL_SCANCODE_F] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST));
+    in.fire = in.fire || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST));
     in.steer = std::clamp(in.steer, -1.0f, 1.0f);
 
     {

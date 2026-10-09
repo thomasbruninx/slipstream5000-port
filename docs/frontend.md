@@ -54,3 +54,6 @@ Detail: Environment Detail, Clouds, Shading (None / Gouraud / Specular), Texture
 (Off / Quiet / Normal), Speech, Music. Values step with Enter / click (Left / Right step back and forth). The port applies track map, speed unit, difficulty, damage, scenery detail, shadows
 and the sound switches (engine gain, speech, music, effects); rear / weapons monitor, clouds, shading, textures, window size are stored only. Saved in `config.txt`. CONFIRMED layout.
 **Track list** order and locking: see docs/championship.md (unlock progression). Track flags use the executable's longitude / latitude table.
+
+## Race controls, replay, records (third extension)
+Default race keys, remapping and the moved debug shortcuts: docs/controls.md. Replay and the best-laps screen with name entry: docs/championship.md "Second round".

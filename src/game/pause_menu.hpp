@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "game/hud.hpp"
+#include "game/keymap.hpp"
 
 namespace slip {
 
@@ -24,6 +25,7 @@ struct GameSettings {
   bool sfxOn = true, speech = true, musicOn = true;
   int engine = 2;                   // engine sounds: 0 off, 1 quiet, 2 normal (CFG word 0x492E2)
   int shading = 2;                  // 0 none, 1 Gouraud, 2 specular
+  KeyMap keys;                      // the race controls (Controls page)
 };
 
 class PauseMenu {

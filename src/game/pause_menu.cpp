@@ -40,7 +40,7 @@ std::vector<std::string> PauseMenu::items(const GameSettings& s) const {
     case Page::Difficulty: return {std::string("Level (main menu)  ") + std::to_string(s.difficulty) + (s.difficulty == 0 ? " (easy)" : s.difficulty == 1 ? " (normal)" : " (hard)"), optConfig_[3]};
     case Page::Detail: return {"Detail  " + std::to_string(s.detail), optConfig_[3]};
     case Page::Controls:
-      return {"W S  throttle  brake", "A D  steer", "E Q  pitch", "F  fire    X  next weapon", "V  view    Esc  pause", optConfig_[3]};
+      return {"Cursor keys  steer / pitch", "Space  accelerate", "Alt  fire    Ctrl  select weapon", "F1 cockpit  F2 chase  F3 rear", "F4 TV  F5 free (keypad)", optConfig_[3]};  // defaults; remap in the main menu
   }
   return {};
 }

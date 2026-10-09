@@ -104,7 +104,11 @@ struct Pickup {
   int type = 0;          // 0 repair engine, 1 repair steering, 2 booster fuel, 3 reversed controls (5 s), 4 +50 credits, 5 free booster (5 s)
   bool alive = true;
   int id = 0;            // index in the placement list (the same on every peer)
+  double life = -1;      // seconds left (a bonus dropped by a drone lasts 0x3A98 ms), < 0 = stays
 };
+
+// A drone as the weapons see it: beams that hit it destroy it and make it drop a bonus, other projectiles only destroy it (messages 0x202 / 0x106 of 0x4A3B2).
+struct DroneTarget { double pos[3] = {0, 0, 0}; double radius = 3000; bool alive = true; int hit = 0; /* 0 none, 1 beam, 2 other */ double hitPos[3] = {0, 0, 0}; };
 
 struct Explosion {  // purely visual (the original spawns particle effects 0x4F61B / 0x4F79E / 0x4F414)
   double pos[3] = {0, 0, 0};
@@ -131,6 +135,7 @@ struct CombatContext {
   std::vector<const ShipState*> obstacles;  // door panels (static boxes): missiles stop at them (their 0x106 handler destroys the missile)
   int humanShip = -1;                 // the listener ([0x543DD]): receives the pilot / announcer cues
   std::vector<bool> remote;           // multiplayer: ships simulated on another peer (no ship logic, never a victim here; hits arrive as events)
+  std::vector<DroneTarget>* drones = nullptr;  // the drones of the race (hits are written back into them)
 };
 
 class CombatWorld {
@@ -138,6 +143,11 @@ class CombatWorld {
   void init(const WeaponTable& table, const std::array<ShipRefPoints, 10>& refs, int track, const std::vector<PickupSpot>& spots, unsigned seed);
   void setLoadout(int ship, const Loadout& l);
   void setProjectileRadius(int kind, double r);
+  // A bonus object that appears where a drone was shot (0x42A9A): type from the table 0x42A1C (single races: repair engine / steering, reversed controls, booster fuel; the
+  // championship adds +50 credits; the last entry of each table is never drawn: Random(count - 1)); it disappears after `life` seconds.
+  int randomBonusType(bool championship);
+  void dropPickup(const double* pos, int type, double life);
+  void explodeAt(const double* pos) { addExplosion(pos, 0); emitFx(9, -1, pos); }  // a drone blows up
   // One simulation step (all ships already moved): recharge, lock-on, AI decisions, firing, projectiles, pickups, effects.
   void step(const CombatContext& ctx, double dt);
 
@@ -161,6 +171,8 @@ class CombatWorld {
  private:
   struct Rng { uint32_t s = 1; uint32_t next() { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return s; } } rng_;
   void shipLogic(const CombatContext& ctx, int i, double dt);
+  unsigned dropCounter_ = 0;
+  double stepDt_ = 1.0 / 120.0;
   void updateLock(const CombatContext& ctx, int i);
   void aiDecide(const CombatContext& ctx, int i, double dt, bool* fire, bool* cycle);
   void cycleWeapon(int i);
