@@ -508,6 +508,8 @@ void CombatWorld::updateLock(const CombatContext& ctx, int i) {  // 0x50FC4..0x5
     if (l[2] * sn + l[1] * cs + ext < 0 || l[2] * sn - l[1] * cs + ext < 0) continue;
     const double dist = len3(d);
     if (dist > kLockRange || dist >= best) continue;
+    const double tp[3] = {o.x, o.y, o.z};
+    if (ctx.scene && ctx.scene->rayBlocked(origin, tp)) continue;  // no lock through walls (own fix)
     best = dist;
     c.lockTarget = j;
   }
@@ -818,19 +820,20 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
     const double t = segmentVsShip(s, p.pos, np, beam ? 0.0 : p.radius);
     if (t >= 0 && t < bestT) { bestT = t; bestShip = j; }
   }
-  // track (wall message 0x107; beams only stop when they hit a ship)
+  // track (wall message 0x107); a beam is stopped by the track as well (own fix: it used to pass through walls)
   double wallT = 2.0;
-  if (!beam && step > 0) {
-    const double lo[3] = {-p.radius, -p.radius, -p.radius}, hi[3] = {p.radius, p.radius, p.radius};
+  if (step > 0) {
+    const double rr = beam ? 60.0 : p.radius;
+    const double lo[3] = {-rr, -rr, -rr}, hi[3] = {rr, rr, rr};
     const double I[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
     if (ctx.scene) {
       ShipHit h = sweepShipBox(*ctx.scene, p.pos, I, lo, hi, f, step);
       if (h.hit) wallT = h.dist / step;
     }
   }
-  if (!beam) {
-    for (const ShipState* o : ctx.obstacles) {
-      const double t = segmentVsShip(*o, p.pos, np, p.radius);
+  {
+    for (const ShipState* o : ctx.obstacles) {  // doors stop beams too
+      const double t = segmentVsShip(*o, p.pos, np, beam ? 0.0 : p.radius);
       if (t >= 0 && t < wallT) wallT = t;
     }
   }
@@ -843,6 +846,7 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
     p.alive = false;
     return;
   }
+  if (wallT <= 1.0 && beam) { p.alive = false; return; }  // the beam ends at the wall
   if (wallT <= 1.0) {
     for (int k = 0; k < 3; ++k) p.pos[k] += (np[k] - p.pos[k]) * wallT;
     smokeBurst(p.pos, 1.0);  // 0x5CBE3: black smoke, 1 s
