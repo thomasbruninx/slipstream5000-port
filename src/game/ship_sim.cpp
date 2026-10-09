@@ -124,7 +124,11 @@ void stepShipDynamics(ShipState& s, const ShipInput& in, double dt, const ShipPa
   if (s.boosterFreeTime > 0 || s.boosterOn) fac += s.boosterGain;  // 0x51CDC..0x51CFD: booster item factor - 1
   const bool forced = s.forceThrottleTime > 0;  // 0x51B1D: control flag bit 0 (throttle) forced on
   double a;
-  if (in.throttle > 0.01f || forced) {
+  // An analog throttle (a trigger; the original only knew on / off) also sets the speed it settles at: top speed x the pull. Above that speed the ship coasts down.
+  const bool partial = !forced && in.throttle > 0.01f && in.throttle < 0.999f && s.speed > top * fac * double(in.throttle);
+  if (partial) {
+    a = -double(p.coastDecel);
+  } else if (in.throttle > 0.01f || forced) {
     double ratio = std::clamp(s.speed / top, 0.0, 1.0);
     a = (double(p.thrustAtRest) - double(p.thrustAtRest - p.thrustAtTop) * ratio) * (forced ? 1.0 : in.throttle);
   } else {
