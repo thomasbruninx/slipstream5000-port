@@ -9,6 +9,7 @@
 #include <sstream>
 
 #include "game/hud.hpp"
+#include "original_formats/user_dir.hpp"
 #include "original_formats/track.hpp"
 
 namespace slip {
@@ -946,8 +947,7 @@ std::string FrontEnd::timeText(double sec) {
 }
 
 static std::string recordsPath() {
-  const char* home = std::getenv("HOME");
-  return std::string(home ? home : ".") + "/Library/Application Support/Slipstream/records.txt";
+  return userDataDir() + "/records.txt";
 }
 
 // Records: SLIPSTRM.CFG holds the table (0x493EA + 0x78 per track, three entries of 0x28 bytes: u16 craft, 32 byte name, u32 time in ms at +0x22) with the

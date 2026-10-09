@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include "original_formats/user_dir.hpp"
 
 namespace slip {
 
@@ -175,14 +176,19 @@ std::filesystem::path findGameDirectory(const std::string& hint) {
   if (!hint.empty()) cands.emplace_back(hint);
   if (const char* e = std::getenv("SLIPSTREAM_DATA")) cands.emplace_back(e);
   cands.emplace_back(".");
-  if (const char* home = std::getenv("HOME")) {
+  if (const std::string home = homeDir(); !home.empty()) {
     cands.emplace_back(fs::path(home) / "Downloads" / "slip5000");
     cands.emplace_back(fs::path(home) / "Games" / "slip5000");
     cands.emplace_back(fs::path(home) / "slip5000");
+    cands.emplace_back(fs::path(home) / "GOG Games" / "Slipstream 5000");
   }
+#ifdef _WIN32
+  cands.emplace_back("C:/GOG Games/Slipstream 5000");
+  cands.emplace_back("C:/Program Files (x86)/GOG Galaxy/Games/Slipstream 5000");
+#endif
   // remembered location (written by the application after a successful start)
-  if (const char* home = std::getenv("HOME")) {
-    FILE* f = std::fopen((std::string(home) + "/Library/Application Support/Slipstream/data_dir.txt").c_str(), "r");
+  {
+    FILE* f = std::fopen((userDataDir() + "/data_dir.txt").c_str(), "r");
     if (f) {
       char line[1024] = {0};
       if (std::fgets(line, sizeof line, f)) {
@@ -201,10 +207,8 @@ std::filesystem::path findGameDirectory(const std::string& hint) {
 }
 
 void rememberGameDirectory(const std::filesystem::path& dir) {
-  const char* home = std::getenv("HOME");
-  if (!home) return;
   std::error_code ec;
-  std::filesystem::path d = std::filesystem::path(home) / "Library" / "Application Support" / "Slipstream";
+  std::filesystem::path d = userDataDir();
   std::filesystem::create_directories(d, ec);
   FILE* f = std::fopen((d / "data_dir.txt").string().c_str(), "w");
   if (!f) return;

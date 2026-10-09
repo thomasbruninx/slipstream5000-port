@@ -17,11 +17,11 @@
 | Multiplayer menu | F10 | the port's network game; Tab shows the player list |
 
 **Remapping**: main menu -> Configuration -> Controls -> Player 1 Controls. Select a row, press the new key (Esc cancels); a key that another action already uses is swapped over.
-The bindings and "Reverse Accelerator" are stored in `~/Library/Application Support/Slipstream/config.txt` as SDL scancodes (`key0`..`key7` = Up, Down, Left, Right, Select, Fire, Accel, Brake).
+The bindings and "Reverse Accelerator" are stored in `config.txt` in the per-user folder (`~/Library/Application Support/Slipstream`, `%APPDATA%\Slipstream`, `~/.config/slipstream`; see docs/building.md) as SDL scancodes (`key0`..`key7` = Up, Down, Left, Right, Select, Fire, Accel, Brake).
 The original's joystick calibration pages are not ported; controllers use SDL3's gamepad API instead (below).
 
 ## Controllers (USB / Bluetooth, SDL3 gamepad API)
-Any pad SDL knows works (its built-in mapping database; for others put SDL mapping lines in `~/Library/Application Support/Slipstream/gamecontrollerdb.txt` or set `SDL_GAMECONTROLLERCONFIG`). All connected pads are open at once and are read **together with the keyboard and mouse every frame**, so you can switch between them at any moment (also plugging / unplugging while the game runs); there is no mode switch.
+Any pad SDL knows works (its built-in mapping database; for others put SDL mapping lines in `gamecontrollerdb.txt` in the per-user folder or set `SDL_GAMECONTROLLERCONFIG`). All connected pads are open at once and are read **together with the keyboard and mouse every frame**, so you can switch between them at any moment (also plugging / unplugging while the game runs); there is no mode switch.
 
 | Control | Default | Remappable (Configuration > Controls > Controller) |
 |---|---|---|

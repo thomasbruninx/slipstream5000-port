@@ -5,12 +5,12 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include "original_formats/user_dir.hpp"
 
 namespace slip {
 
 std::string configPath() {
-  const char* home = std::getenv("HOME");
-  return std::string(home ? home : ".") + "/Library/Application Support/Slipstream/config.txt";
+  return userDataDir() + "/config.txt";
 }
 
 SavedConfig loadConfig() {

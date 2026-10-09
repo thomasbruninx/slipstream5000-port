@@ -1,6 +1,12 @@
 #include "net/transport.hpp"
 
+#ifdef _WIN32
+#include <winsock2.h>
+#define SLIP_POLL(fds, n) WSAPoll((fds), ULONG(n), 0)
+#else
 #include <poll.h>
+#define SLIP_POLL(fds, n) ::poll((fds), nfds_t(n), 0)
+#endif
 
 #include <algorithm>
 
@@ -90,12 +96,12 @@ class TcpTransport : public ITransport {
     std::vector<PeerId> ids;
     for (auto& [id, c] : conns_) {
       pollfd p{};
-      p.fd = c.fd;
+      p.fd = decltype(p.fd)(c.fd);
       p.events = POLLIN | ((c.connecting || !c.out.empty()) ? POLLOUT : 0);
       fds.push_back(p);
       ids.push_back(id);
     }
-    if (!fds.empty()) ::poll(fds.data(), nfds_t(fds.size()), 0);
+    if (!fds.empty()) SLIP_POLL(fds.data(), fds.size());
     std::vector<PeerId> dead = pendingDead_;  // failed sends
     pendingDead_.clear();
     for (size_t k = 0; k < fds.size(); ++k) {

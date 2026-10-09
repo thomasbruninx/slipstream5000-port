@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "platform/viewer_app.hpp"
+#include "original_formats/user_dir.hpp"
 
 using namespace slip;
 
@@ -209,7 +210,7 @@ int main(int argc, char** argv) {
   });
 
   if (netRun > 0) {  // headless multiplayer test: real time, the autopilot flies, results are printed at the end
-    setenv("SLIP_AUTOPILOT", "1", 0);
+    if (!std::getenv("SLIP_AUTOPILOT")) SDL_setenv_unsafe("SLIP_AUTOPILOT", "1", 0);
     const auto t0 = std::chrono::steady_clock::now();
     auto prev = t0;
     while (!app.wantsQuit()) {
@@ -290,8 +291,8 @@ int main(int argc, char** argv) {
   SDL_SetWindowRelativeMouseMode(window, true);
 
   Pads pads;
-  if (const char* home = std::getenv("HOME")) {  // extra mappings for pads SDL does not know (the SDL_GAMECONTROLLERCONFIG variable works as well)
-    const std::string db = std::string(home) + "/Library/Application Support/Slipstream/gamecontrollerdb.txt";
+  {  // extra mappings for pads SDL does not know (the SDL_GAMECONTROLLERCONFIG variable works as well)
+    const std::string db = userDataDir() + "/gamecontrollerdb.txt";
     if (SDL_AddGamepadMappingsFromFile(db.c_str()) > 0) std::fprintf(stderr, "slipstream: loaded controller mappings from %s\n", db.c_str());
   }
   {

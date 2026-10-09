@@ -8,6 +8,7 @@
 
 #include "game/frontend.hpp"
 #include "game/hud.hpp"
+#include "original_formats/user_dir.hpp"
 
 namespace slip {
 
@@ -15,8 +16,7 @@ namespace {
 constexpr int W = 320, H = 200;
 uint32_t argb(uint32_t rgb) { return 0xff000000u | (rgb & 0xffffffu); }
 std::string saveDir() {
-  const char* home = std::getenv("HOME");
-  return std::string(home ? home : ".") + "/Library/Application Support/Slipstream";
+  return userDataDir();
 }
 }  // namespace
 

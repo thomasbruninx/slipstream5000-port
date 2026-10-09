@@ -5,6 +5,8 @@ A modern C++20/SDL3 reimplementation of the 1995 DOS game *Slipstream 5000*, bui
 Current state: a native macOS data viewer / drive demo (see `docs/project-status.md`). It is **not** yet a playable reproduction of the game.
 
 ## Build and run (macOS, Apple Silicon)
+Linux x64 and Windows x64 builds (also cross compiled from macOS / Linux) are described in `docs/building.md`.
+
 ```
 brew install cmake ninja sdl3
 ./scripts/package_macos.sh          # builds dist/Slipstream.app  (or: cmake -S . -B build -G Ninja && cmake --build build)

@@ -2,6 +2,7 @@
 // (used to compare with an independent decoder).
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 
