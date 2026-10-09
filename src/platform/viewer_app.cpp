@@ -817,12 +817,61 @@ void ViewerApp::renderFront() {
     uint32_t* dst = fb + size_t(y + dy) * size_t(fw) + size_t(dx);
     for (int x = 0; x < rw; ++x) dst[x] = row[cols[size_t(x)]];
   }
-  for (const FrontEnd::Preview& p : front_->previews()) if (p.ship >= 0) renderShipPreview(p.ship, p.angle, p.rect, dx, dy, rw, rh, p.fit);
+  for (const FrontEnd::Preview& p : front_->previews()) if (p.ship >= 0) renderShipPreview(p.ship, p.angle, p.rect, dx, dy, rw, rh, p.fit, p.pal);
 }
 
 // The craft turning on the pilot information card (DoViewCar 0x46A94): rendered with the card's own palette into the rectangle of the card, over the
 // already composed front end image (pixels the 3D pass leaves at the clear colour keep the card behind them).
-void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh, double fit) {
+// The rear monitor (CONFIGURATION > General "Rear Monitor"; config word [0x492DA], drawn by 0x44A25 from the race loop at 0x58BC7 after the console): a small window at
+// (210,99)-(301,147) of the 320x200 screen that shows the world behind the ship from the cockpit position (the head matrix negated), with the label "Rear" in the top left.
+// CONFIRMED: position, option, call order. INFERRED: the field of view (the same horizontal angle as the main window), the 1 pixel frame and the label position. The original
+// shows the weapon monitor in this window for a while after the player fires; the port has no weapon monitor, so the rear view is always there.
+void ViewerApp::drawRearMonitor() {
+  if (!settings_.rearMonitor || !driving_ || !scene_ || !hudActive() || introMode_ || mode_ != AppMode::Track || view_ == 4 || view_ == 3 || rearPass_ || player_.wrecked) return;
+  const int fw = renderer_.width(), fh = renderer_.height();
+  const double sx = fw / 320.0, sy = fh / 200.0;
+  const int rx0 = 210, ry0 = 99, rx1 = 301, ry1 = 147;
+  const int x0 = int(std::floor((rx0 + 1) * sx)), y0 = int(std::floor((ry0 + 1) * sy)), x1 = int(std::floor((rx1) * sx)) - 1, y1 = int(std::floor((ry1) * sy)) - 1;
+  uint32_t* fb = renderer_.framebuffer();
+  const std::vector<uint32_t> keep(fb, fb + size_t(fw) * size_t(fh));
+  const Camera mainCam = cam_;
+  const double* m = player_.m;
+  double fwd[3] = {-m[6], -m[7], -m[8]};
+  const double* h = refPoints_[size_t(player_.ship)].head;
+  for (int k = 0; k < 3; ++k) cam_.pos[k] = (&player_.x)[k] + m[k] * h[0] + m[3 + k] * h[1] + m[6 + k] * h[2];
+  cam_.yaw = float(std::atan2(fwd[0], fwd[2]));
+  cam_.pitch = float(std::asin(std::clamp(fwd[1], -1.0, 1.0)));
+  {
+    const double cy = std::cos(cam_.yaw), sy2 = std::sin(cam_.yaw), cp = std::cos(cam_.pitch), sp = std::sin(cam_.pitch);
+    const double r0[3] = {cy, 0, -sy2}, u0[3] = {-sy2 * sp, cp, -cy * sp};
+    cam_.roll = float(std::atan2(m[3] * r0[0] + m[4] * r0[1] + m[5] * r0[2], m[3] * u0[0] + m[4] * u0[1] + m[5] * u0[2]));
+  }
+  // same horizontal angle as the main window: the vertical field of view follows from the aspect of the small window
+  const double mainW = double(HudLayout::vx1 - HudLayout::vx0 + 1) * sx, monW = double(x1 - x0 + 1), monH = double(y1 - y0 + 1);
+  const double tanHalfX = std::tan(mainCam.fovY * 0.5) * mainW / (double(HudLayout::vy1 - HudLayout::vy0 + 1) * sy);
+  cam_.fovY = float(2.0 * std::atan(tanHalfX * monH / monW));
+  rearPass_ = true;
+  const uint32_t sky = 0xff5a7fa8u, ground = 0xff2a2a2eu;
+  renderer_.setViewport(x0, y0, x1, y1, float(x0 + x1 + 1) * 0.5f, float(y0 + y1 + 1) * 0.5f);
+  renderer_.beginFrame(cam_, sky, ground);
+  drawWorld();
+  renderer_.resetViewport();
+  rearPass_ = false;
+  cam_ = mainCam;
+  for (int y = 0; y < fh; ++y)  // everything outside the monitor is the finished main frame again
+    for (int x = 0; x < fw; ++x)
+      if (x < x0 || x > x1 || y < y0 || y > y1) fb[size_t(y) * size_t(fw) + size_t(x)] = keep[size_t(y) * size_t(fw) + size_t(x)];
+  HudCanvas c;
+  c.fb = fb; c.w = fw; c.h = fh; c.pal = &hudAssets_.palette;
+  const int frame = 0xFF;
+  c.fillIndex(rx0, ry0, rx1, ry0, frame);  // 1 pixel frame (colour INFERRED)
+  c.fillIndex(rx0, ry1, rx1, ry1, frame);
+  c.fillIndex(rx0, ry0, rx0, ry1, frame);
+  c.fillIndex(rx1, ry0, rx1, ry1, frame);
+  if (hudAssets_.small.height > 0) c.text(hudAssets_.small, "Rear", rx0 + 3, ry0 + 3, 0xFF);
+}
+
+void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh, double fit, const Palette* pal) {
   if (ship < 0 || ship >= 10) return;
   if (!previewCache_[size_t(ship)]) {  // the craft with its own VIEW<n>.MAT materials, built once
     auto sc = std::make_unique<Scene>();
@@ -830,7 +879,7 @@ void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int
     else return;
   }
   Scene& sc = *previewCache_[size_t(ship)];
-  sc.palette = front_->palette();  // the card's palette
+  sc.palette = pal ? *pal : front_->palette();  // the craft's card palette (the Info screen's own palette is the screen's)
   uint32_t* fb = renderer_.framebuffer();
   const int fw = renderer_.width(), fh = renderer_.height();
   const std::vector<uint32_t> keep(fb, fb + size_t(fw) * size_t(fh));
@@ -894,6 +943,11 @@ void ViewerApp::renderFrame() {
   }
   renderer_.beginFrame(cam_, sky, ground);
   if (!scene_) return;
+  drawWorld();
+}
+
+// The 3D world from cam_ into the current viewport (track, scenery, ships, doors, then the combat sprites). `painter` selects the debug painter's algorithm.
+void ViewerApp::drawWorld() {
   // The original always culls back-facing track polygons (0x3948C, 0x193FF); legacy mode only culls while driving.
   if (std::getenv("SLIP_NOCULL")) cullOverride_ = 0;
   renderer_.cullBackfaces = cullOverride_ >= 0 ? cullOverride_ != 0 : (mode_ == AppMode::Track && (painter_ || driving_));
@@ -906,7 +960,7 @@ void ViewerApp::renderFrame() {
   if (mode_ == AppMode::Track) buildShadowCasters(); else renderer_.shadowCasters.clear();
   if (mode_ == AppMode::Track) {
     xf.pos[0] = scene_->origin[0]; xf.pos[1] = scene_->origin[1]; xf.pos[2] = scene_->origin[2];
-    if (painter_ && !scene_->bsp.empty()) { renderTrackPainter(xf); drawCombatOverlay(); return; }
+    if (painter_ && !scene_->bsp.empty() && !rearPass_) { renderTrackPainter(xf); drawCombatOverlay(); return; }
     renderer_.drawMesh(*scene_, scene_->track, xf);
     // Camera-facing scenery: orientation is a yaw towards the camera (CONFIRMED 0x379C9: rows (b,0,-a),(0,1,0),(a,0,b)
     // applied as v*M, with (a,b) = normalised (object - camera) in x/z). Stored here as R = M^T.
@@ -935,14 +989,14 @@ void ViewerApp::renderFrame() {
       for (int k = 0; k < 3; ++k) dx.pos[k] = d.pos[k];
       renderer_.drawMesh(*scene_, d.mesh, dx);
     }
-    drawCombatOverlay();
+    if (rearPass_) drawWorldObjects(); else drawCombatOverlay();
   } else {
     renderer_.drawMesh(*scene_, scene_->track, xf);
   }
 }
 
 // Projectiles (the original's .SHP models), beams, bonus sprites, explosions and the lock marker, drawn over the finished frame.
-void ViewerApp::drawCombatOverlay() {
+void ViewerApp::drawWorldObjects() {
   if (!driving_ || !scene_) return;
   const Scene& sc = *scene_;
   auto transparent = [](const Sprite& sp) { return sp.hdr8 == 0xFFFF ? -1 : int(sp.hdr8 & 0xFF); };
@@ -983,6 +1037,11 @@ void ViewerApp::drawCombatOverlay() {
     const Sprite& sp = x.kind == 1 ? fireSprites_[size_t(int(x.age * 8) & 3)] : explSprites_[size_t(std::min(5, int(u * 6)))];
     renderer_.drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, x.pos, x.kind == 1 ? 18000 + 6000 * x.age : 16000 + 26000 * u, transparent(sp));
   }
+}
+
+void ViewerApp::drawCombatOverlay() {
+  if (!driving_ || !scene_) return;
+  drawWorldObjects();
   const CombatState& c = combat_.combat[size_t(player_.ship)];
   if (!hudActive() && c.lockTarget >= 0) {  // lock marker (the HUD draws the original's TSIGHT sprite instead)
     const ShipState& t = grid_[size_t(c.lockTarget)];
@@ -994,6 +1053,7 @@ void ViewerApp::drawCombatOverlay() {
     }
   }
   drawHud();
+  drawRearMonitor();
   if (introMode_) drawIntroOverlay();
   if (replayMode_ && hudAssets_.loaded) {
     HudCanvas c;

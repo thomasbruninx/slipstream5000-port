@@ -202,7 +202,7 @@ class ViewerApp {
   void renderFront();
   std::unique_ptr<Scene> previewScene_;
   int previewShip_ = -1;
-  void renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh, double fit = 0.80);
+  void renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh, double fit = 0.80, const Palette* pal = nullptr);
   std::array<std::unique_ptr<Scene>, 10> previewCache_;
   // multiplayer state
   enum class NetUi { None, Main, Browse, Address, Lobby };
@@ -278,6 +278,10 @@ class ViewerApp {
   void setupCombat();
   void stepCombat(double step, const InputState& in, bool held);
   void drawCombatOverlay();
+  void drawWorldObjects();       // projectiles, drones, bonus objects, explosions
+  void drawWorld();  // the 3D world from cam_ into the current viewport
+  void drawRearMonitor();
+  bool rearPass_ = false;
   std::string combatLine() const;
   bool aiEnabled_ = std::getenv("SLIP_NOAI") == nullptr;
   double simAccum_ = 0;

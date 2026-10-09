@@ -1058,7 +1058,7 @@ void FrontEnd::bestActivate(int z) {
   else if (z == 3) go(Screen::Main);
 }
 
-std::vector<FrontEnd::Preview> FrontEnd::previews() const {
+std::vector<FrontEnd::Preview> FrontEnd::previews() {
   std::vector<Preview> v;
   if (screen_ == Screen::Info) { Preview p; p.ship = previewShip(&p.angle, p.rect); v.push_back(p); }
   if (screen_ == Screen::Best)
@@ -1067,6 +1067,13 @@ std::vector<FrontEnd::Preview> FrontEnd::previews() const {
       p.ship = records_[std::clamp(bestTrack_, 1, 10)][i].ship;
       p.angle = 0.7 + t_ * 1.18 - double(i) * 0.0;  // 0.1875 turn per second (0x3000 per second of 0x10000)
       p.fit = 0.45;
+      // the craft's colours live in the palettes of the team screen and its own card (as in the Info screen), not in the Best screen's
+      const Palette keep = pal_;
+      if (const Sprite* t = spr("CH_TEAM.SPR")) if (t->palette) usePalette(*t->palette);
+      if (const Sprite* card = spr("VIEWCAR" + std::to_string(p.ship) + ".SPR")) if (card->palette) usePalette(*card->palette);
+      previewPal_[i] = pal_;
+      pal_ = keep;
+      p.pal = &previewPal_[i];
       p.rect[0] = kStripX + 207; p.rect[1] = kStripY[i] + 1; p.rect[2] = kStripX + 254; p.rect[3] = kStripY[i] + 44;
       v.push_back(p);
     }

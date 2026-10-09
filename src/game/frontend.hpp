@@ -85,8 +85,8 @@ class FrontEnd {
   // (radians) and the virtual 320x200 rectangle it may draw into. Returns -1 on every other screen.
   int previewShip(double* angle, int rect[4]) const;
   // The 3D craft of the current screen: the pilot card's turning craft or the three record holders of the best laps screen.
-  struct Preview { int ship = 0; double angle = 0; int rect[4] = {0, 0, 0, 0}; double fit = 0.80; };
-  std::vector<Preview> previews() const;
+  struct Preview { int ship = 0; double angle = 0; int rect[4] = {0, 0, 0, 0}; double fit = 0.80; const Palette* pal = nullptr; };  // pal: palette of the craft (null = the screen's)
+  std::vector<Preview> previews();
   const Palette& palette() const { return pal_; }  // palette of the screen just drawn
   bool ready() const { return ready_; }
   Screen screen() const { return screen_; }
@@ -201,6 +201,7 @@ class FrontEnd {
   int cfgHov_ = -1;
   bool cfgChanged_ = false;
   bool keyWait_ = false;       // a key row waits for the next key press
+  Palette previewPal_[3];       // palettes of the craft shown in the Best screen
   bool padWait_ = false;       // a controller row waits for the next button
   std::function<std::string(int)> padName_;
   int keyKeep_ = -1;           // the action being bound

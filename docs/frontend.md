@@ -52,8 +52,10 @@ General (25,43)-(157,61), Controls (163,43)-(281,61), Detail (25,65)-(157,83), D
 (25,43+20i)-(281,59+20i) with the category on the left (x 31) and the value, Ok (100,169)-(195,187); General: Rear Monitor, Weapons Monitor, Language, Track map, Speed Display (mph / km/h);
 Detail: Environment Detail, Clouds, Shading (None / Gouraud / Specular), Textures (Fine / Coarse), Window Size, Shadows; Difficulty: Level, Damage; Sound: Sound Effects, Engine Sounds
 (Off / Quiet / Normal), Speech, Music. Values step with Enter / click (Left / Right step back and forth). The port applies track map, speed unit, difficulty, damage, scenery detail, shadows
-and the sound switches (engine gain, speech, music, effects); rear / weapons monitor, clouds, shading, textures, window size are stored only. Saved in `config.txt`. CONFIRMED layout.
+and the sound switches (engine gain, speech, music, effects); weapons monitor, clouds, shading, textures, window size are stored only. Saved in `config.txt`. CONFIRMED layout.
 **Track list** order and locking: see docs/championship.md (unlock progression). Track flags use the executable's longitude / latitude table.
 
 ## Race controls, replay, records (third extension)
 Default race keys, remapping and the moved debug shortcuts: docs/controls.md. Replay and the best-laps screen with name entry: docs/championship.md "Second round".
+
+**Best Drivers craft previews:** the craft are rendered with the palette of the team screen overlaid by the craft's own card (`VIEWCAR<n>.SPR`), the colours the Info screen uses; the Best Drivers screen's own palette does not contain the ship ramps (user report: wrong colours).

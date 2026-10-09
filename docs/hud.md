@@ -36,6 +36,13 @@ read from the disassembly, INFERRED, SPECULATIVE.
 * Drawn over the 3D window (clip x 4..315, y 8..166), before the console / text: every path node (TRD header +8 list, 0x32 bytes each) with a 1 px line to its `next` (+0) and `alternative` (+4) node in colour 0xFC (green); the lap-line node (TRD header +6 piece, entry +0x1E) as a white (0xFF) 3x3 square; the other ships as a 5x5 black ring with a 3x3 core without corners (a plus): AI grey 0xFB, the second human white 0xFF, and last the player in yellow 0xFE (the manual: "your position is the yellow dot").
 * Port: `ViewerApp::drawMap` (hud map parameters are read from the executable in `HudAssets::load`), `HudCanvas::line/pixel`. In multiplayer other humans are white. Not ported: the two-player layout.
 
+## Rear monitor (General > "Rear Monitor", CFG word `[0x492DA]`; weapons monitor `[0x492DC]`)
+CONFIRMED from the race loop `0x586f2` (0x58BA0..0x58BD8): after the console is drawn (`HudDrawPlayerPanel` 0x44654) the window rectangle (210,99)-(301,147) of the 320x200 screen is handed to the weapons monitor `0x44946`
+(only while `[0x43237]`, the weapon model of the human's last launch, is set; the launchers `0x5C92C..0x5D131` store it through `0x43e92`, a timer clears it) and, otherwise, when `[0x492DA]` is on, to the rear monitor `0x44A25`:
+it shrinks the clip by one pixel, takes the human ship's matrix with the rows negated (the same as the F3 camera `0x44F64`), renders the world through the same routine as the main window and writes the label "Rear" (font `[0x4319d]`, colour 0xFF) in the top left.
+The port (`ViewerApp::drawRearMonitor`): a second world pass from the cockpit position looking backwards into that rectangle (same horizontal field of view as the main window, INFERRED), a 1 pixel white frame (INFERRED) and the label
+with SMALL.FNT (position INFERRED). It is shown in every camera except F3 (rear) and F4 (TV), not on the wreck and not in the intro fly-through. Not ported: the weapons monitor that replaces it for a while after a launch.
+
 ## Rules found on the way
 * Damage beyond 100 on the human ship: `0x4411A` shows "GAME OVER" for 4 s (`[0x42DFC]` timer 0xFA0), the loop then ends the race (0x44022 -> 0x591D9). The port ends the race the same way (LOSE music).
 * Camera keys of the original: F1..F5 (player 1) / F6..F10 (player 2) select camera callbacks 0x44AF6 (cockpit with console), 0x44DFE (smoothed chase), 0x44F64 (rear view: the ship matrix negated, label "Rear" 0x44A25),

@@ -18,8 +18,8 @@ struct GameSettings {
   bool kph = false;                 // speed unit of the HUD
   bool trackMap = true;             // General page "Track map" (config word [0x492FE]): the map overlay of the race screen (M)
   int detail = 3;                   // 0..3: scenery size cull thresholds 32 / 20 / 10 / 5 (0x350C7); 3 = highest
-  // The options of the original's configuration screens (CFG words 0x492E2..0x492FE, frontend_config.cpp). The ones the port cannot show (rear / weapons monitor,
-  // clouds, shading, textures, window size) are stored only.
+  // The options of the original's configuration screens (CFG words 0x492E2..0x492FE, frontend_config.cpp). The ones the port cannot show (weapons monitor,
+  // clouds, shading, textures, window size) are stored only; the rear monitor works (viewer_app.cpp drawRearMonitor).
   bool rearMonitor = true, weaponsMonitor = true, clouds = true, texturesCoarse = false, windowReduced = false, shadows = true;
   bool damage = true;               // [0x492EE] "Damage": off = the human's craft takes no damage (RaceSlotDamage 0x52035)
   bool sfxOn = true, speech = true, musicOn = true;
