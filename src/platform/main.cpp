@@ -9,6 +9,7 @@
 #include <cstring>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "platform/viewer_app.hpp"
 
@@ -68,6 +69,45 @@ static void copyDebug(const slip::ViewerApp& app) {
   std::string text;
   for (const auto& l : app.hudLines()) text += l + "\n";
   SDL_SetClipboardText(text.c_str());
+}
+
+// --- controllers (SDL3 gamepad API) -----------------------------------------------------------------------------------
+// Every connected pad is open at once and read together with the keyboard and mouse every frame, so the player can pick up either at any moment.
+// Codes in KeyMap::pad: 0..14 an SDL_GamepadButton, 1000 + axis a trigger.
+struct Pads {
+  std::vector<SDL_Gamepad*> list;
+  void open(SDL_JoystickID id) {
+    for (auto* g : list) if (SDL_GetGamepadID(g) == id) return;
+    if (SDL_Gamepad* g = SDL_OpenGamepad(id)) { list.push_back(g); std::fprintf(stderr, "slipstream: controller connected: %s\n", SDL_GetGamepadName(g)); }
+  }
+  void close(SDL_JoystickID id) {
+    for (size_t i = 0; i < list.size(); ++i)
+      if (SDL_GetGamepadID(list[i]) == id) { SDL_CloseGamepad(list[i]); list.erase(list.begin() + long(i)); return; }
+  }
+  void closeAll() { for (auto* g : list) SDL_CloseGamepad(g); list.clear(); }
+  float axis(SDL_GamepadAxis a, float dead = 0.15f) const {  // the largest deflection of any pad, dead zone removed and rescaled
+    float best = 0;
+    for (auto* g : list) {
+      float v = float(SDL_GetGamepadAxis(g, a)) / 32767.0f;
+      const float m = std::fabs(v);
+      if (m > dead) { v = (m - dead) / (1 - dead) * (v < 0 ? -1.0f : 1.0f); if (std::fabs(v) > std::fabs(best)) best = v; }
+    }
+    return best;
+  }
+  bool button(SDL_GamepadButton b) const { for (auto* g : list) if (SDL_GetGamepadButton(g, b)) return true; return false; }
+  float code(int c) const {  // 0..1 for a bound button / trigger
+    if (c >= 1000) return std::max(0.0f, axis(SDL_GamepadAxis(c - 1000), 0.08f));
+    return button(SDL_GamepadButton(c)) ? 1.0f : 0.0f;
+  }
+};
+
+std::string padCodeName(int c) {
+  static const char* kBtn[] = {"A / Cross", "B / Circle", "X / Square", "Y / Triangle", "Back", "Guide", "Start", "Left stick", "Right stick",
+                               "Left bumper", "Right bumper", "D-pad up", "D-pad down", "D-pad left", "D-pad right"};
+  if (c == 1000 + SDL_GAMEPAD_AXIS_LEFT_TRIGGER) return "Left trigger";
+  if (c == 1000 + SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) return "Right trigger";
+  if (c >= 0 && c < int(sizeof(kBtn) / sizeof(kBtn[0]))) return kBtn[c];
+  return "Button " + std::to_string(c);
 }
 
 int main(int argc, char** argv) {
@@ -150,6 +190,7 @@ int main(int argc, char** argv) {
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Slipstream", (err + "\n\nStart from Terminal with:  slipstream --data /path/to/your/Slipstream5000/folder").c_str(), nullptr);
     return 1;
   }
+  app.setPadNamer(padCodeName);
   app.setKeyNamer([](int sc) -> std::string {  // the key page shows the keyboard's own names
     const char* n = SDL_GetKeyName(SDL_GetKeyFromScancode(SDL_Scancode(sc), SDL_KMOD_NONE, false));
     if (n && *n) return n;
@@ -238,12 +279,28 @@ int main(int argc, char** argv) {
   SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_LINEAR);
   SDL_SetWindowRelativeMouseMode(window, true);
 
-  SDL_Gamepad* pad = nullptr;
-  int npads = 0;
-  if (SDL_JoystickID* ids = SDL_GetGamepads(&npads)) {
-    if (npads > 0) pad = SDL_OpenGamepad(ids[0]);
-    SDL_free(ids);
+  Pads pads;
+  if (const char* home = std::getenv("HOME")) {  // extra mappings for pads SDL does not know (the SDL_GAMECONTROLLERCONFIG variable works as well)
+    const std::string db = std::string(home) + "/Library/Application Support/Slipstream/gamecontrollerdb.txt";
+    if (SDL_AddGamepadMappingsFromFile(db.c_str()) > 0) std::fprintf(stderr, "slipstream: loaded controller mappings from %s\n", db.c_str());
   }
+  {
+    int npads = 0;
+    if (SDL_JoystickID* ids = SDL_GetGamepads(&npads)) { for (int i = 0; i < npads; ++i) pads.open(ids[i]); SDL_free(ids); }
+  }
+  // menu navigation: the left stick repeats like a held cursor key
+  int stickDir = -1;  // PauseMenu::Key as int, -1 = centred
+  double stickNext = 0;
+  bool trigPrev[2] = {false, false};
+  bool actPrev[kPadActions] = {};
+  double clock = 0;
+  auto padMenuKey = [&](PauseMenu::Key k) {  // a pad press as a menu key, wherever a menu is open; false when no menu is
+    if (app.frontActive()) { app.frontKey(k); return true; }
+    if (app.netUiOpen()) { app.netKey(k); return true; }
+    if (app.introActive()) { if (k == PauseMenu::Key::Select || k == PauseMenu::Key::Back) app.endFlyThrough(true); return true; }
+    if (app.paused()) { app.menuKey(k); return true; }
+    return false;
+  };
 
   bool running = true, textInput = false;
   uint64_t last = SDL_GetPerformanceCounter();
@@ -261,30 +318,39 @@ int main(int argc, char** argv) {
           mouseDX += e.motion.xrel; mouseDY += e.motion.yrel;
           if (app.frontActive()) { int ww = 1, wh = 1; SDL_GetWindowSize(window, &ww, &wh); app.frontMouse(e.motion.x / ww, e.motion.y / wh, false); }
           break;
-        case SDL_EVENT_GAMEPAD_ADDED:
-          if (!pad) pad = SDL_OpenGamepad(e.gdevice.which);
-          break;
-        case SDL_EVENT_GAMEPAD_REMOVED:
-          if (pad && SDL_GetGamepadID(pad) == e.gdevice.which) { SDL_CloseGamepad(pad); pad = nullptr; }
-          break;
-        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-          if (app.paused()) {  // pause menu
-            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP) app.menuKey(PauseMenu::Key::Up);
-            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN) app.menuKey(PauseMenu::Key::Down);
-            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_LEFT) app.menuKey(PauseMenu::Key::Left);
-            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) app.menuKey(PauseMenu::Key::Right);
-            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) app.menuKey(PauseMenu::Key::Select);
-            if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST || e.gbutton.button == SDL_GAMEPAD_BUTTON_START) app.menuKey(PauseMenu::Key::Back);
+        case SDL_EVENT_GAMEPAD_ADDED: pads.open(e.gdevice.which); break;
+        case SDL_EVENT_GAMEPAD_REMOVED: pads.close(e.gdevice.which); break;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
+          const int b = e.gbutton.button;
+          if (app.frontActive() && app.frontWantsPad()) {  // binding a race control to a button
+            if (b == SDL_GAMEPAD_BUTTON_EAST || b == SDL_GAMEPAD_BUTTON_START) app.frontKey(PauseMenu::Key::Back);  // cancel
+            else app.frontRawPad(b);
             break;
           }
-          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START && app.pausable()) { app.openPause(); break; }
-          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH && !app.pausable()) app.toggleDrive();
-          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) app.cycleWeapon();
-          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_NORTH) app.toggleCamera();
-          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) app.nextItem(1);
-          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) app.nextItem(-1);
-          if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) running = false;
+          PauseMenu::Key mk = PauseMenu::Key::Select;
+          bool isMenuBtn = true;
+          switch (b) {
+            case SDL_GAMEPAD_BUTTON_DPAD_UP: mk = PauseMenu::Key::Up; break;
+            case SDL_GAMEPAD_BUTTON_DPAD_DOWN: mk = PauseMenu::Key::Down; break;
+            case SDL_GAMEPAD_BUTTON_DPAD_LEFT: mk = PauseMenu::Key::Left; break;
+            case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: mk = PauseMenu::Key::Right; break;
+            case SDL_GAMEPAD_BUTTON_SOUTH: case SDL_GAMEPAD_BUTTON_START: mk = PauseMenu::Key::Select; break;
+            case SDL_GAMEPAD_BUTTON_EAST: case SDL_GAMEPAD_BUTTON_BACK: mk = PauseMenu::Key::Back; break;
+            default: isMenuBtn = false;
+          }
+          if (app.paused() && b == SDL_GAMEPAD_BUTTON_START) mk = PauseMenu::Key::Back;  // Start closes the pause menu again
+          if (isMenuBtn && padMenuKey(mk)) break;
+          if (!isMenuBtn && (app.frontActive() || app.netUiOpen() || app.paused() || app.introActive())) break;
+          if (app.pausable()) break;  // racing: the bound actions are polled below
+          // the viewer (not a race)
+          if (b == SDL_GAMEPAD_BUTTON_SOUTH) app.toggleDrive();
+          if (b == SDL_GAMEPAD_BUTTON_NORTH) app.toggleCamera();
+          if (b == SDL_GAMEPAD_BUTTON_EAST) app.cycleWeapon();
+          if (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) app.nextItem(1);
+          if (b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) app.nextItem(-1);
+          if (b == SDL_GAMEPAD_BUTTON_START) running = false;
           break;
+        }
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
           if (app.frontActive() && e.button.button == SDL_BUTTON_LEFT) { int ww = 1, wh = 1; SDL_GetWindowSize(window, &ww, &wh); app.frontMouse(e.button.x / ww, e.button.y / wh, true); }
           else if (app.introActive() && e.button.button == SDL_BUTTON_LEFT) app.endFlyThrough(true);
@@ -459,19 +525,72 @@ int main(int argc, char** argv) {
     in.lookDX = mouseDX * 0.0025f;
     in.lookDY = mouseDY * 0.0025f;
     mouseDX = mouseDY = 0;
-    if (pad) {
-      auto ax = [&](SDL_GamepadAxis a) { float v = float(SDL_GetGamepadAxis(pad, a)) / 32767.0f; return std::fabs(v) < 0.12f ? 0.0f : v; };
-      in.moveRight += ax(SDL_GAMEPAD_AXIS_LEFTX);
-      in.moveForward -= ax(SDL_GAMEPAD_AXIS_LEFTY);
-      in.lookDX += ax(SDL_GAMEPAD_AXIS_RIGHTX) * 2.2f * float(dt);
-      in.lookDY += ax(SDL_GAMEPAD_AXIS_RIGHTY) * 1.6f * float(dt);
-      in.steer += ax(SDL_GAMEPAD_AXIS_LEFTX);
-      in.throttle = std::max(in.throttle, ax(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
-      in.brake = std::max(in.brake, ax(SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+    clock += dt;
+    if (!pads.list.empty()) {
+      const KeyMap& km = app.keymap();
+      const float lx = pads.axis(SDL_GAMEPAD_AXIS_LEFTX), ly = pads.axis(SDL_GAMEPAD_AXIS_LEFTY);
+      const float rx = pads.axis(SDL_GAMEPAD_AXIS_RIGHTX), ry = pads.axis(SDL_GAMEPAD_AXIS_RIGHTY);
+      const float dx = float(pads.button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) - float(pads.button(SDL_GAMEPAD_BUTTON_DPAD_LEFT));
+      const float dy = float(pads.button(SDL_GAMEPAD_BUTTON_DPAD_DOWN)) - float(pads.button(SDL_GAMEPAD_BUTTON_DPAD_UP));
+      const bool menuOpen = app.frontActive() || app.netUiOpen() || app.paused() || app.introActive();
+
+      // menus: the left stick moves the cursor (with key repeat)
+      PauseMenu::Key sk = PauseMenu::Key::Up;
+      int want = -1;
+      if (menuOpen) {
+        if (std::fabs(ly) > 0.6f && std::fabs(ly) >= std::fabs(lx)) { want = ly < 0 ? 0 : 1; sk = ly < 0 ? PauseMenu::Key::Up : PauseMenu::Key::Down; }
+        else if (std::fabs(lx) > 0.6f) { want = lx < 0 ? 2 : 3; sk = lx < 0 ? PauseMenu::Key::Left : PauseMenu::Key::Right; }
+      }
+      if (want != stickDir) { stickDir = want; stickNext = clock + 0.4; if (want >= 0) padMenuKey(sk); }
+      else if (want >= 0 && clock >= stickNext) { stickNext = clock + 0.12; padMenuKey(sk); }
+
+      // binding a trigger: the first one pulled past half way
+      for (int t = 0; t < 2; ++t) {
+        const int code = 1004 + t;
+        const bool on = pads.code(code) > 0.6f;
+        if (on && !trigPrev[t] && app.frontActive() && app.frontWantsPad()) app.frontRawPad(code);
+        trigPrev[t] = on;
+      }
+
+      if (app.pausable() && !menuOpen) {  // racing
+        const float pitchSign = km.padInvertPitch ? -1.0f : 1.0f;  // stick up = nose down like the cursor keys, unless inverted
+        in.steer += lx + dx;
+        in.pitch += (ly + dy) * pitchSign;
+        in.moveUp += (ly + dy) * pitchSign;
+        in.moveRight += lx + dx;
+        in.throttle = std::max(in.throttle, pads.code(km.pad[size_t(PadAction::Accel)]));
+        in.brake = std::max(in.brake, pads.code(km.pad[size_t(PadAction::Brake)]));
+        in.fire = in.fire || pads.code(km.pad[size_t(PadAction::Fire)]) > 0.5f;
+        in.freeAz += rx;
+        in.freeEl -= ry;
+        in.freeZoom += float(pads.button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)) - float(pads.button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
+        in.moveForward = std::clamp(in.throttle - in.brake, -1.0f, 1.0f);
+        bool act[kPadActions];
+        for (int a = 0; a < kPadActions; ++a) act[a] = pads.code(km.pad[size_t(a)]) > 0.5f;
+        auto pressed = [&](PadAction a) { return act[int(a)] && !actPrev[int(a)]; };
+        if (pressed(PadAction::Select)) app.cycleWeapon();
+        if (pressed(PadAction::Camera)) {  // cockpit, chase, far chase, rear, TV in turn (the free camera stays on F5)
+          static const int order[] = {0, 1, 2, 4, 3};
+          int i = 0;
+          for (int j = 0; j < 5; ++j) if (order[j] == app.view()) i = j;
+          app.setView(order[(i + 1) % 5]);
+        }
+        if (pressed(PadAction::Pause)) { if (app.replayActive()) app.stopReplay(); else if (!app.tryShowResults()) app.openPause(); }
+        for (int a = 0; a < kPadActions; ++a) actPrev[a] = act[a];
+      } else {
+        for (bool& p : actPrev) p = true;  // a button held while a menu closes does not fire
+        if (!app.pausable() && !menuOpen) {  // the viewer's free fly
+          in.moveRight += lx;
+          in.moveForward -= ly;
+          in.lookDX += rx * 2.2f * float(dt);
+          in.lookDY += ry * 1.6f * float(dt);
+          in.throttle = std::max(in.throttle, pads.axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 0.08f));
+        }
+      }
     }
     in.showList = k[SDL_SCANCODE_TAB];
-    in.fire = in.fire || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST));
     in.steer = std::clamp(in.steer, -1.0f, 1.0f);
+    in.pitch = std::clamp(in.pitch, -1.0f, 1.0f);
 
     {
       const bool wantText = app.netWantsText() || (app.frontActive() && app.frontWantsText());
@@ -494,7 +613,7 @@ int main(int argc, char** argv) {
     SDL_RenderPresent(ren);
   }
 
-  if (pad) SDL_CloseGamepad(pad);
+  pads.closeAll();
   app.audio().shutdown();  // stop the audio callback and close the device while SDL is still alive (the app object outlives SDL_Quit)
   SDL_DestroyTexture(tex);
   SDL_DestroyRenderer(ren);

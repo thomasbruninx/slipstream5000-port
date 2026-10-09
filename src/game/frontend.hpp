@@ -70,7 +70,10 @@ class FrontEnd {
   bool takeProgressChanged() { const bool r = progressChanged_; progressChanged_ = false; return r; }
   void setKeyNamer(std::function<std::string(int)> f) { keyName_ = std::move(f); }  // scancode -> text for the key page
   bool wantsKey() const { return screen_ == Screen::Config && keyWait_; }
-  void rawKey(int scancode);                                                         // the next key while wantsKey()
+  void rawKey(int scancode);
+  void setPadNamer(std::function<std::string(int)> f) { padName_ = std::move(f); }  // controller code -> text
+  bool wantsPad() const { return screen_ == Screen::Config && padWait_; }
+  void rawPad(int code);                                                              // the next controller button (1000 + axis for a trigger) while wantsPad()                                                         // the next key while wantsKey()
   void setSettings(GameSettings* s) { cfg_ = s; }  // the options the configuration screens edit
   bool takeConfigChanged() { const bool r = cfgChanged_; cfgChanged_ = false; return r; }
   bool takeReplay() { const bool r = replay_; replay_ = false; return r; }  // Replay was chosen on the results screen
@@ -190,7 +193,7 @@ class FrontEnd {
   void champRaceFinished();  // results -> points and prize money -> positions / final positions
   void champStart();         // the pilot card was accepted in the championship
   // configuration screens (frontend_config.cpp): the options live in the application's GameSettings (setSettings), the screens edit them directly
-  enum class CfgPage { Main, General, Controls, Keys, Detail, Difficulty, Sound };
+  enum class CfgPage { Main, General, Controls, Keys, Pad, Detail, Difficulty, Sound };
   struct CfgRow;
   GameSettings* cfg_ = nullptr;
   GameSettings cfgLocal_;
@@ -198,6 +201,8 @@ class FrontEnd {
   int cfgHov_ = -1;
   bool cfgChanged_ = false;
   bool keyWait_ = false;       // a key row waits for the next key press
+  bool padWait_ = false;       // a controller row waits for the next button
+  std::function<std::string(int)> padName_;
   int keyKeep_ = -1;           // the action being bound
   std::function<std::string(int)> keyName_;
   std::vector<CfgRow> cfgRows();

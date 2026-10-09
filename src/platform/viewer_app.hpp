@@ -113,6 +113,9 @@ class ViewerApp {
   bool frontWantsKey() const { return front_ && frontActive_ && front_->wantsKey(); }
   void frontRawKey(int sc) { if (front_) front_->rawKey(sc); }
   void setKeyNamer(std::function<std::string(int)> f) { if (front_) front_->setKeyNamer(std::move(f)); }
+  bool frontWantsPad() const { return front_ && frontActive_ && front_->wantsPad(); }
+  void frontRawPad(int code) { if (front_) front_->rawPad(code); }
+  void setPadNamer(std::function<std::string(int)> f) { if (front_) front_->setPadNamer(std::move(f)); }
   bool frontWantsText() const { return front_ && frontActive_ && front_->wantsText(); }
   void frontText(const std::string& t) { if (front_) front_->textInput(t); }
   void frontBackspace() { if (front_) front_->backspace(); }

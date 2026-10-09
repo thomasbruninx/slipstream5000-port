@@ -54,7 +54,18 @@ std::vector<FrontEnd::CfgRow> FrontEnd::cfgRows() {
     case CfgPage::Controls:
       r.push_back({"REVA", onOff("CONTROLS.ST0", s.keys.reverseAccel), flip(&s.keys.reverseAccel)});
       r.push_back({"PLY1", "", [this](int) { cfgPage_ = CfgPage::Keys; cfgHov_ = -1; }});  // "Player 1 Controls": the key page
+      r.push_back({"PAD", "", [this](int) { cfgPage_ = CfgPage::Pad; cfgHov_ = -1; }});     // the controller page (the original's joystick pages are not ported)
       break;
+    case CfgPage::Pad: {
+      static const char* kNames[kPadActions] = {"Accelerate", "Brake", "Fire", "Select weapon", "Camera", "Pause"};
+      for (int a = 0; a < kPadActions; ++a) {
+        const int code = cfg_->keys.pad[size_t(a)];
+        const std::string nm = padWait_ && keyKeep_ == a ? "..." : code ? (padName_ ? padName_(code) : std::to_string(code)) : "-";
+        r.push_back({"", std::string(kNames[a]) + ": " + nm, [this, a](int) { padWait_ = true; keyKeep_ = a; }});
+      }
+      r.push_back({"INVP", cfg_->keys.padInvertPitch ? "Invert pitch: On" : "Invert pitch: Off", flip(&cfg_->keys.padInvertPitch)});
+      break;
+    }
     case CfgPage::Keys:
       for (int a = 0; a < kKeyActions; ++a) {
         const int sc = cfg_->keys.sc[size_t(a)];
@@ -79,7 +90,7 @@ std::vector<FrontEnd::CfgRow> FrontEnd::cfgRows() {
 const char* FrontEnd::cfgFile() const {
   switch (cfgPage_) {
     case CfgPage::General: return "GENERAL.ST0";
-    case CfgPage::Controls: case CfgPage::Keys: return "CONTROLS.ST0";
+    case CfgPage::Controls: case CfgPage::Keys: case CfgPage::Pad: return "CONTROLS.ST0";
     case CfgPage::Detail: return "DETAIL.ST0";
     case CfgPage::Difficulty: return "DIFF.ST0";
     case CfgPage::Sound: return "SOUND.ST0";
@@ -95,7 +106,7 @@ void FrontEnd::openConfig() {
 }
 
 // vertical extent of row i of the current page: the key page packs eight rows
-static void rowSpan(bool keys, int i, int* y1, int* y2) { *y1 = keys ? 32 + 17 * i : 43 + 20 * i; *y2 = *y1 + (keys ? 14 : 16); }
+static void rowSpan(bool keys, int i, int* y1, int* y2) { *y1 = keys ? 32 + 17 * i : 43 + 20 * i; *y2 = *y1 + (keys ? 14 : 16); }  // the key and controller pages pack their rows
 
 // zone index under (x, y): rows 0.., then the Ok button (index = rows), -1 for none; on the main page 0..5 are the six buttons
 int FrontEnd::cfgZoneAt(int x, int y) {
@@ -105,7 +116,7 @@ int FrontEnd::cfgZoneAt(int x, int y) {
     return -1;
   }
   const int n = int(cfgRows().size());
-  for (int i = 0; i < n; ++i) { int y1, y2; rowSpan(cfgPage_ == CfgPage::Keys, i, &y1, &y2); if (in(Z{25, y1, 281, y2})) return i; }
+  for (int i = 0; i < n; ++i) { int y1, y2; rowSpan(cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad, i, &y1, &y2); if (in(Z{25, y1, 281, y2})) return i; }
   return in(kOkZ) ? n : -1;
 }
 
@@ -120,7 +131,7 @@ void FrontEnd::cfgActivate(int i, int dir) {
   }
   const int n = int(cfgRows().size());
   if (i >= n) {  // Ok: back (the key page to the controls page, the others to the main page)
-    cfgPage_ = cfgPage_ == CfgPage::Keys ? CfgPage::Controls : CfgPage::Main;
+    cfgPage_ = cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad ? CfgPage::Controls : CfgPage::Main;
     cfgHov_ = -1;
     return;
   }
@@ -130,10 +141,10 @@ void FrontEnd::cfgActivate(int i, int dir) {
 
 void FrontEnd::cfgKey(Key k) {
   const int n = cfgPage_ == CfgPage::Main ? 6 : int(cfgRows().size()) + 1;
-  if (keyWait_) { keyWait_ = false; return; }  // Esc cancels the key capture (a pressed key arrives through rawKey)
+  if (keyWait_ || padWait_) { keyWait_ = padWait_ = false; return; }  // Esc cancels the capture (a pressed key / button arrives through rawKey / rawPad)
   if (k == Key::Back) {
     if (cfgPage_ == CfgPage::Main) { cfgChanged_ = true; go(Screen::Main); }
-    else { cfgPage_ = cfgPage_ == CfgPage::Keys ? CfgPage::Controls : CfgPage::Main; cfgHov_ = -1; }
+    else { cfgPage_ = cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad ? CfgPage::Controls : CfgPage::Main; cfgHov_ = -1; }
   } else if (k == Key::Up) cfgHov_ = cfgHov_ <= 0 ? n - 1 : cfgHov_ - 1;
   else if (k == Key::Down) cfgHov_ = cfgHov_ < 0 || cfgHov_ >= n - 1 ? 0 : cfgHov_ + 1;
   else if (k == Key::Left) { if (cfgPage_ == CfgPage::Main) { if (cfgHov_ == 1 || cfgHov_ == 4) cfgHov_ -= 1; else if (cfgHov_ < 0) cfgHov_ = 0; } else cfgActivate(cfgHov_, -1); }
@@ -168,14 +179,14 @@ void FrontEnd::drawConfig() {
     return;
   }
   const auto rows = cfgRows();
-  const bool keysPage = cfgPage_ == CfgPage::Keys;
+  const bool keysPage = cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad;
   for (size_t i = 0; i < rows.size(); ++i) {
     int y, y2;
     rowSpan(keysPage, int(i), &y, &y2);
     frameButton(25, y, 281, y2, cfgHov_ == int(i) ? A : B, "");
     if (!f) continue;
     if (keysPage) drawText(*f, rows[i].value, 25 + (257 - f->textWidth(rows[i].value)) / 2, y + 1, -1);   // "Up: Left Arrow"
-    else if (rows[i].tag == "PLY1") { const std::string t = text(file, "PLY1"); drawText(*f, t, 25 + (257 - f->textWidth(t)) / 2, y + 3, -1); }
+    else if (rows[i].tag == "PLY1" || rows[i].tag == "PAD") { const std::string t = rows[i].tag == "PAD" ? std::string("Controller") : text(file, "PLY1"); drawText(*f, t, 25 + (257 - f->textWidth(t)) / 2, y + 3, -1); }
     else {
       drawText(*f, text(file, rows[i].tag), 31, y + 3, -1);
       drawText(*f, rows[i].value, 165 + (281 - 165 + 1 - f->textWidth(rows[i].value)) / 2, y + 5, -1);  // the value in the right part: long category names would run into it
@@ -197,4 +208,18 @@ void FrontEnd::rawKey(int sc) {
   cfgChanged_ = true;
 }
 
+}  // namespace slip
+
+namespace slip {
+// a controller button (or trigger) was pressed while a controller row waits for it: bind it (a code another action uses is swapped over)
+void FrontEnd::rawPad(int code) {
+  if (!padWait_ || screen_ != Screen::Config) return;
+  padWait_ = false;
+  if (keyKeep_ < 0 || keyKeep_ >= kPadActions || !cfg_) return;
+  auto& m = cfg_->keys.pad;
+  for (int a = 0; a < kPadActions; ++a)
+    if (a != keyKeep_ && m[size_t(a)] == code) m[size_t(a)] = m[size_t(keyKeep_)];
+  m[size_t(keyKeep_)] = code;
+  cfgChanged_ = true;
+}
 }  // namespace slip

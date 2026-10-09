@@ -18,7 +18,23 @@
 
 **Remapping**: main menu -> Configuration -> Controls -> Player 1 Controls. Select a row, press the new key (Esc cancels); a key that another action already uses is swapped over.
 The bindings and "Reverse Accelerator" are stored in `~/Library/Application Support/Slipstream/config.txt` as SDL scancodes (`key0`..`key7` = Up, Down, Left, Right, Select, Fire, Accel, Brake).
-The original's joystick calibration pages are not ported (gamepads work through SDL: left stick steers, right trigger accelerates, west button fires, east cycles the weapon).
+The original's joystick calibration pages are not ported; controllers use SDL3's gamepad API instead (below).
+
+## Controllers (USB / Bluetooth, SDL3 gamepad API)
+Any pad SDL knows works (its built-in mapping database; for others put SDL mapping lines in `~/Library/Application Support/Slipstream/gamecontrollerdb.txt` or set `SDL_GAMECONTROLLERCONFIG`). All connected pads are open at once and are read **together with the keyboard and mouse every frame**, so you can switch between them at any moment (also plugging / unplugging while the game runs); there is no mode switch.
+
+| Control | Default | Remappable (Configuration > Controls > Controller) |
+|---|---|---|
+| Steer / pitch | left stick or D-pad (stick up = nose down like the cursor keys; "Invert pitch" flips it) | no (invert only) |
+| Accelerate / brake | right / left trigger | yes (any button or trigger) |
+| Fire | X / square (West) | yes |
+| Select weapon | B / circle (East) | yes |
+| Camera | Y / triangle (North): cockpit, chase, far chase, rear, TV | yes |
+| Pause | Start (also leaves a replay / opens the results once the race is over) | yes |
+| Free camera (F5) | right stick turns / raises, bumpers zoom | no |
+| Menus | D-pad or left stick (with repeat) move, A / Start select, B / Back go back; the fly-through ends on A / B / Start | no |
+
+Bindings are stored in config.txt as `pad0`..`pad5` (0..14 = SDL gamepad button, 1000 + axis = trigger) and `padInvertPitch`. Not verified against real hardware in this session: only the key-binding page and the build were exercised.
 
 ## Debug / viewer shortcuts (moved to Ctrl+Shift+key)
 The port's older shortcuts sat on plain keys that the original uses for the race (S = select weapon, F1..F5 cameras, ...), so they now need **Ctrl+Shift**:
