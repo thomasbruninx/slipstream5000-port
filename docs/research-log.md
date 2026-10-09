@@ -329,3 +329,12 @@ User report: no pit on Chicago. Root cause: `InitRefuel` port compared the polyg
 
 ## Start bonus switched off by default
 The start-phase speed bonus (`table 0x50252[rank]`, +75 % for rank 1 down to +1.6 % for rank 10, first 15 s, all ships, every mode except practice 0x11; CONFIRMED in the code) made the player's craft nearly twice as fast off the line (measured: 229k vs 130k speed units after 3 s on Chicago). The user found this wrong, so it is off by default (`--start-bonus` restores it). Deviation from the original, taken on request; whether the original's rank value at the start differs (e.g. the player not on pole) is UNVERIFIED.
+
+
+## Championship reverse engineering (2026-10)
+Decoded `0x559D8` (modes 0x11 practice / 0x12 single race / 0x13 championship), `0x561CF`, `0x5623E`, `0x56FF0`, `0x422EC`, `0x53536`, `0x573B7` (reporters), `0x57A79` (fly-through), `0x5816E`
+(script loader), the face engine `0x41C0A..0x41F53`, the TV camera `0x45196`, `0x58448` (roster), `0x5AD44` (track list, unlock), the configuration screens. Tables: calendar `0x54E10`, points
+`0x556E8`, prizes `0x556FC`, races `0x543E4`, flag positions `0x54FDC`, intro speed `0x5040C`, face layers `0x41A80`. `SLIPSTRM.CFG` words: `0x492E2` engine sounds, `0x492E4` effects,
+`0x492E6` music, `0x492E8` language, `0x492EA` difficulty, `0x492EE` damage, `0x492F2` environment detail, `0x492FE` track map, `0x493E6` unlocked tracks (file offset = VA - 0x4924D).
+**Corrections**: the globe flags used true city coordinates; the original's table gives stylised positions. The start speed bonus (earlier note) is unrelated.
+Open question: the speed bonus table `0x50252` and the AI tier from the start slot suggest that in the original the human starts at the back; the port keeps ship number = slot.

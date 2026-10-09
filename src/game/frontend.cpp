@@ -22,7 +22,9 @@ int transparentOf(const Sprite& s) { return s.hdr8 == 0xFFFF ? -1 : int(s.hdr8 &
 
 // Where the ten tracks are on the globe (latitude, longitude); the model's front at yaw 0 looks at longitude 175 degrees east (the texture seam), a yaw
 // of `a` radians turns longitude 175 + a to the front (calibrated on the rendered EARTH textures).
-static const double kTrackLatLon[10][2] = {{41.9, -87.6}, {21.3, -157.9}, {35.7, 139.7}, {60.5, 8.5}, {46.2, 2.2}, {36.1, -112.1}, {-3.1, -60.0}, {51.5, -0.1}, {30.0, 31.1}, {40.7, -74.0}};
+// Flag positions of the tracks on the globe: the executable's table 0x54FDC (longitude, latitude in degrees: Chicago -90 43, Hawaii -160 25, Tokyo 152 44, Norway 14 66,
+// France 5 54, Arizona -105 39, Amazon -59 1, London 0 59, Egypt 22 33, New York -76 43; sub_5B6D6 adds 0x600 / 65536 of a turn = 3.375 degrees). CONFIRMED.
+static const double kTrackLatLon[10][2] = {{43, -90 + 3.375}, {25, -160 + 3.375}, {44, 152 + 3.375}, {66, 14 + 3.375}, {54, 5 + 3.375}, {39, -105 + 3.375}, {1, -59 + 3.375}, {59, 0 + 3.375}, {33, 22 + 3.375}, {43, -76 + 3.375}};
 
 void FrontEnd::usePalette(const Palette& p) {  // every screen's palette gets the executable's static UI colours in 248..255 (VideoSetPalette 0x557C7)
   // Sprite palettes only define a range of the 256 entries (Palette::first / count): the rest of the screen's palette stays as it was, like the VGA registers
@@ -72,7 +74,7 @@ std::string FrontEnd::str(const std::string& file, const std::string& tag) const
 bool FrontEnd::init(const GameData& data, AudioSystem* audio) {
   data_ = &data;
   audio_ = audio;
-  for (const char* n : {"MAINMENU.ST0", "CH_TEAM.ST0", "VIEWCAR.ST0", "GARAGE.ST0", "BESTDRV.ST0", "CHTRACK.ST0", "GENERAL.ST0", "RACERES.ST0"})
+  for (const char* n : {"MAINMENU.ST0", "CH_TEAM.ST0", "VIEWCAR.ST0", "GARAGE.ST0", "BESTDRV.ST0", "CHTRACK.ST0", "GENERAL.ST0", "RACERES.ST0", "CHAMPPOS.ST0", "FINALPOS.ST0", "SAVED.ST0", "CONFIG.ST0", "GENERAL.ST0", "DETAIL.ST0", "DIFF.ST0", "SOUND.ST0", "CONTROLS.ST0"})
     if (auto b = data.read(n)) tables_[n] = parseStringTable(*b);
   const Sprite* m = spr("MAINMENU.SPR");
   if (m && m->palette) usePalette(*m->palette);
@@ -118,6 +120,7 @@ void FrontEnd::go(Screen s) {
   if (audio_ && prev == Screen::Info && s != Screen::Info) audio_->stopCue();  // leaving the information screen ends the narration
   // MainMenuDraw (0x4CF09) and the track choice (0x5AD44) play SELECT.SMP when they open and when something is chosen
   if (s == Screen::Main || s == Screen::OnePlayer || s == Screen::Multi || s == Screen::Tracks) playSelect();
+  if (s == Screen::Main) champ_ = Championship{};  // leaving to the main menu ends a running championship
   screen_ = s;
   t_ = 0;
   sel_ = 0;
@@ -174,18 +177,10 @@ void FrontEnd::update(double dt) {
   if (!ready_) return;
   t_ += dt;
   trackDt_ = dt;
-  if (screen_ == Screen::Tracks) {  // the globe turns to the selected track
-    const double kPi = 3.14159265358979323846;
-    const int tr = std::clamp(sel_, 0, 9);
-    const double lat = kTrackLatLon[tr][0] * kPi / 180, lon = (kTrackLatLon[tr][1] + 185.0) * kPi / 180;
-    double dy = lon - gYaw_;
-    while (dy > kPi) dy -= 2 * kPi;
-    while (dy < -kPi) dy += 2 * kPi;
-    const double k = std::min(1.0, dt * 4.0);
-    gYaw_ += dy * k;
-    gTilt_ += (-lat + 0.45 - gTilt_) * k;
-  }
-  if (screen_ == Screen::Garage) garOpen_ = std::min(1.0, garOpen_ + dt / 0.4);  // the status panel grows (sub_5BA9C; duration INFERRED)
+  if (screen_ == Screen::Tracks) turnGlobe(selectedTrack(), dt);  // the globe turns to the selected track
+  if (screen_ == Screen::Reporters) updateReporters(dt);
+  if (screen_ == Screen::Garage) garOpen_ = std::min(1.0, garOpen_ + dt / 0.4);
+  if (screen_ == Screen::Slots && slotChosen_ >= 0 && !slotEntry_) { slotAnim_ += dt; if (slotAnim_ > 0.5) slotsFinish(); }  // the status panel grows (sub_5BA9C; duration INFERRED)
   if (screen_ == Screen::Logo || screen_ == Screen::Intro) {
     if (!movieOpen_) return;
     movieClock_ += dt;
@@ -222,14 +217,17 @@ void FrontEnd::buildButtons() {
       add("MAINBT_6.SPR", "MAINBTH6.SPR", "Back", 6);
       break;
     case Screen::OnePlayer:
-      for (int i = 1; i <= 3; ++i) add("MAINBT_" + std::to_string(i) + ".SPR", "MAINBTH" + std::to_string(i) + ".SPR", str("MAINMENU.ST0", "OP1" + std::to_string(i)), i, i != 3);
+      for (int i = 1; i <= 3; ++i) add("MAINBT_" + std::to_string(i) + ".SPR", "MAINBTH" + std::to_string(i) + ".SPR", str("MAINMENU.ST0", "OP1" + std::to_string(i)), i);
       add("MAINBT_6.SPR", "MAINBTH6.SPR", "Back", 6);
       break;
     case Screen::Tracks:
-      for (int i = 0; i < 10; ++i) {
+      // The list is in the calendar order (table 0x54E10: Arizona, Chicago, Amazon, London, Norway, Egypt, France, Hawaii, Tokyo, New York); in a single race only
+      // the first `progress_` tracks can be chosen, the others are dimmed (0x5B339 / 0x5AF4C). A top-four finish on the newest track unlocks the next one (0x5A85B).
+      for (int j = 0; j < 10; ++j) {
+        const int i = kChampTrackOrder[j] - 1;
         std::string n = str("BESTDRV.ST0", "BU" + std::to_string(i) + "1");  // "Fastest Laps - Chicago"
         if (const size_t d = n.find(" - "); d != std::string::npos) n = n.substr(d + 3);
-        add("TRKBT_" + std::to_string(i) + ".SPR", "TRKBTH" + std::to_string(i) + ".SPR", n, i);
+        add("TRKBT_" + std::to_string(j) + ".SPR", "TRKBTH" + std::to_string(j) + ".SPR", n, i, j < progress_ || unlockAll_);
       }
       break;
     default: break;
@@ -255,7 +253,11 @@ void FrontEnd::mouseMove(int x, int y) {
     return;
   }
   if (screen_ == Screen::Garage) { garHov_ = x < 0 ? -1 : garageZoneAt(x, y); return; }
-  if (screen_ == Screen::Results) { const int z = x < 0 ? -1 : resultZoneAt(x, y); if (z >= 0) resSel_ = z; return; }
+  if (screen_ == Screen::Reporters) { skipReporters(); return; }
+  if (screen_ == Screen::Config) { const int z = cfgZoneAt(x, y); if (z >= 0) { cfgHov_ = z; cfgActivate(z, 1); } return; }
+  if (screen_ == Screen::Slots) { if (!slotEntry_ && slotChosen_ < 0) slotHover_ = x < 0 ? -1 : slotZoneAt(x, y); return; }
+  if (screen_ == Screen::Config) { cfgHov_ = x < 0 ? -1 : cfgZoneAt(x, y); return; }
+  if (screen_ == Screen::Results || screen_ == Screen::ChampPos || screen_ == Screen::FinalPos) { const int z = x < 0 ? -1 : resultZoneAt(x, y); if (z >= 0) resSel_ = z; return; }
   const int h = hit(x, y);
   if (h >= 0 && btns_[size_t(h)].enabled) sel_ = h;
 }
@@ -271,7 +273,8 @@ void FrontEnd::click(int x, int y) {
   }
   if (screen_ == Screen::Info) { key(Key::Select); return; }
   if (screen_ == Screen::Garage) { garageClick(x, y); return; }
-  if (screen_ == Screen::Results) { const int z = resultZoneAt(x, y); if (z >= 0) resultChoose(z); return; }
+  if (screen_ == Screen::Slots) { if (!slotEntry_ && slotChosen_ < 0) { const int z = slotZoneAt(x, y); if (z >= 0) { slotHover_ = z; slotsChoose(z); } } return; }
+  if (screen_ == Screen::Results || screen_ == Screen::ChampPos || screen_ == Screen::FinalPos) { const int z = resultZoneAt(x, y); if (z >= 0) resultChoose(z); return; }
   if (screen_ == Screen::Team) { if (hoverShip_ >= 0 && hoverShip_ < 10) { viewShip_ = hoverShip_; go(Screen::ViewCar); } return; }
   const int h = hit(x, y);
   if (h >= 0 && btns_[size_t(h)].enabled) { sel_ = h; activate(btns_[size_t(h)].id); }
@@ -304,7 +307,7 @@ void FrontEnd::key(Key k) {
       if (k == Key::Up) cardSel_ = (cardSel_ + 2) % 3;
       else if (k == Key::Down) cardSel_ = (cardSel_ + 1) % 3;
       else if (k == Key::Select) {
-        if (cardSel_ == 0) { setup_.ship = viewShip_; go(Screen::Tracks); }  // original order (0x55ADF): vehicle, track, garage, race
+        if (cardSel_ == 0) { setup_.ship = viewShip_; if (mode_ == 2) champStart(); else go(Screen::Tracks); }  // original order (0x55ADF): vehicle, track, garage, race; the championship has a calendar instead of the track choice
         else if (cardSel_ == 1) { hoverShip_ = viewShip_; go(Screen::Team); }
         else go(Screen::Info);
       } else if (k == Key::Back) { hoverShip_ = viewShip_; go(Screen::Team); }
@@ -313,15 +316,24 @@ void FrontEnd::key(Key k) {
       if (k == Key::Select || k == Key::Back) go(Screen::ViewCar);
       break;
     case Screen::Garage: garageKey(k); break;
+    case Screen::Slots: slotsKey(k); break;
+    case Screen::Reporters: if (k == Key::Select || k == Key::Back) skipReporters(); break;
+    case Screen::Config: cfgKey(k); break;
     case Screen::Best:
       if (k == Key::Left) bestTrack_ = (bestTrack_ + 8) % 10 + 1;
       else if (k == Key::Right) bestTrack_ = bestTrack_ % 10 + 1;
       else if (k == Key::Select || k == Key::Back) go(Screen::Main);
       break;
     case Screen::Results:
-      if (k == Key::Left || k == Key::Right || k == Key::Up || k == Key::Down) resSel_ = k == Key::Left || k == Key::Up ? 0 : 1;
+    case Screen::ChampPos:
+    case Screen::FinalPos:
+      if (k == Key::Left || k == Key::Right || k == Key::Up || k == Key::Down) { if (screen_ != Screen::FinalPos) resSel_ = k == Key::Left || k == Key::Up ? 0 : 1; }
       else if (k == Key::Select) resultChoose(resSel_);
-      else if (k == Key::Back) go(Screen::Main);  // Esc = Continue (0x5AB30)
+      else if (k == Key::Back) {
+        if (screen_ == Screen::Results) resultChoose(1);             // Esc = Continue (0x5AB30)
+        else if (screen_ == Screen::ChampPos) openSlots(true);        // 0x56460: Esc returns 1, which is the Save Game zone
+        else resultChoose(0);
+      }
       break;
     case Screen::Notice:
       if (k == Key::Select || k == Key::Back) go(Screen::Main);
@@ -344,7 +356,8 @@ void FrontEnd::activate(int id) {
     else if (id == 5) go(Screen::Best);
     else if (id == 6) quit_ = true;
     else if (id == 2) go(Screen::Multi);  // the original's link menu (split screen / serial / modem / network) is replaced by the port's network game
-    else { notice_ = id == 3 ? "Saved games are not available" : "Use the pause menu during a race to configure the game"; go(Screen::Notice); }
+    else if (id == 3) openSlots(false);
+    else openConfig();
   } else if (screen_ == Screen::OnePlayer) {
     if (id == 6) go(Screen::Main);
     else { mode_ = id - 1; hoverShip_ = setup_.ship; go(Screen::Team); hoverShip_ = setup_.ship; }
@@ -368,7 +381,10 @@ void FrontEnd::draw() {
     case Screen::Info: drawInfo(); break;
     case Screen::Garage: drawGarage(); break;
     case Screen::Best: drawBest(); break;
-    case Screen::Results: drawResults(); break;
+    case Screen::Results: case Screen::ChampPos: case Screen::FinalPos: drawRanking(); break;
+    case Screen::Slots: drawSlots(); break;
+    case Screen::Reporters: drawReporters(); break;
+    case Screen::Config: drawConfig(); break;
     case Screen::Notice: drawNotice(); break;
   }
 }
@@ -436,6 +452,7 @@ void FrontEnd::drawButtons(const Palette* pal) {
     const Btn& b = btns_[i];
     const bool on = int(i) == sel_ && b.enabled;
     if (const Sprite* s = spr(on ? b.hover : b.normal)) c.blit(*s, b.x, b.y, transparentOf(*s));
+    if (!b.enabled && screen_ == Screen::Tracks) c.darken(b.x, b.y, b.x + b.w - 1, b.y + b.h - 1, 60);  // a locked track
     if (!b.label.empty())
       if (const Font* f = font(screen_ == Screen::Tracks ? "STARFONT.FNT" : "MENUFONT.FNT")) drawText(*f, b.label, b.x + (b.w - f->textWidth(b.label)) / 2, b.y + (b.h - f->height) / 2, -1);
   }
@@ -497,23 +514,39 @@ static void mul3(const double a[9], const double b[9], double o[9]) {
   for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) o[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
 }
 
+int FrontEnd::selectedTrack() const { return sel_ >= 0 && size_t(sel_) < btns_.size() ? std::clamp(btns_[size_t(sel_)].id, 0, 9) : 0; }
+
+void FrontEnd::turnGlobe(int tr, double dt) {
+  const double kPi = 3.14159265358979323846;
+  const double lat = kTrackLatLon[tr][0] * kPi / 180, lon = (kTrackLatLon[tr][1] + 185.0) * kPi / 180;
+  double dy = lon - gYaw_;
+  while (dy > kPi) dy -= 2 * kPi;
+  while (dy < -kPi) dy += 2 * kPi;
+  const double k = std::min(1.0, dt * 4.0);
+  gYaw_ += dy * k;
+  gTilt_ += (-lat + 0.45 - gTilt_) * k;
+}
+
+// GLOBE.SHP with GLOBE.MAT (Earth1..4 = EARTH1..4.SPR) and the flag on the track's position.
+void FrontEnd::drawGlobe(int tr, int cx, int cy) {
+  if (!globe_.loaded()) return;
+  const double kPi = 3.14159265358979323846;
+  const double lat = kTrackLatLon[tr][0] * kPi / 180, lon = (kTrackLatLon[tr][1] + 185.0) * kPi / 180;
+  const double ca = std::cos(gYaw_), sa = std::sin(gYaw_), ct = std::cos(gTilt_), st = std::sin(gTilt_);
+  const double ry[9] = {ca, 0, sa, 0, 1, 0, -sa, 0, ca}, rx[9] = {1, 0, 0, 0, ct, -st, 0, st, ct};
+  double rot[9];
+  mul3(rx, ry, rot);
+  globe_.draw(buf_.data(), W, H, pal_, cx, cy, 5900 / 0.93, rot, 0, true);
+  const double dir[3] = {std::cos(lat) * std::sin(lon), std::sin(lat), -std::cos(lat) * std::cos(lon)};
+  globe_.drawFlag(buf_.data(), W, H, pal_, cx, cy, 5900 / 0.93, rot, dir);
+}
+
 void FrontEnd::drawTracks() {
   const Sprite* bg = spr("STARS.SPR");
   if (bg && bg->palette) usePalette(*bg->palette);
   HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;
   if (bg) c.blit(*bg, 0, 0, -1);
-  if (globe_.loaded()) {  // GLOBE.SHP with GLOBE.MAT (Earth1..4 = EARTH1..4.SPR); the globe turns to the selected track and plants a flag on it
-    const double kPi = 3.14159265358979323846;
-    const int tr = std::clamp(sel_, 0, 9);
-    const double lat = kTrackLatLon[tr][0] * kPi / 180, lon = (kTrackLatLon[tr][1] + 185.0) * kPi / 180;
-    const double ca = std::cos(gYaw_), sa = std::sin(gYaw_), ct = std::cos(gTilt_), st = std::sin(gTilt_);
-    const double ry[9] = {ca, 0, sa, 0, 1, 0, -sa, 0, ca}, rx[9] = {1, 0, 0, 0, ct, -st, 0, st, ct};
-    double rot[9];
-    mul3(rx, ry, rot);
-    globe_.draw(buf_.data(), W, H, pal_, 90, 108, 5900 / 0.93, rot, 0, true);
-    const double dir[3] = {std::cos(lat) * std::sin(lon), std::sin(lat), -std::cos(lat) * std::cos(lon)};
-    globe_.drawFlag(buf_.data(), W, H, pal_, 90, 108, 5900 / 0.93, rot, dir);
-  }
+  drawGlobe(selectedTrack(), 90, 108);
   if (const Sprite* t = spr("CH_TRACK.SPR")) {
     c.blit(*t, t->hdr4, t->hdr6, transparentOf(*t));
     if (const Font* f = font("STARFONT.FNT")) { const std::string ti = str("CHTRACK.ST0", "TITL"); drawText(*f, ti, t->hdr4 + (t->w - f->textWidth(ti)) / 2, t->hdr6 + (t->h - f->height) / 2, -1); }
@@ -674,6 +707,14 @@ void FrontEnd::garageEnter() {
   booster_ = 0;  // the roster record starts with turbo item 0 (the screen shows "Turbo: Delphine Injection" before anything is bought)
   fastRecharge_ = wideLock_ = loader_ = false;
   cash_ = startCredits_;
+  if (champ_.active()) {  // the championship carries the money and the fitted parts from race to race
+    const ChampDriver& d = champ_.driver(champ_.humanShip());
+    cash_ = d.money;
+    podW_[0] = d.load.weaponA; podW_[1] = d.load.weaponB;
+    podAmmo_[0] = d.load.ammoA; podAmmo_[1] = d.load.ammoB;
+    booster_ = d.load.booster;
+    fastRecharge_ = d.load.fastRecharge; wideLock_ = d.load.wideLock; loader_ = d.loader;
+  }
   if (mx_ >= 0) garHov_ = garageZoneAt(mx_, my_);
 }
 
@@ -715,7 +756,16 @@ void FrontEnd::garageChoose(int i, bool fromMouse) {
       if (i == 0) garageGo(1, fromMouse);
       else if (i == 1) garageGo(3, fromMouse);
       else if (i == 2) garageGo(4, fromMouse);
-      else { garageBuildLoadout(); race_ = true; }
+      else {
+        garageBuildLoadout();
+        if (champ_.active()) {  // the roster keeps what was bought
+          ChampDriver& d = champ_.driver(champ_.humanShip());
+          d.money = cash_; d.load = setup_.loadout; d.loader = loader_;
+          setup_.grid = champ_.grid();
+          setup_.championship = true;
+        } else { setup_.grid = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}; setup_.championship = false; }
+        race_ = true;
+      }
       break;
     case 1:
       if (i < 2) { pod_ = i; garageGo(2, fromMouse); }
@@ -763,7 +813,7 @@ void FrontEnd::garageKey(Key k) {
     else if (k == Key::Up && garHov_ - cols >= 0) garHov_ -= cols;
     else if (k == Key::Down && garHov_ + cols < n) garHov_ += cols;
   } else if (k == Key::Back) {  // the original has no Esc here; it steps back like the Ok / Cancel / Exit entries
-    if (garPage_ == 0) go(Screen::Tracks);
+    if (garPage_ == 0) go(champ_.active() ? Screen::Main : Screen::Tracks);
     else if (garPage_ == 2) garageGo(1, false);
     else garageGo(0, false);
   } else if (k == Key::Select) {
@@ -927,6 +977,10 @@ void FrontEnd::showResults(const RaceResult& r) {
   result_ = r;
   addRecord(r.track, r.ship, r.bestLap);
   resSel_ = 1;
+  if (!champ_.active() && mode_ == 1 && !r.projected[std::clamp(r.ship, 0, 9)] && r.place[std::clamp(r.ship, 0, 9)] <= 4 && progress_ < 10 && r.track == kChampTrackOrder[progress_ - 1]) {
+    ++progress_;  // 0x5A85B: the human finished in the first four on the newest track
+    progressChanged_ = true;
+  }
   go(Screen::Results);
   if (audio_) audio_->playMusic(r.place[std::clamp(r.ship, 0, 9)] > 3 ? "LOSE.HMP" : "WIN.HMP", false);  // results screen 0x5A820: WIN.HMP for the first three places, else LOSE.HMP
 }
@@ -961,23 +1015,36 @@ void FrontEnd::drawBest() {
   }
 }
 
-// Race results, 0x5A820: RACERES.SPR with the title box and the two buttons cut from the dark copy RACERESD (the hovered button shows the bright picture), frame
-// colours 0x25 / 0x2B / 0x0A (sub_56137); ten rows from y = 40 every 13 px: "%d." at x 20, the pilot's name (exe table 0x54E94) at x 40, the time at x 240;
-// the human's row uses RESULTSB.FNT (gold), the AI rows RESULTSA.FNT (silver). Zones 0x5AD18: Replay (40,175)-(127,191), Continue (190,175)-(277,191). CONFIRMED.
-// The port's Replay restarts the race (the original replays the recorded race, not ported); unfinished ships show their projected time instead of "Retired".
+// Race results, 0x5A820; championship positions, 0x5623E; final positions, 0x56FF0. RACERES.SPR (FINALPOS.SPR for the final screen) with the title box and the
+// buttons cut from the dark copy RACERESD / FINPOSD (the hovered button shows the bright picture), frame colours 0x25 / 0x2B / 0x0A (sub_56137 / sub_5609F);
+// ten rows from y = 40 every 13 px: "%d." at x 20, the pilot's name (exe table 0x54E94) at x 40, the time (results) or the points (championship) at x 240 / 250;
+// the human's row uses RESULTSB.FNT (gold; RESULTSD on the final screen), the AI rows RESULTSA.FNT (silver; RESULTSC). Zones 0x5AD18 / 0x565D2 / 0x572D4:
+// Replay (40,175)-(127,191) and Continue (190,175)-(277,191); the final screen has only Ok (109,175)-(209,191). CONFIRMED.
+// The port's Replay restarts the race (the original replays the recorded race, not ported; not offered in the championship); unfinished ships show their projected
+// time instead of "Retired".
 namespace {
 struct RZone { int x1, y1, x2, y2; };
 constexpr RZone kResZ[2] = {{40, 175, 127, 191}, {190, 175, 277, 191}};
+constexpr RZone kOkZ = {109, 175, 209, 191};
 }  // namespace
 
 int FrontEnd::resultZoneAt(int x, int y) const {
+  if (screen_ == Screen::FinalPos) return x >= kOkZ.x1 && x <= kOkZ.x2 && y >= kOkZ.y1 && y <= kOkZ.y2 ? 0 : -1;
   for (int i = 0; i < 2; ++i) if (x >= kResZ[i].x1 && x <= kResZ[i].x2 && y >= kResZ[i].y1 && y <= kResZ[i].y2) return i;
   return -1;
 }
 
 void FrontEnd::resultChoose(int i) {
-  if (i == 0) { race_ = true; }  // Replay: the same race again
-  else go(Screen::Main);
+  if (screen_ == Screen::Results) {
+    if (i == 0) { if (!champ_.active()) race_ = true; }  // Replay: the same race again
+    else if (champ_.active()) champRaceFinished();
+    else go(Screen::Main);
+  } else if (screen_ == Screen::ChampPos) {
+    if (i == 0) openSlots(true);
+    else { champ_.nextRace(); champBeginRace(); }  // 0x55DAD
+  } else if (screen_ == Screen::FinalPos) {
+    go(Screen::Main);
+  }
 }
 
 const std::string& FrontEnd::pilotName(int ship) {
@@ -993,17 +1060,19 @@ const std::string& FrontEnd::pilotName(int ship) {
   return names_[size_t(std::clamp(ship, 0, 9))];
 }
 
-void FrontEnd::drawResults() {
-  const Sprite* bg = spr("RACERES.SPR");
-  const Sprite* dark = spr("RACERESD.SPR");
+void FrontEnd::drawRanking() {
+  const bool fin = screen_ == Screen::FinalPos, champ = screen_ == Screen::ChampPos || fin;
+  const Sprite* bg = spr(fin ? "FINALPOS.SPR" : "RACERES.SPR");
+  const Sprite* dark = spr(fin ? "FINPOSD.SPR" : "RACERESD.SPR");
   if (!bg) return;
   if (!dark) dark = bg;
   if (bg->palette) usePalette(*bg->palette);
   HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;
   c.blit(*bg, 0, 0, -1);
-  const Font* fa = font("RESULTSA.FNT");
-  const Font* fb = font("RESULTSB.FNT");
+  const Font* fa = font(fin ? "RESULTSC.FNT" : "RESULTSA.FNT");
+  const Font* fb = font(fin ? "RESULTSD.FNT" : "RESULTSB.FNT");
   if (!fb) fb = fa;
+  const char* file = screen_ == Screen::Results ? "RACERES.ST0" : fin ? "FINALPOS.ST0" : "CHAMPPOS.ST0";
   auto box = [&](int x1, int y1, int x2, int y2, bool hot, const std::string& label) {  // sub_56137
     c.fillIndex(x1, y1, x1, y2, 0x25);
     c.fillIndex(x1, y1, x2, y1, 0x2b);
@@ -1014,24 +1083,39 @@ void FrontEnd::drawResults() {
       for (int x = x1 + 1; x < x2; ++x) buf_[size_t(y) * W + size_t(x)] = argb(pal_.rgba[src->pixels[size_t(y) * size_t(src->w) + size_t(x)]]);
     if (fa) drawText(*fa, label, x1 + (x2 - x1 + 1 - fa->textWidth(label)) / 2, y1 + 4, -1);
   };
-  box(59, 10, 258, 26, false, str("RACERES.ST0", "TIT" + std::to_string(std::clamp(result_.track, 1, 10) - 1)));
-  box(kResZ[0].x1, kResZ[0].y1, kResZ[0].x2, kResZ[0].y2, resSel_ == 0, str("RACERES.ST0", "BUT1"));
-  box(kResZ[1].x1, kResZ[1].y1, kResZ[1].x2, kResZ[1].y2, resSel_ == 1, str("RACERES.ST0", "BUT2"));
+  if (fin) {
+    box(92, 11, 226, 27, false, str(file, "TITL"));
+    box(kOkZ.x1, kOkZ.y1, kOkZ.x2, kOkZ.y2, resSel_ == 0, str(file, "BUT1"));
+  } else {
+    box(59, 10, 258, 26, false, screen_ == Screen::Results ? str(file, "TIT" + std::to_string(std::clamp(result_.track, 1, 10) - 1)) : str(file, "TITL"));
+    box(kResZ[0].x1, kResZ[0].y1, kResZ[0].x2, kResZ[0].y2, resSel_ == 0, str(file, "BUT1"));
+    box(kResZ[1].x1, kResZ[1].y1, kResZ[1].x2, kResZ[1].y2, resSel_ == 1, str(file, "BUT2"));
+  }
   int order[10];
-  for (int& o : order) o = -1;
-  for (int sh = 0; sh < 10; ++sh) order[std::clamp(result_.place[sh] - 1, 0, 9)] = sh;
+  int human = result_.ship;
+  if (champ) {
+    const auto st = champ_.standings();
+    for (int p = 0; p < 10; ++p) order[p] = st[size_t(p)];
+    human = champ_.humanShip();
+  } else {
+    for (int& o : order) o = -1;
+    for (int sh = 0; sh < 10; ++sh) order[std::clamp(result_.place[sh] - 1, 0, 9)] = sh;
+  }
   for (int p = 0; p < 10; ++p) {
     const int sh = order[p];
     if (sh < 0) continue;
-    const Font* f = sh == result_.ship ? fb : fa;  // record +2 == 2 is an AI ship (RESULTSA, silver); the human uses RESULTSB (gold)
+    const Font* f = sh == human ? fb : fa;  // record +2 == 2 is an AI ship (A / C), the human uses B / D
     if (!f) continue;
     const int y = 40 + 13 * p;
     drawText(*f, std::to_string(p + 1) + ".", 20, y, -1);
     drawText(*f, pilotName(sh), 40, y, -1);
     char t[32];
-    const int cs = int(result_.time[sh] * 100 + 0.5);
-    std::snprintf(t, sizeof t, "%02d'%02d\"%02d", cs / 6000, (cs / 100) % 60, cs % 100);
-    drawText(*f, t, 240, y, -1);
+    if (champ) std::snprintf(t, sizeof t, "%d", champ_.driver(sh).points);
+    else {
+      const int cs = int(result_.time[sh] * 100 + 0.5);
+      std::snprintf(t, sizeof t, "%02d'%02d\"%02d", cs / 6000, (cs / 100) % 60, cs % 100);
+    }
+    drawText(*f, t, champ ? 250 : 240, y, -1);
   }
 }
 

@@ -3,14 +3,19 @@
 // *.ZON hit maps, INTRO.GDV / LOGO_S.GDV); the layout of the buttons is read from the sprite headers (position words). See docs/frontend.md.
 // SDL-free: the screen is a 320x200 ARGB buffer that the application scales to the window.
 #pragma once
+#include <array>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "audio/audio_system.hpp"
+#include "game/championship.hpp"
 #include "game/globe.hpp"
+#include "game/pause_menu.hpp"
 #include "game/weapons.hpp"
+#include "original_formats/ann.hpp"
 #include "original_formats/formats.hpp"
 #include "original_formats/game_data.hpp"
 #include "original_formats/gdv.hpp"
@@ -30,12 +35,14 @@ struct RaceSetup {  // what the front end hands to the race
   int ship = 0;       // 0..9
   int laps = 3;
   Loadout loadout;
+  std::array<int, 10> grid = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};  // start slot (0 = pole) of every ship
+  bool championship = false;
 };
 
 class FrontEnd {
  public:
   enum class Key { Up, Down, Left, Right, Select, Back };
-  enum class Screen { Logo, Intro, Gremlin, Credits, Main, OnePlayer, Multi, Tracks, Team, ViewCar, Info, Garage, Best, Results, Notice };
+  enum class Screen { Logo, Intro, Gremlin, Credits, Main, OnePlayer, Multi, Tracks, Team, ViewCar, Info, Garage, Best, Results, ChampPos, FinalPos, Slots, Reporters, Config, Notice };
 
   bool init(const GameData& data, AudioSystem* audio);
   void start(bool skipMovies);
@@ -48,6 +55,21 @@ class FrontEnd {
   bool wantsQuit() const { return quit_; }
   bool takeRace(RaceSetup* out) { if (!race_) return false; race_ = false; *out = setup_; return true; }
   void showResults(const RaceResult& r);
+  // text entry (saved game names): the application forwards typed characters while wantsText()
+  bool wantsText() const { return screen_ == Screen::Slots && slotEntry_; }
+  void textInput(const std::string& t);
+  void backspace();
+  bool championshipActive() const { return champ_.active(); }
+  void debugChampLastRace() { while (champ_.active() && !champ_.lastRace()) champ_.nextRace(); }  // test hook (--front-keys L)
+  // TV fly-through of the championship (PlayTrackIntro 0x57A79): when the reporters have introduced the track the application flies over it and calls introFinished().
+  void setProgress(int p, bool unlockAll) { progress_ = std::clamp(p, 1, 10); unlockAll_ = unlockAll; }  // tracks open for single races
+  int progress() const { return progress_; }
+  bool takeProgressChanged() { const bool r = progressChanged_; progressChanged_ = false; return r; }
+  void setSettings(GameSettings* s) { cfg_ = s; }  // the options the configuration screens edit
+  bool takeConfigChanged() { const bool r = cfgChanged_; cfgChanged_ = false; return r; }
+  int takeIntroRequest() { if (!introWanted_) return 0; introWanted_ = false; return setup_.track; }
+  void introFinished();
+  void setFlyThrough(bool on) { flyThrough_ = on; }  // the application can show the TV fly-through
   int takeNetRequest() { const int r = net_; net_ = 0; return r; }  // "Multiplayer" submenu: 1 host, 2 browse LAN games, 3 join by address (the application opens the matching network screen)
   // Pilot information screen (DoViewCar 0x46A94): the 3D craft turning in the middle of the card. The application renders it: ship number, turn angle
   // (radians) and the virtual 320x200 rectangle it may draw into. Returns -1 on every other screen.
@@ -84,6 +106,9 @@ class FrontEnd {
   void drawCredits();
   void drawMain();
   void drawTracks();
+  int selectedTrack() const;  // 0-based track under the selection of the track list
+  void turnGlobe(int track0, double dt);
+  void drawGlobe(int track0, int cx, int cy);
   void drawTeam();
   void drawViewCar();
   void drawInfo();
@@ -149,6 +174,64 @@ class FrontEnd {
   void drawGaragePanel(const Sprite& panel);
   const Sprite* cropIcon(int weapon);
   std::map<int, Sprite> icons_;
+  // championship (game/championship, frontend_champ.cpp)
+  Championship champ_;
+  void champBeginRace();     // the next race of the calendar: track, then the garage
+  void champRaceFinished();  // results -> points and prize money -> positions / final positions
+  void champStart();         // the pilot card was accepted in the championship
+  // configuration screens (frontend_config.cpp): the options live in the application's GameSettings (setSettings), the screens edit them directly
+  enum class CfgPage { Main, General, Controls, Detail, Difficulty, Sound };
+  struct CfgRow;
+  GameSettings* cfg_ = nullptr;
+  GameSettings cfgLocal_;
+  CfgPage cfgPage_ = CfgPage::Main;
+  int cfgHov_ = -1;
+  bool cfgChanged_ = false;
+  std::vector<CfgRow> cfgRows();
+  const char* cfgFile() const;
+  void openConfig();
+  int cfgZoneAt(int x, int y);
+  void cfgActivate(int i, int dir);
+  void cfgKey(Key k);
+  void drawConfig();
+  void frameButton(int x1, int y1, int x2, int y2, const Sprite* src, const std::string& label);
+  // the reporters' scenes (sub_573B7): globe, talking face, subtitles; driven by the .ANN scripts (frontend_reporters.cpp)
+  void startReporters(int phase);   // phase 0: before the TV fly-through (<X>INT.ANN), 1: after it (<X>IN1.ANN)
+  void updateReporters(double dt);
+  void drawReporters();
+  void reportersEnd();
+  void skipReporters();
+  std::string text(const std::string& file, const std::string& tag);  // string table entry, loading the table on first use
+  struct Reporters {
+    AnnScript script;
+    size_t pc = 0;
+    double wait = 0, clock = 0, voiceEnd = -1;
+    int voice = 0, phase = 0, track = 0;
+    std::string tag, table;
+    bool female = false, ready = false;
+    std::vector<uint8_t> face;    // the running face program
+    size_t facePc = 0;
+    double faceClock = 0;
+    bool faceOn = false;
+    int frame[4] = {0, 0, 0, 0};  // mouth, eyes, lids, brows
+  } rep_;
+  bool introWanted_ = false, flyThrough_ = false;
+  int progress_ = 1;
+  bool unlockAll_ = false, progressChanged_ = false;
+  // saved games (RES_GAME screen, 0x53536 / 0x53318): six slots in ~/Library/Application Support/Slipstream/slot<N>.sav
+  void openSlots(bool save);
+  int slotZoneAt(int x, int y);
+  void slotsKey(Key k);
+  void slotsChoose(int slot);
+  void slotsFinish();
+  void drawSlots();
+  void refreshSlots();
+  static std::string slotPath(int slot);
+  bool slotSave_ = false, slotEntry_ = false;
+  int slotHover_ = -1, slotChosen_ = -1;
+  double slotAnim_ = 0;
+  std::string slotName_[6], slotText_;
+  Screen slotBack_ = Screen::Main;
   // results and best lap records
   RaceResult result_;
   struct Record { int ship = 0; int ms = 0; };
@@ -157,7 +240,7 @@ class FrontEnd {
   void loadRecords();
   void saveRecords() const;
   void addRecord(int track, int ship, double seconds);
-  void drawResults();
+  void drawRanking();
   int resultZoneAt(int x, int y) const;
   void resultChoose(int i);
   const std::string& pilotName(int ship);

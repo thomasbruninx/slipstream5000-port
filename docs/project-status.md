@@ -76,3 +76,8 @@ A window/input/loop ✅ · B display original asset ✅ · C free-camera track v
 ## Front end (docs/frontend.md)
 * DONE: GDV movie decoder (INTRO / LOGO_S, verified against FFmpeg), logo + intro, main menu, track choice, vehicle parking lot with the ZON hit map, pilot information cards, garage shop (weapons / turbo / systems), race results, best lap records, mouse + keyboard; Two Players opens the network game menu.
 * OPEN: championship, saved games, configuration pages, commentator fly-through (.ANN), animated faces, exact original shop economy.
+
+## Championship phase (2026-10)
+DONE: championship rules (calendar, points, prize money, ranking, reversed grid), positions / final positions screens, six-slot saved games, reporter scenes with the original `.ANN`
+scripts, face animation and voices, the TV fly-through with the TV camera, configuration screens incl. difficulty and damage, unlock progression, config file. OPEN: records top three with
+name entry, replay, line-of-sight in the TV camera, language switch, key remapping, two-player championship (docs/championship.md "Not done").

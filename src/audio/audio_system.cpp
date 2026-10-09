@@ -233,6 +233,11 @@ void AudioSystem::playFx(Fx fx, float volume) {
   if (auto s = sample(fxSampleName(fx))) mixer_.play(s, volume);
 }
 
+void AudioSystem::playNamed(const std::string& name, float volume) {
+  if (!enabled_) return;
+  if (auto s = sample(name)) mixer_.play(s, volume);
+}
+
 void AudioSystem::playFxAt(Fx fx, const double pos[3], const double listener[3], bool ownEvent) {
   if (!enabled_) return;
   float vol = 1.0f;
@@ -255,7 +260,7 @@ int AudioSystem::engineStart() {
 }
 
 void AudioSystem::engineSet(int voice, double shipSpeed) {
-  if (voice) mixer_.set(voice, 0.8f, 0.0f, float(1.0 + shipSpeed / 4.0 / 65536.0));
+  if (voice) mixer_.set(voice, 0.8f * engineGain_, 0.0f, float(1.0 + shipSpeed / 4.0 / 65536.0));
 }
 
 void AudioSystem::engineStop(int voice) { if (voice) mixer_.stop(voice); }

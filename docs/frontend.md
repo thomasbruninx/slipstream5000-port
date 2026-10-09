@@ -43,3 +43,14 @@ The palette block of a sprite (`{u16 first, u16 count, count x RGB}`) only repla
 
 ## Race results (0x5A820)
 Shown when the player presses Esc or Enter after finishing (the craft keeps flying on autopilot; also once the race is over) - it no longer appears by itself. `RACERES.SPR` background; the title box ("Race Results - <track>", `RACERES.ST0` TIT0..9) and the Replay / Continue buttons are regions of the dark copy `RACERESD.SPR` (the hovered button shows the bright picture) with the 0x25 / 0x2B / 0x0A frame of sub_56137. Ten rows from y 40 every 13 px: place at x 20, pilot name (exe string table, ship order) at x 40, time `mm'ss"cc` at x 240; AI rows use `RESULTSA.FNT` (silver), the human's row `RESULTSB.FNT` (gold). Zones: Replay (40,175)-(127,191), Continue (190,175)-(277,191); Esc = Continue. CONFIRMED. The port's Replay **restarts the race** (the original replays the recorded race); ships that had not finished show their projected time (the original prints "Retired"). Dev hook: `--front-keys R` shows the screen with made-up data.
+
+## Championship, saved games, configuration (second extension)
+Championship, its screens, the reporters and the TV fly-through: docs/championship.md. The One Player menu's Championship button is enabled; Saved Game opens the six-door screen
+(or "You Haven't Saved Any Games Yet"); Multiplayer / Singleplayer are the port's names for entries 2 and 1.
+**Configuration** (main menu): GARAGEA hangar, buttons cut from GARAGEB (hovered: GARAGEA) with the 1 px frame, CNFFONT text. Main page zones (table `0x4754C`): title (100,10)-(220,28),
+General (25,43)-(157,61), Controls (163,43)-(281,61), Detail (25,65)-(157,83), Difficulty (163,65)-(281,83), Sound (25,87)-(157,105), Continue (113,171)-(207,189). Pages: rows
+(25,43+20i)-(281,59+20i) with the category on the left (x 31) and the value, Ok (100,169)-(195,187); General: Rear Monitor, Weapons Monitor, Language, Track map, Speed Display (mph / km/h);
+Detail: Environment Detail, Clouds, Shading (None / Gouraud / Specular), Textures (Fine / Coarse), Window Size, Shadows; Difficulty: Level, Damage; Sound: Sound Effects, Engine Sounds
+(Off / Quiet / Normal), Speech, Music. Values step with Enter / click (Left / Right step back and forth). The port applies track map, speed unit, difficulty, damage, scenery detail, shadows
+and the sound switches (engine gain, speech, music, effects); rear / weapons monitor, clouds, shading, textures, window size are stored only. Saved in `config.txt`. CONFIRMED layout.
+**Track list** order and locking: see docs/championship.md (unlock progression). Track flags use the executable's longitude / latitude table.

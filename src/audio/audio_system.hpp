@@ -48,12 +48,14 @@ class AudioSystem {
 
   // --- effects ---
   void playFx(Fx fx, float volume = 1.0f);
+  void playNamed(const std::string& sampleName, float volume = 1.0f);  // any sample of the archive (e.g. "JETPASS1.SMP")
   // Positional effect: the original attenuates linearly to zero at 0x11DF0 (73200) units and plays the listener's own
   // events (own ship) at full volume; no panning.
   void playFxAt(Fx fx, const double pos[3], const double listener[3], bool ownEvent);
   int engineStart();                            // looped engine sample, returns a voice id
   void engineSet(int voice, double shipSpeed);  // pitch = 1 + speed/4/65536 (FxAddEngine 0x4B86D / 0x4B570)
   void engineStop(int voice);
+  void setEngineGain(float g) { engineGain_ = g; }  // configuration "Engine Sounds": off 0, quiet 0.5, normal 1
 
   // Per-track announcer samples (lists at 0x4B38F / 0x4B3B7 of the exe, language letter 'E' = English): `which` 1 plays at the
   // start of the countdown (0x58AF3 -> 0x4B975), 2 one second before the start (0x59063 -> 0x4B99D).
@@ -122,6 +124,7 @@ class AudioSystem {
   std::vector<std::string> narration_;
   int cueVoice_ = 0, cueSpeakerNow_ = 0;
   int cueHistory_[4] = {-1, -1, -1, -1};
+  float engineGain_ = 1.0f;
   int ambientId_ = 0, ambientVoice_ = 0;
   float ambientVol_ = 0;
 };

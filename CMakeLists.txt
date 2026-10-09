@@ -15,6 +15,7 @@ add_library(slipstream_core STATIC
   src/original_formats/formats.cpp
   src/original_formats/audio.cpp
   src/original_formats/gdv.cpp
+  src/original_formats/ann.cpp
   src/original_formats/track.cpp
   src/game/scene.cpp
   src/game/ship_params.cpp
@@ -26,8 +27,13 @@ add_library(slipstream_core STATIC
   src/game/weapons.cpp
   src/game/hud.cpp
   src/game/pause_menu.cpp
+  src/game/settings_file.cpp
   src/game/globe.cpp
-  src/game/frontend.cpp)
+  src/game/championship.cpp
+  src/game/frontend.cpp
+  src/game/frontend_champ.cpp
+  src/game/frontend_reporters.cpp
+  src/game/frontend_config.cpp)
 target_include_directories(slipstream_core PUBLIC src)
 target_compile_options(slipstream_core PRIVATE -Wall -Wextra)
 
@@ -69,7 +75,7 @@ else()
 endif()
 
 # --- application (SDL3) -------------------------------------------------------------------
-add_executable(slipstream src/platform/main.cpp src/platform/viewer_app.cpp)
+add_executable(slipstream src/platform/main.cpp src/platform/viewer_app.cpp src/platform/viewer_intro.cpp)
 target_link_libraries(slipstream PRIVATE slipstream_netplay slipstream_renderer slipstream_audio slipstream_core SDL3::SDL3)
 target_compile_options(slipstream PRIVATE -Wall -Wextra)
 
@@ -90,6 +96,10 @@ add_executable(slipstream_weapons_tests tests/weapons_tests.cpp)
 target_link_libraries(slipstream_weapons_tests PRIVATE slipstream_core)
 add_test(NAME weapons_tests COMMAND slipstream_weapons_tests)
 
+add_executable(slipstream_champ_tests tests/champ_tests.cpp)
+target_link_libraries(slipstream_champ_tests PRIVATE slipstream_core)
+add_test(NAME champ_tests COMMAND slipstream_champ_tests)
+
 add_executable(slipstream_net_tests tests/net_tests.cpp)
 target_link_libraries(slipstream_net_tests PRIVATE slipstream_net)
 add_test(NAME net_tests COMMAND slipstream_net_tests)
@@ -97,6 +107,10 @@ add_test(NAME net_tests COMMAND slipstream_net_tests)
 add_executable(slipstream_gdv_tests tests/gdv_tests.cpp)
 target_link_libraries(slipstream_gdv_tests PRIVATE slipstream_core)
 add_test(NAME gdv_tests COMMAND slipstream_gdv_tests)
+
+add_executable(slipstream_ann_tests tests/ann_tests.cpp)
+target_link_libraries(slipstream_ann_tests PRIVATE slipstream_core)
+add_test(NAME ann_tests COMMAND slipstream_ann_tests)
 
 add_executable(slipstream_audio_tests tests/audio_tests.cpp)
 target_link_libraries(slipstream_audio_tests PRIVATE slipstream_audio slipstream_core)

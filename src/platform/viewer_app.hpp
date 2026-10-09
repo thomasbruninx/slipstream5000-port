@@ -2,6 +2,7 @@
 #pragma once
 #include <cstdlib>
 #include <memory>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -9,6 +10,7 @@
 #include "game/ship_params.hpp"
 #include "audio/audio_system.hpp"
 #include "game/doors.hpp"
+#include "original_formats/ann.hpp"
 #include "game/ship_ai.hpp"
 #include "game/ship_sim.hpp"
 #include "game/weapons.hpp"
@@ -38,6 +40,7 @@ struct AppOptions {
   bool haveCam = false;
   double cam[3] = {0, 0, 0};
   float camYaw = 0, camPitch = 0;
+  bool unlockAll = false;   // --unlock-all: every track can be chosen in single races from the start (the original unlocks them one by one)
   bool startBonus = false;  // the original's 15 s start-phase speed bonus by rank (0x50252, up to +75 %); off by default, it makes the leader far too fast
   float shipScale = 1.0f;  // --ship-scale: 1 = the original size
   bool countdown = true;   // 5 s start sequence with announcer and held ships
@@ -85,7 +88,10 @@ class ViewerApp {
   // pause menu (Esc while driving): the race stands still, the menu is the original's PAUSED / CONFIG entries
   // Esc / Enter after the player has finished (the craft keeps flying on autopilot) or the race is over: the results screen. Returns true when it opened.
   bool tryShowResults();
+  bool introActive() const { return introMode_; }
+  void endFlyThrough(bool skipped);  // Esc / Enter / click, or the script ended: back to the front end
   void frontDebugResults();
+  void frontDebugLast() { if (front_) front_->debugChampLastRace(); }
   bool pausable() const { return mode_ == AppMode::Track && driving_; }
   bool paused() const { return pause_.isOpen(); }
   void openPause();
@@ -95,6 +101,9 @@ class ViewerApp {
   bool netActive() const { return session_ != nullptr; }
   bool netRacing() const { return netplay_ != nullptr; }
   bool netUiOpen() const { return netUi_ != NetUi::None; }
+  bool frontWantsText() const { return front_ && frontActive_ && front_->wantsText(); }
+  void frontText(const std::string& t) { if (front_) front_->textInput(t); }
+  void frontBackspace() { if (front_) front_->backspace(); }
   bool netWantsText() const { return netUi_ == NetUi::Address; }
   void openNetMenu();
   void netKey(PauseMenu::Key k);
@@ -108,7 +117,7 @@ class ViewerApp {
   void frontMouse(double nx, double ny, bool click);  // window position 0..1
   FrontEnd* frontEnd() { return front_.get(); }
   void toggleMap() { settings_.trackMap = !settings_.trackMap; }
-  bool hudActive() const { return hudOn_ && driving_ && mode_ == AppMode::Track && hudAssets_.loaded; }
+  bool hudActive() const { return hudOn_ && driving_ && !introMode_ && mode_ == AppMode::Track && hudAssets_.loaded; }
   void toggleAssist() { simCfg_.assist = !simCfg_.assist; }
   void togglePainter() { painter_ = !painter_; }
   void toggleVisibility() { useVisMask_ = !useVisMask_; }
@@ -138,6 +147,24 @@ class ViewerApp {
   void startRaceFromFront(const RaceSetup& s);
   void returnToFront();
   void showResultsScreen();
+  void placeGrid();
+  // TV fly-through before a championship race (PlayTrackIntro 0x57A79, viewer_intro.cpp): one ship flies the lap on the autopilot, the TV camera cuts between the
+  // track's 60 camera positions and the commentators speak (the track's .ANN script, subtitles from the *PREV string table).
+  bool introMode_ = false;
+  AnnScript introScript_;
+  size_t introPc_ = 0;
+  double introWait_ = 0, introClock_ = 0, introVoiceEnd_ = -1;
+  int introVoice_ = 0;
+  std::string introTag_;
+  std::vector<std::pair<std::string, std::string>> introText_;
+  std::vector<std::array<int32_t, 3>> tvCams_;
+  int tvCam_ = -1;
+  double tvZoom_ = 1.0;
+  void startFlyThrough(int track);
+  void updateFlyThrough(double dt);
+  void updateTvCamera();
+  void drawIntroOverlay();  // ships on the start grid by gridSlot_
+  std::array<int, 10> gridSlot_ = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};  // start slot (0 = pole) of every ship
   double resultsTimer_ = 0;
   bool netFromFront_ = false;
   void renderFront();
@@ -167,7 +194,7 @@ class ViewerApp {
   void drawPlayerList(const HudCanvas& c);
   bool showList_ = false;
   void renderFrame();
-  bool shipShown(int i) const { return !netplay_ || netplay_->present(i); }
+  bool shipShown(int i) const { return introMode_ ? i == player_.ship : (!netplay_ || netplay_->present(i)); }
   bool netStartWaiting() const { return netplay_ && int32_t(netStartLocal_ - session_->nowMs()) > 0; }
   ShipSimConfig simCfg_;
   Doors doors_;
@@ -202,6 +229,9 @@ class ViewerApp {
   void drawHud();
   void drawMap(const HudCanvas& c);
   void applySettings();
+  void applyConfig();  // the configuration screens changed something: apply and save it
+  bool voicesOn() const { return opt_.voices && settings_.speech; }
+  int progress_ = 1;   // unlocked tracks (config file)
   int view_ = 0;  // 0 cockpit, 1 cockpit + own ship, 2 chase
   bool cockpit() const { return view_ != 2; }
   int lastLap_ = 0;

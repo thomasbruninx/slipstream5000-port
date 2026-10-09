@@ -33,6 +33,7 @@ static void usage() {
       "  --music NAME        play this song (INGAME2/3/4/6, INTRO, WIN, LOSE .HMP) instead of a random race song\n"
       "  --laps N            race length for the finish / result music (default 3)\n"
       "  --start-bonus       restore the original's 15 s start speed bonus by rank (up to +75 %, off by default)\n"
+      "  --unlock-all        single races: every track is open from the start (the original opens them one by one, finishing in the top four)\n"
       "  --no-countdown      skip the 5 s start sequence\n"
       "  --weapons SPEC      player loadout, e.g. seeker:9,scrambler:9,booster:2 (default: the original's cheat loadout; 'none' = blaster only)\n"
       "  --chase             start in the chase camera (V cycles cockpit / close chase / far chase)\n"
@@ -92,6 +93,7 @@ int main(int argc, char** argv) {
     else if (a == "--front") frontForced = true;
     else if (a == "--skip-intro") opt.skipIntro = true;
     else if (a == "--start-bonus") opt.startBonus = true;
+    else if (a == "--unlock-all") opt.unlockAll = true;
     else if (a == "--front-sim") frontSim = std::atof(next("--front-sim"));
     else if (a == "--front-keys") frontKeys = next("--front-keys");
     else if (a == "--host") opt.netRole = "host";
@@ -181,6 +183,9 @@ int main(int argc, char** argv) {
   if (!screenshot.empty() && app.frontActive()) {  // headless front end: --front-sim SEC, --front-keys "dds." (u d l r s=select b=back .=0.5 s)
     for (double t = 0; t < frontSim; t += 1.0 / 60.0) app.update(1.0 / 60.0, InputState{});
     for (char k : frontKeys) {
+      if (k == 'E') { if (app.introActive()) app.endFlyThrough(true); continue; }  // test hook: Esc during the fly-through
+      if (k == 'N') { app.frontText("Game one"); continue; }  // test hook: type a name
+      if (k == 'L') { app.frontDebugLast(); continue; }
       if (k == 'R') { app.frontDebugResults(); continue; }  // test hook: show the results screen with made-up times
       if (k == '.') { for (int i = 0; i < 30; ++i) app.update(1.0 / 60.0, InputState{}); continue; }
       app.frontKey(k == 'u' ? PauseMenu::Key::Up : k == 'd' ? PauseMenu::Key::Down : k == 'l' ? PauseMenu::Key::Left : k == 'r' ? PauseMenu::Key::Right : k == 'b' ? PauseMenu::Key::Back : PauseMenu::Key::Select);
@@ -275,11 +280,22 @@ int main(int argc, char** argv) {
           break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
           if (app.frontActive() && e.button.button == SDL_BUTTON_LEFT) { int ww = 1, wh = 1; SDL_GetWindowSize(window, &ww, &wh); app.frontMouse(e.button.x / ww, e.button.y / wh, true); }
+          else if (app.introActive() && e.button.button == SDL_BUTTON_LEFT) app.endFlyThrough(true);
           break;
         case SDL_EVENT_TEXT_INPUT:
           if (app.netUiOpen()) app.netText(e.text.text);
+          else if (app.frontActive()) app.frontText(e.text.text);
           break;
         case SDL_EVENT_KEY_DOWN:
+          if (app.frontActive() && app.frontWantsText()) {  // typing a saved game name
+            switch (e.key.key) {
+              case SDLK_BACKSPACE: app.frontBackspace(); break;
+              case SDLK_RETURN: case SDLK_KP_ENTER: if (!e.key.repeat) app.frontKey(PauseMenu::Key::Select); break;
+              case SDLK_ESCAPE: if (!e.key.repeat) app.frontKey(PauseMenu::Key::Back); break;
+              default: break;
+            }
+            break;
+          }
           if (app.frontActive()) {  // menus
             if (e.key.repeat && e.key.key != SDLK_LEFT && e.key.key != SDLK_RIGHT && e.key.key != SDLK_UP && e.key.key != SDLK_DOWN) break;
             switch (e.key.key) {
@@ -308,6 +324,10 @@ int main(int argc, char** argv) {
               case SDLK_D: if (!app.netWantsText()) app.netKey(PauseMenu::Key::Right); break;
               default: break;
             }
+            break;
+          }
+          if (app.introActive()) {  // the TV fly-through: Esc / Enter / Space end it
+            if (!e.key.repeat && (e.key.key == SDLK_ESCAPE || e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER || e.key.key == SDLK_SPACE)) app.endFlyThrough(true);
             break;
           }
           if (app.paused()) {  // pause menu keys (key repeat allowed for the volume sliders)
@@ -394,7 +414,7 @@ int main(int argc, char** argv) {
     in.steer = std::clamp(in.steer, -1.0f, 1.0f);
 
     {
-      const bool wantText = app.netWantsText();
+      const bool wantText = app.netWantsText() || (app.frontActive() && app.frontWantsText());
       if (wantText != textInput) { if (wantText) SDL_StartTextInput(window); else SDL_StopTextInput(window); textInput = wantText; }
     }
     app.update(dt, in);

@@ -10,12 +10,20 @@
 
 namespace slip {
 
+// Persistent in ~/Library/Application Support/Slipstream/config.txt (settings_file.cpp).
 struct GameSettings {
   float music = 0.8f, sfx = 1.0f;   // volumes 0..1
   int difficulty = 1;               // [0x492EA]: 0..2
   bool kph = false;                 // speed unit of the HUD
   bool trackMap = true;             // General page "Track map" (config word [0x492FE]): the map overlay of the race screen (M)
   int detail = 3;                   // 0..3: scenery size cull thresholds 32 / 20 / 10 / 5 (0x350C7); 3 = highest
+  // The options of the original's configuration screens (CFG words 0x492E2..0x492FE, frontend_config.cpp). The ones the port cannot show (rear / weapons monitor,
+  // clouds, shading, textures, window size) are stored only.
+  bool rearMonitor = true, weaponsMonitor = true, clouds = true, texturesCoarse = false, windowReduced = false, shadows = true;
+  bool damage = true;               // [0x492EE] "Damage": off = the human's craft takes no damage (RaceSlotDamage 0x52035)
+  bool sfxOn = true, speech = true, musicOn = true;
+  int engine = 2;                   // engine sounds: 0 off, 1 quiet, 2 normal (CFG word 0x492E2)
+  int shading = 2;                  // 0 none, 1 Gouraud, 2 specular
 };
 
 class PauseMenu {

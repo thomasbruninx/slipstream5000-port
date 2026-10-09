@@ -37,7 +37,7 @@ std::vector<std::string> PauseMenu::items(const GameSettings& s) const {
     case Page::Config: return {optConfig_[0], optConfig_[1], optConfig_[2], optConfig_[4], optConfig_[5], optConfig_[3]};
     case Page::Sound: return {"Music  " + pct(s.music), "Effects  " + pct(s.sfx), optConfig_[3]};
     case Page::General: return {std::string("Speed  ") + (s.kph ? "kph" : "mph"), std::string("Track map  ") + (s.trackMap ? "on" : "off"), optConfig_[3]};
-    case Page::Difficulty: return {std::string("Level  ") + std::to_string(s.difficulty) + (s.difficulty == 0 ? " (easy)" : s.difficulty == 1 ? " (normal)" : " (hard)"), optConfig_[3]};
+    case Page::Difficulty: return {std::string("Level (main menu)  ") + std::to_string(s.difficulty) + (s.difficulty == 0 ? " (easy)" : s.difficulty == 1 ? " (normal)" : " (hard)"), optConfig_[3]};
     case Page::Detail: return {"Detail  " + std::to_string(s.detail), optConfig_[3]};
     case Page::Controls:
       return {"W S  throttle  brake", "A D  steer", "E Q  pitch", "F  fire    X  next weapon", "V  view    Esc  pause", optConfig_[3]};
@@ -85,8 +85,8 @@ PauseMenu::Action PauseMenu::key(Key k, GameSettings* s) {
       else if (k == Key::Select) { page_ = Page::Config; sel_ = 0; }
       return Action::None;
     case Page::Difficulty:
-      if (sel_ == 0) s->difficulty = dir == 0 ? (s->difficulty + 1) % 3 : step(s->difficulty, 0, 2);
-      else if (k == Key::Select) { page_ = Page::Config; sel_ = 3; }
+      // the level can only be changed from the main menu's configuration screen: the original greys the button out during a race (0x47421, [0x47230] = 0)
+      if (sel_ != 0 && k == Key::Select) { page_ = Page::Config; sel_ = 3; }
       return Action::None;
     case Page::Detail:
       if (sel_ == 0) s->detail = dir == 0 ? (s->detail + 1) % 4 : step(s->detail, 0, 3);

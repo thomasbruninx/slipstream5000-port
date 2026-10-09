@@ -1,5 +1,7 @@
 #include "platform/viewer_app.hpp"
 
+#include "game/settings_file.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -34,6 +36,20 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
   weaponTable_ = loadWeaponTable(*data_);
   if (auto cfg = data_->read("SLIPSTRM.CFG"))  // config word [0x492FE] (file offset 177): Track map on / off
     if (cfg->size() > 178 && (*cfg)[0] == 'V') settings_.trackMap = ((*cfg)[177] | ((*cfg)[178] << 8)) != 0;
+  {
+    const SavedConfig sc = loadConfig();  // the port's own config file wins over the original's CFG; --difficulty wins over both
+    if (sc.present) {
+      const float m = settings_.music, f = settings_.sfx;
+      settings_ = sc.settings;
+      if (opt.audio.music != 0.8f) settings_.music = m;  // explicit --music-volume / --sfx-volume
+      if (opt.audio.sfx != 1.0f) settings_.sfx = f;
+      if (opt.difficulty < 0) aiTables_.difficulty = settings_.difficulty;
+      progress_ = sc.progress;
+    }
+    settings_.difficulty = aiTables_.difficulty;
+    applySettings();
+    renderer_.shadows = settings_.shadows;
+  }
   refPoints_ = loadShipRefPoints(*data_);
   {
     std::string spec = opt.weapons, perr;
@@ -77,6 +93,9 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
   if (opt.front && mode_ == AppMode::Track) {
     front_ = std::make_unique<FrontEnd>();
     if (front_->init(*data_, &audio_)) {
+      front_->setFlyThrough(true);
+      front_->setProgress(progress_, opt.unlockAll);
+      front_->setSettings(&settings_);
       front_->setDefaults(track_, opt_.laps, opt.weapons == "default" ? Loadout{} : playerLoadout_);
       front_->setEconomy(&weaponTable_, aiTables_.difficulty, 750);
       front_->start(opt.skipIntro);
@@ -96,18 +115,24 @@ bool ViewerApp::loadTrack(int idx, std::string* err) {
   scene_ = std::move(sc);
   doors_.build(*scene_);
   track_ = idx;
-  const auto& st = scene_->startPos;
-  double hx = st[0][0] - st[1][0], hz = st[0][2] - st[1][2];
-  double yaw = std::atan2(hx, hz);
-  for (int i = 0; i < 10; ++i) {
-    grid_[size_t(i)] = ShipState{st[size_t(i)][0], st[size_t(i)][1], st[size_t(i)][2], yaw, 0, 0, i};
-  }
+  placeGrid();
   driving_ = false;
   player_ = grid_[size_t(std::clamp(opt_.ship, 0, 9))];
   placeCameraAtStart();
   playTrackMusic();
   status_ = std::string("Track ") + trackBaseNames()[size_t(idx - 1)] + " (" + trackDisplayNames()[size_t(idx - 1)] + ")";
   return true;
+}
+
+void ViewerApp::placeGrid() {
+  const auto& st = scene_->startPos;
+  const double hx = st[0][0] - st[1][0], hz = st[0][2] - st[1][2];
+  const double yaw = std::atan2(hx, hz);
+  for (int i = 0; i < 10; ++i) {
+    const auto& p = st[size_t(std::clamp(gridSlot_[size_t(i)], 0, 9))];
+    grid_[size_t(i)] = ShipState{p[0], p[1], p[2], yaw, 0, 0, i};
+  }
+  player_ = grid_[size_t(std::clamp(opt_.ship, 0, 9))];
 }
 
 void ViewerApp::playTrackMusic() {
@@ -217,7 +242,7 @@ void ViewerApp::drainSounds(const double listener[3]) {
     if (log) std::fprintf(stderr, "combat %s %d ship %d\n", e.kind == CombatEvent::Fx ? "fx" : "cue", e.id, e.ship);
     if (e.kind == CombatEvent::Fx) {
       if (e.id >= 1 && e.id <= 16) audio_.playFxAt(Fx(e.id), e.pos, listener, driving_ && e.ship == player_.ship);
-    } else if (opt_.voices) {
+    } else if (voicesOn()) {
       audio_.playCue(e.id);
     }
   }
@@ -225,12 +250,12 @@ void ViewerApp::drainSounds(const double listener[3]) {
   if (driving_ && player_.sfxOverDamage > 0) {  // 0x52122..0x5213A: the human pilot's ship is breaking up: cue 2 or 3
     player_.sfxOverDamage = 0;
     if (gameOverTimer_ <= 0 && !finished_) gameOverTimer_ = 4.0;  // 0x4411A: the human's ship is destroyed -> GAME OVER
-    if (opt_.voices) audio_.playCue((std::rand() & 1) ? cues::shipBreaking1 : cues::shipBreaking2);
+    if (voicesOn()) audio_.playCue((std::rand() & 1) ? cues::shipBreaking1 : cues::shipBreaking2);
   }
   for (int i = 0; i < 10; ++i) grid_[size_t(i)].sfxOverDamage = 0;
   for (int i = 0; i < 10; ++i) {
     ShipState& s = i == player_.ship ? player_ : grid_[size_t(i)];
-    if (s.cueContact > 0 && opt_.voices) audio_.playCue(cues::contact(i + 1));  // 0x509B7
+    if (s.cueContact > 0 && voicesOn()) audio_.playCue(cues::contact(i + 1));  // 0x509B7
     s.cueContact = 0;
   }
   for (int i = 0; i < 10; ++i) {
@@ -332,8 +357,8 @@ void ViewerApp::toggleDrive() {
     player_ = grid_[size_t(std::clamp(opt_.ship, 0, 9))];
     player_.speed = 0;
     setShipBoxFromMesh(player_, scene_->shipMeshes[size_t(std::clamp(opt_.ship, 0, 9))], 1.0 / scene_->shipScale);
-    for (int i = 0; i < 10; ++i) { setShipBoxFromMesh(grid_[size_t(i)], scene_->shipMeshes[size_t(i)], 1.0 / scene_->shipScale); grid_[size_t(i)].speed = 0; ai_[size_t(i)] = AiState{}; ai_[size_t(i)].startRank = i + 1;
-      const int tier = aiTierForStartRank(i + 1), trk = std::clamp(scene_->trackIndex, 1, 10);
+    for (int i = 0; i < 10; ++i) { setShipBoxFromMesh(grid_[size_t(i)], scene_->shipMeshes[size_t(i)], 1.0 / scene_->shipScale); grid_[size_t(i)].speed = 0; ai_[size_t(i)] = AiState{}; ai_[size_t(i)].startRank = gridSlot_[size_t(i)] + 1;
+      const int tier = aiTierForStartRank(gridSlot_[size_t(i)] + 1), trk = std::clamp(scene_->trackIndex, 1, 10);
       grid_[size_t(i)].speedFactor = aiTables_.fromExecutable ? aiTables_.tierFactor[aiTables_.difficulty][trk][tier] / 16384.0 : 1.0;
     }
     player_.speedFactor = 1.0;
@@ -352,9 +377,9 @@ void ViewerApp::toggleDrive() {
     simAccum_ = 0;
     audio_.engineStop(engineVoice_);
     engineVoice_ = 0;  // the engine voices are enabled one second before the start (0x59063 -> 0x4B4D0)
-    countdown_ = opt_.countdown ? 5.0 : 0.0;
-    countdownStage_ = opt_.countdown ? 0 : 4;
-    if (!opt_.countdown) engineVoice_ = audio_.engineStart();
+    countdown_ = opt_.countdown && !introMode_ ? 5.0 : 0.0;
+    countdownStage_ = opt_.countdown && !introMode_ ? 0 : 4;
+    if (!opt_.countdown || introMode_) engineVoice_ = audio_.engineStart();
     lapsDone_ = 0;
     finishRank_ = 0;
     finished_ = false;
@@ -379,7 +404,10 @@ void ViewerApp::update(double dt, const InputState& in0) {
     front_->update(dt);
     if (front_->wantsQuit()) quit_ = true;
     RaceSetup rs;
+    if (front_->takeProgressChanged()) { progress_ = front_->progress(); applyConfig(); }
+    if (front_->takeConfigChanged()) { aiTables_.difficulty = settings_.difficulty; combat_.difficulty = settings_.difficulty; applyConfig(); }
     if (front_->takeRace(&rs)) startRaceFromFront(rs);
+    else if (const int it = front_->takeIntroRequest()) startFlyThrough(it);
     else if (const int nr = front_->takeNetRequest()) {
       frontActive_ = false; netFromFront_ = true; openNetMenu();
       if (nr == 1) netHostGame();
@@ -434,6 +462,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
           ctx.params.push_back(&params_[size_t(i)]);
           ai_[size_t(i)].human = i == player_.ship || (netplay_ && netplay_->humanSlot(i));
           if (netplay_) { ctx.remote.push_back(netplay_->remote(i)); ctx.absent.push_back(!netplay_->present(i)); }
+          else if (introMode_) { ctx.remote.push_back(false); ctx.absent.push_back(i != player_.ship); }  // the fly-through has a single ship
         }
         if (netplay_) { ctx.multiplayer = true; ctx.authoritativeEnd = netplay_->isHost(); }
         std::vector<ShipState*> all;
@@ -454,6 +483,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
         for (int i = 0; i < 10; ++i)  // 0x51CC2: speed factor bonus by rank during the first 15 s
           ctx.ships[size_t(i)]->startBonus = opt_.startBonus && startPhase_ > 0 ? startBonusForRank(ai_[size_t(i)].rank) : 0.0;
         doors_.step(step, all);  // door slots update before the ships move (0x3C00E)
+        if (!settings_.damage && !netplay_) player_.damageA = player_.damageB = 0;  // configuration "Damage: Off" (RaceSlotDamage 0x52035: the human takes none)
         updateRace(ctx);
         if (netplay_) {
           Netplay::Bind nb;
@@ -465,7 +495,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
         applyTrailingBoost(ctx, size_t(player_.ship));
         // a finished ship is steered by the autopilot, the player's too (0x51111: record +0xD set -> RaceAIControl)
         static const bool testPilot = std::getenv("SLIP_AUTOPILOT") != nullptr;  // test hook: the player is steered by the AI from the start
-        const bool autopilot = (ai_[size_t(player_.ship)].finished || testPilot) && aiEnabled_ && !simCfg_.assist;
+        const bool autopilot = (ai_[size_t(player_.ship)].finished || testPilot || introMode_) && aiEnabled_ && !simCfg_.assist;
         ShipInput pin = held ? ShipInput{} : autopilot ? aiControl(ctx, size_t(player_.ship), step) : ShipInput{in.throttle, in.brake, in.steer, in.pitch};
         stepShip(player_, pin, step, params_[size_t(player_.ship)], *scene_, simCfg_);
         for (size_t k = 1; k < all.size(); ++k) {
@@ -496,7 +526,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
           for (ShipState* sp : all)
             if (netplay_ && netplay_->remote(sp->ship)) { sp->sfxContact += remoteCopies[rc].sfxContact; sp->cueContact += remoteCopies[rc].cueContact; ++rc; }
         }
-        stepCombat(step, in, held);
+        if (!introMode_) stepCombat(step, in, held);
         simAccum_ -= step;
       }
       {
@@ -514,13 +544,13 @@ void ViewerApp::update(double dt, const InputState& in0) {
             lastLapShown_ = me.lastLap; lapPopupTimer_ = 4.0;
             if (me.laps == opt_.laps) finalLapTimer_ = 2.0;
           }
-          if (e.kind == 1 && opt_.voices) audio_.playCue(cues::positionAnnounce(std::clamp(me.rank, 1, 10)));  // 0x5A5FE..0x5A613
+          if (e.kind == 1 && voicesOn()) audio_.playCue(cues::positionAnnounce(std::clamp(me.rank, 1, 10)));  // 0x5A5FE..0x5A613
           if (e.kind == 2) {
             finished_ = true;
             finishRank_ = me.finishRank;
-            if (opt_.voices) audio_.playCue(cues::finishLine(player_.ship + 1));  // 0x5A6AA..0x5A6B4 (dropped while the position line plays)
+            if (voicesOn()) audio_.playCue(cues::finishLine(player_.ship + 1));  // 0x5A6AA..0x5A6B4 (dropped while the position line plays)
           }
-          if (e.kind == 3 && opt_.voices) audio_.playCue((std::rand() & 0x80) ? cues::passLine2(player_.ship + 1) : cues::passLine1(player_.ship + 1));  // 0x50BE7..0x50C00
+          if (e.kind == 3 && voicesOn()) audio_.playCue((std::rand() & 0x80) ? cues::passLine2(player_.ship + 1) : cues::passLine1(player_.ship + 1));  // 0x50BE7..0x50C00
         }
         raceStatus_.events.clear();
         finalLapTimer_ = std::max(0.0, finalLapTimer_ - dt);
@@ -543,10 +573,13 @@ void ViewerApp::update(double dt, const InputState& in0) {
           raceOverHandled_ = true;
           if (!finished_) { finished_ = true; finishRank_ = me.rank; }
           if (!opt_.noMusic && (!front_ || netplay_)) audio_.playMusic(finishRank_ > 3 ? "LOSE.HMP" : "WIN.HMP", false);  // with the menus the results screen plays it
-          if (opt_.voices) audio_.playCue(finishRank_ == 1 ? (std::rand() & 1) : finishRank_ + 1);  // 0x5A9A9..0x5A9CC
+          if (voicesOn()) audio_.playCue(finishRank_ == 1 ? (std::rand() & 1) : finishRank_ + 1);  // 0x5A9A9..0x5A9CC
         }
       }
-      if (cockpit()) {
+      if (introMode_) updateFlyThrough(dt);
+      if (view_ == 3) {
+        updateTvCamera();
+      } else if (cockpit()) {
         // First person view (0x44F64): camera at the ship's 'head' reference point with the ship's full orientation (incl. bank).
         const double* m = player_.m;
         double fwd[3] = {m[6], m[7], m[8]};
@@ -627,8 +660,10 @@ void ViewerApp::startRaceFromFront(const RaceSetup& s) {
   opt_.ship = s.ship;
   opt_.laps = s.laps;
   playerLoadout_ = s.loadout;
+  gridSlot_ = s.grid;
   std::string err;
   if (s.track != track_) loadTrack(s.track, &err);
+  else placeGrid();  // the same track again: the ships were left where the last race ended
   audio_.stopMusic();  // 0x55E3C: the menu / pilot music ends when the race starts; DoGame3D then plays a race song (0x586F2)
   playTrackMusic();
   frontActive_ = false;
@@ -872,6 +907,7 @@ void ViewerApp::drawCombatOverlay() {
     }
   }
   drawHud();
+  if (introMode_) drawIntroOverlay();
 }
 
 // Piece light (0x39AE6..0x39AF8): the light of the piece, and for the refuel piece a fresh random value (14 bit) for every draw: the blue / white
@@ -901,8 +937,19 @@ void ViewerApp::openPause() {
   audio_.engineSet(engineVoice_, 0.0);
 }
 
+void ViewerApp::applyConfig() {
+  applySettings();
+  renderer_.shadows = settings_.shadows;
+  if (front_) front_->setEconomy(&weaponTable_, aiTables_.difficulty, 750);
+  SavedConfig sc;
+  sc.settings = settings_;
+  sc.progress = progress_;
+  saveConfig(sc);
+}
+
 void ViewerApp::applySettings() {
-  audio_.setVolumes(opt_.audio.master, settings_.music, settings_.sfx);
+  audio_.setVolumes(opt_.audio.master, settings_.musicOn ? settings_.music : 0.0f, settings_.sfxOn ? settings_.sfx : 0.0f);
+  audio_.setEngineGain(settings_.engine == 0 ? 0.0f : settings_.engine == 1 ? 0.5f : 1.0f);
   aiTables_.difficulty = settings_.difficulty;
   combat_.difficulty = settings_.difficulty;
   static const float kDetail[4] = {32.0f, 20.0f, 10.0f, 5.0f};  // scenery size thresholds of the Detail option (0x350C7)
