@@ -52,7 +52,7 @@ General (25,43)-(157,61), Controls (163,43)-(281,61), Detail (25,65)-(157,83), D
 (25,43+20i)-(281,59+20i) with the category on the left (x 31) and the value, Ok (100,169)-(195,187); General: Rear Monitor, Weapons Monitor, Language, Track map, Speed Display (mph / km/h);
 Detail: Environment Detail, Clouds, Shading (None / Gouraud / Specular), Textures (Fine / Coarse), Window Size, Shadows; Difficulty: Level, Damage; Sound: Sound Effects, Engine Sounds
 (Off / Quiet / Normal), Speech, Music. Values step with Enter / click (Left / Right step back and forth). The port applies track map, speed unit, difficulty, damage, scenery detail, shadows
-and the sound switches (engine gain, speech, music, effects); weapons monitor, clouds, shading, textures, window size are stored only. Saved in `config.txt`. CONFIRMED layout.
+and the sound switches (engine gain, speech, music, effects); clouds, shading, textures, window size are stored only. Saved in `config.txt`. CONFIRMED layout.
 **Track list** order and locking: see docs/championship.md (unlock progression). Track flags use the executable's longitude / latitude table.
 
 ## Race controls, replay, records (third extension)

@@ -41,7 +41,8 @@ CONFIRMED from the race loop `0x586f2` (0x58BA0..0x58BD8): after the console is 
 (only while `[0x43237]`, the weapon model of the human's last launch, is set; the launchers `0x5C92C..0x5D131` store it through `0x43e92`, a timer clears it) and, otherwise, when `[0x492DA]` is on, to the rear monitor `0x44A25`:
 it shrinks the clip by one pixel, takes the human ship's matrix with the rows negated (the same as the F3 camera `0x44F64`), renders the world through the same routine as the main window and writes the label "Rear" (font `[0x4319d]`, colour 0xFF) in the top left.
 The port (`ViewerApp::drawRearMonitor`): a second world pass from the cockpit position looking backwards into that rectangle (same horizontal field of view as the main window, INFERRED), a 1 pixel white frame (INFERRED) and the label
-with SMALL.FNT (position INFERRED). It is shown in every camera except F3 (rear) and F4 (TV), not on the wreck and not in the intro fly-through. Not ported: the weapons monitor that replaces it for a while after a launch.
+with SMALL.FNT (position INFERRED). It is shown in every camera except F3 (rear) and F4 (TV), not on the wreck and not in the intro fly-through.
+**Weapons monitor** (option `[0x492DC]`, `0x44946`, CONFIRMED): the same window shows the view from the missile while a homing missile fired by the human flies (`0x43E92`, called by the eight missile launchers 0x5C92C..0x5D131 for `Human1Slot`, stores the missile's slot in `[0x43237]`; `0x43E7F` clears it when the slot is freed): camera = the missile's position and orientation, the weapon's name in the corner. The port (`ViewerApp::drawRearMonitor`, `CombatWorld::monitorProj`) does the same in every camera; the rear view returns when the missile is gone.
 
 ## Rules found on the way
 * Damage beyond 100 on the human ship: `0x4411A` shows "GAME OVER" for 4 s (`[0x42DFC]` timer 0xFA0), the loop then ends the race (0x44022 -> 0x591D9). The port ends the race the same way (LOSE music).

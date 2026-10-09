@@ -132,10 +132,15 @@ struct Scene {
     int link[3];      // neighbour piece index reached through portal polygon linkPoly (-1 = none)
     int linkPoly[3];  // index into track.polys
     float bb[6];      // record bounding box in world-minus-origin coordinates (CONFIRMED cell test, 0x38524)
+    std::vector<uint32_t> rayPolys;            // the same list-A polygons as indices into track.polys (the ray test walks them)
     std::vector<std::array<float, 4>> planes;  // unit normal + offset: inside if n.p + d >= -256 (list-A polygons without flag 0x40)
   };
   // Cell test of 0x38524 (camera, slack 256) / 0x37FCC (slots, slack 512): bbox + inner side of every list-A polygon without flag 0x40.
   bool pieceContains(size_t i, const float p[3], float slack = 256.0f) const;
+  // The collision ray of the original (0x35642, called through 0x140B2 by the TV camera): from A to B (world coordinates) through the portal graph; true when a solid polygon is in the way.
+  // The start and end pieces are those that contain the points (0x383F8); no piece at either end or the same piece for both: not blocked.
+  bool rayBlocked(const double A[3], const double B[3]) const;
+  int pieceAt(const float p[3]) const;  // index of the piece whose cell contains p (world minus origin), smallest first, -1 = none
   std::vector<PieceBox> pieceBoxes;  // same order as Track::pieces
   // Painter's-order data (CONFIRMED structure, see research-log): TRD groups are the BSP leaves; each piece and
   // scenery instance belongs to one group.

@@ -193,8 +193,6 @@ class ViewerApp {
   void startFlyThrough(int track);
   void updateFlyThrough(double dt);
   void updateTvCamera();
-  bool tvInPiece(const double p[3]) const;
-  bool tvVisible(const std::array<int32_t, 3>& cam, const double ship[3]) const;
   void drawIntroOverlay();  // ships on the start grid by gridSlot_
   std::array<int, 10> gridSlot_ = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};  // start slot (0 = pole) of every ship
   double resultsTimer_ = 0;

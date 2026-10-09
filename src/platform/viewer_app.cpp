@@ -214,6 +214,8 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
     if (std::getenv("SLIP_PARTICLE_DEMO")[0] == '2') combat_.shipDestroyed(player_.ship, player_);  // SLIP_PARTICLE_DEMO=2: also destroy the player's craft
   }
   cc.raceTime = raceClock_;
+  if (const char* v = std::getenv("SLIP_SELECT")) if (raceClock_ > 0 && raceClock_ < 0.1) combat_.combat[size_t(player_.ship)].selected = std::atoi(v);  // test hook: select weapon slot n
+  if (const char* v = std::getenv("SLIP_VIEW")) if (raceClock_ > 0 && raceClock_ < 0.1) view_ = std::atoi(v);  // test hook: start in camera view n
   cc.drones = netplay_ || introMode_ ? nullptr : &drones_.targets;
   cc.controls.assign(10, CombatControls{});
   for (int i = 0; i < 10; ++i) {
@@ -583,7 +585,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
           for (ShipState* sp : all) dship.push_back(sp);
           const double hp[3] = {player_.x, player_.y, player_.z};
           drones_.step(*scene_, step, hp, ai_[size_t(player_.ship)].node, dship, &combat_, lastSetup_.championship);
-          for (const DroneWorld::Blast& b : drones_.blasts) combat_.explodeAt(b.pos);
+          for (const DroneWorld::Blast& b : drones_.blasts) combat_.explodeAt(b.pos, !b.wall);
           if (std::getenv("SLIP_DRONE_LOG")) { static size_t last = 99; static int tick = 0; if (drones_.drones.size() != last || ++tick % 240 == 0) { last = drones_.drones.size(); std::fprintf(stderr, "drones %zu blasts %zu\n", last, drones_.blasts.size()); for (const Drone& d : drones_.drones) std::fprintf(stderr, "  drone at %.0f %.0f %.0f node %d dist %.0f\n", d.pos[0], d.pos[1], d.pos[2], d.node, std::sqrt((d.pos[0]-hp[0])*(d.pos[0]-hp[0])+(d.pos[2]-hp[2])*(d.pos[2]-hp[2]))); } }
         }
         if (!introMode_) stepCombat(step, sin, sheld);
@@ -853,10 +855,15 @@ void ViewerApp::renderFront() {
 // already composed front end image (pixels the 3D pass leaves at the clear colour keep the card behind them).
 // The rear monitor (CONFIGURATION > General "Rear Monitor"; config word [0x492DA], drawn by 0x44A25 from the race loop at 0x58BC7 after the console): a small window at
 // (210,99)-(301,147) of the 320x200 screen that shows the world behind the ship from the cockpit position (the head matrix negated), with the label "Rear" in the top left.
-// CONFIRMED: position, option, call order. INFERRED: the field of view (the same horizontal angle as the main window), the 1 pixel frame and the label position. The original
-// shows the weapon monitor in this window for a while after the player fires; the port has no weapon monitor, so the rear view is always there.
+// CONFIRMED: position, option, call order. INFERRED: the field of view (the same horizontal angle as the main window), the 1 pixel frame and the label position.
+// The weapons monitor (option [0x492DC], 0x44946, CONFIRMED) uses the same window: while a homing missile fired by the player flies (slot kept in [0x43237] by 0x43E92 and cleared when the
+// slot is freed) it shows the view from the missile (camera at its position and orientation) with the weapon's name in the corner; the rear view returns when the missile is gone.
 void ViewerApp::drawRearMonitor() {
-  if (!settings_.rearMonitor || !driving_ || !scene_ || !hudActive() || introMode_ || mode_ != AppMode::Track || view_ == 4 || view_ == 3 || rearPass_ || player_.wrecked) return;
+  if (!driving_ || !scene_ || !hudActive() || introMode_ || mode_ != AppMode::Track || rearPass_) return;
+  const Projectile* mp = nullptr;
+  if (settings_.weaponsMonitor && combat_.monitorProj)
+    for (const Projectile& p : combat_.projectiles) if (p.id == combat_.monitorProj && p.alive) mp = &p;
+  if (!mp && (!settings_.rearMonitor || view_ == 4 || view_ == 3 || player_.wrecked)) return;
   const int fw = renderer_.width(), fh = renderer_.height();
   const double sx = fw / 320.0, sy = fh / 200.0;
   const int rx0 = 210, ry0 = 99, rx1 = 301, ry1 = 147;
@@ -864,13 +871,17 @@ void ViewerApp::drawRearMonitor() {
   uint32_t* fb = renderer_.framebuffer();
   const std::vector<uint32_t> keep(fb, fb + size_t(fw) * size_t(fh));
   const Camera mainCam = cam_;
-  const double* m = player_.m;
-  double fwd[3] = {-m[6], -m[7], -m[8]};
-  const double* h = refPoints_[size_t(player_.ship)].head;
-  // from the cockpit the monitor looks backwards from the head point; in the third person views (the ship is drawn) it sits just behind the tail so that the tail does not block the view
-  double eye[3] = {h[0], h[1], h[2]};
-  if (view_ != 0) eye[2] = std::min(eye[2], double(player_.boxLo[2]) - 1500.0);
-  for (int k = 0; k < 3; ++k) cam_.pos[k] = (&player_.x)[k] + m[k] * eye[0] + m[3 + k] * eye[1] + m[6 + k] * eye[2];
+  const double* m = mp ? mp->m : player_.m;
+  double fwd[3] = {mp ? m[6] : -m[6], mp ? m[7] : -m[7], mp ? m[8] : -m[8]};
+  if (mp) {
+    for (int k = 0; k < 3; ++k) cam_.pos[k] = mp->pos[k];
+  } else {
+    const double* h = refPoints_[size_t(player_.ship)].head;
+    // from the cockpit the monitor looks backwards from the head point; in the third person views (the ship is drawn) it sits just behind the tail so that the tail does not block the view
+    double eye[3] = {h[0], h[1], h[2]};
+    if (view_ != 0) eye[2] = std::min(eye[2], double(player_.boxLo[2]) - 1500.0);
+    for (int k = 0; k < 3; ++k) cam_.pos[k] = (&player_.x)[k] + m[k] * eye[0] + m[3 + k] * eye[1] + m[6 + k] * eye[2];
+  }
   cam_.yaw = float(std::atan2(fwd[0], fwd[2]));
   cam_.pitch = float(std::asin(std::clamp(fwd[1], -1.0, 1.0)));
   {
@@ -900,7 +911,7 @@ void ViewerApp::drawRearMonitor() {
   c.fillIndex(rx0, ry1, rx1, ry1, frame);
   c.fillIndex(rx0, ry0, rx0, ry1, frame);
   c.fillIndex(rx1, ry0, rx1, ry1, frame);
-  if (hudAssets_.small.height > 0) c.text(hudAssets_.small, "Rear", rx0 + 3, ry0 + 3, 0xFF);
+  if (hudAssets_.small.height > 0) c.text(hudAssets_.small, mp ? combat_.table().w[size_t(std::clamp(mp->kind, 0, kWeaponCount - 1))].name : std::string("Rear"), rx0 + 3, ry0 + 3, 0xFF);
 }
 
 void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int dx, int dy, int rw, int rh, double fit, const Palette* pal) {

@@ -257,6 +257,7 @@ class FrontEnd {
   struct Record { int ship = 0; int ms = 0; std::string name; };
   std::vector<Record> records_[11];  // per track 1..10, fastest first (at most 3)
   int bestTrack_ = 1, bestEdit_ = -1, bestHov_ = -1;
+  double bestWipe_[3] = {0, 0, 0};  // [0x42000..0x42008]: how far each strip has dissolved in (0..0xFFFF; negative = not started); 0, 0, 0 at the first visit, 0 / -0x8000 / -0x10000 after a page change
   std::string bestAfterNote_;
   bool bestAfterChamp_ = false;      // after the name entry: the championship goes on with the points
   void loadRecords();

@@ -110,43 +110,33 @@ void ViewerApp::updateFlyThrough(double dt) {
 
 // F4 of the original (0x45196): the camera is the nearest of the track's TV camera positions; it looks at the ship and zooms with the distance
 // (1x up to 0x2620 units, 4x from 0x477C0 + 0x2620 on, 0x4530F); a fast ship that passes close to a camera makes the jet-pass sound (0x4B848).
-// Free space test of the TV camera (the original's 0x36669: the camera point lies inside a track piece, and 0x140B2: a line of sight through the collision system, a
-// function pointer filled in at run time that the port has not decoded): the port samples the segment against the piece volumes - every sample must lie inside some piece.
-bool ViewerApp::tvInPiece(const double p[3]) const {
-  const float q[3] = {float(p[0] - scene_->origin[0]), float(p[1] - scene_->origin[1]), float(p[2] - scene_->origin[2])};
-  for (size_t k = 0; k < scene_->pieceBoxes.size(); ++k)
-    if (scene_->pieceBoxes[k].graph && scene_->pieceContains(k, q, 1500.0f)) return true;
-  return false;
-}
-
-bool ViewerApp::tvVisible(const std::array<int32_t, 3>& cam, const double ship[3]) const {
-  const double c[3] = {double(cam[0]), double(cam[1]), double(cam[2])};
-  if (!tvInPiece(c)) return false;
-  const double d[3] = {ship[0] - c[0], ship[1] - c[1], ship[2] - c[2]};
-  const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-  const int n = std::clamp(int(len / 40000.0), 1, 24);  // a sample every 40000 units (a piece is much longer than that)
-  for (int i = 1; i < n; ++i) {
-    const double t = double(i) / n, p[3] = {c[0] + d[0] * t, c[1] + d[1] * t, c[2] + d[2] * t};
-    if (!tvInPiece(p)) return false;
-  }
-  return true;
-}
-
+// The TV camera (0x45196, CONFIRMED): the camera point nearest to the ship is used when it lies outside every track piece (0x36669) or when the line from the ship to it is free
+// (0x140B2 -> the collision ray 0x35642, Scene::rayBlocked); otherwise the second nearest is tried with the ray, and when that is blocked too the camera of the last frame stays
+// (the nearest one when there is none yet).
 void ViewerApp::updateTvCamera() {
   cam_.roll = 0;
   const double P[3] = {player_.x, player_.y, player_.z};
   auto dist = [&](size_t i) { const double dx = tvCams_[i][0] - P[0], dy = tvCams_[i][1] - P[1], dz = tvCams_[i][2] - P[2]; return std::sqrt(dx * dx + dy * dy + dz * dz); };
+  auto blocked = [&](size_t i) { const double c[3] = {double(tvCams_[i][0]), double(tvCams_[i][1]), double(tvCams_[i][2])}; return scene_->rayBlocked(P, c); };
+  auto inTrack = [&](size_t i) {
+    const float q[3] = {float(tvCams_[i][0] - scene_->origin[0]), float(tvCams_[i][1] - scene_->origin[1]), float(tvCams_[i][2] - scene_->origin[2])};
+    return scene_->pieceAt(q) >= 0;
+  };
   int best = -1;
   double bestD = 1e300;
   if (!tvCams_.empty()) {
-    std::vector<std::pair<double, int>> order;
-    for (size_t i = 0; i < tvCams_.size(); ++i) order.push_back({dist(i), int(i)});
-    std::sort(order.begin(), order.end());
-    for (size_t k = 0; k < order.size() && k < 8; ++k)  // the nearest camera that sees the ship
-      if (tvVisible(tvCams_[size_t(order[k].second)], P)) { best = order[k].second; bestD = order[k].first; break; }
-    if (best < 0) { best = order[0].second; bestD = order[0].first; }  // none sees it: the nearest one
-    // no flicker: the camera that was used stays while it still sees the ship and is not much farther than the best one
-    if (tvCam_ >= 0 && tvCam_ != best && dist(size_t(tvCam_)) < bestD * 1.3 && tvVisible(tvCams_[size_t(tvCam_)], P)) { best = tvCam_; bestD = dist(size_t(tvCam_)); }
+    int c1 = -1, c2 = -1;
+    double d1 = 1e300, d2 = 1e300;
+    for (size_t i = 0; i < tvCams_.size(); ++i) {
+      const double d = dist(i);
+      if (d < d1) { c2 = c1; d2 = d1; c1 = int(i); d1 = d; }
+      else if (d < d2) { c2 = int(i); d2 = d; }
+    }
+    best = c1; bestD = d1;
+    if (inTrack(size_t(c1)) && blocked(size_t(c1))) {
+      if (c2 >= 0 && !blocked(size_t(c2))) { best = c2; bestD = d2; }
+      else if (tvCam_ >= 0) { best = tvCam_; bestD = dist(size_t(tvCam_)); }
+    }
   }
   if (best < 0) {  // no camera positions: follow from behind
     cam_.pos[0] = P[0] - std::sin(player_.yaw) * 110000; cam_.pos[1] = P[1] + 28000; cam_.pos[2] = P[2] - std::cos(player_.yaw) * 110000;

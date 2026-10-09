@@ -711,6 +711,7 @@ void CombatWorld::launch(const CombatContext& ctx, int i, int weapon) {  // laun
       const double add = (weapon == kAmbler || weapon == kHyperNeuro) ? 0x45D30 : weapon == kScrambler ? 0x1174C : kMissileAccel;
       p.speed = s.speed + add;
       trailFor(p);
+      if (human) monitorProj = p.id;  // 0x5C92C.. -> 0x43E92 (only for the human Human1Slot)
       emitFx(5, i, ownerPos);
       break;
     }

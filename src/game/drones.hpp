@@ -17,7 +17,8 @@ struct Drone {
   double pos[3] = {0, 0, 0};
   double dir[3] = {0, 0, 1};
   int id = 0;          // unique per race (weapons lock on by id)
-  int node = -1;       // path node it flies to
+  int node = -1;       // path node it flies to (B)
+  int prev = -1;       // the node it came from (A, [0x4A1F4])
   double speed = 120000;
   double phase = 0;
 };
@@ -30,7 +31,7 @@ class DroneWorld {
   void step(const Scene& scene, double dt, const double humanPos[3], int humanNode, const std::vector<const ShipState*>& ships, CombatWorld* combat, bool championship);
   std::vector<Drone> drones;
   std::vector<DroneTarget> targets;     // parallel to `drones`, handed to the weapons
-  struct Blast { double pos[3]; };
+  struct Blast { double pos[3]; bool wall = false; };  // wall: it flew into the track (message 0x107): a fireball only, no pieces
   std::vector<Blast> blasts;            // drones that exploded in the last step (the application plays the explosion)
   double radius = 3000;
 

@@ -178,6 +178,8 @@ void FrontEnd::update(double dt) {
   if (!ready_) return;
   t_ += dt;
   trackDt_ = dt;
+  if (screen_ == Screen::Best)  // 0x4292A: 0xC000 per second (dt in 2.14 seconds), capped at 0xFFFF
+    for (double& w : bestWipe_) w = std::min(65535.0, w + 49152.0 * dt);
   if (screen_ == Screen::Tracks) turnGlobe(selectedTrack(), dt);  // the globe turns to the selected track
   if (screen_ == Screen::Reporters) updateReporters(dt);
   if (screen_ == Screen::Garage) garOpen_ = std::min(1.0, garOpen_ + dt / 0.4);
@@ -1053,8 +1055,8 @@ int FrontEnd::bestZoneAt(int x, int y) const {
 
 void FrontEnd::bestActivate(int z) {
   if (bestEdit_ >= 0) return;
-  if (z == 1) bestTrack_ = (bestTrack_ + 8) % 10 + 1;
-  else if (z == 2) bestTrack_ = bestTrack_ % 10 + 1;
+  if (z == 1) { bestTrack_ = (bestTrack_ + 8) % 10 + 1; bestWipe_[0] = 0; bestWipe_[1] = -32768; bestWipe_[2] = -65536; }  // 0x4212C / 0x4216A
+  else if (z == 2) { bestTrack_ = bestTrack_ % 10 + 1; bestWipe_[0] = 0; bestWipe_[1] = -32768; bestWipe_[2] = -65536; }
   else if (z == 3) go(Screen::Main);
 }
 
@@ -1063,6 +1065,7 @@ std::vector<FrontEnd::Preview> FrontEnd::previews() {
   if (screen_ == Screen::Info) { Preview p; p.ship = previewShip(&p.angle, p.rect); v.push_back(p); }
   if (screen_ == Screen::Best)
     for (size_t i = 0; i < records_[std::clamp(bestTrack_, 1, 10)].size() && i < 3; ++i) {
+      if (bestWipe_[i] < 65535.0) continue;  // the craft turns once its strip has dissolved in
       Preview p;
       p.ship = records_[std::clamp(bestTrack_, 1, 10)][i].ship;
       p.angle = 0.7 + t_ * 1.18 - double(i) * 0.0;  // 0.1875 turn per second (0x3000 per second of 0x10000)
@@ -1108,14 +1111,29 @@ void FrontEnd::drawBest() {
   const Palette* fp = facePalette();
   for (int i = 0; i < 3; ++i) {
     const int y0 = kStripY[i];
+    std::vector<uint32_t> under(256 * 46);  // what the strip dissolves in over
+    for (int y = 0; y < 46; ++y) for (int x = 0; x < 256; ++x) under[size_t(y) * 256 + size_t(x)] = buf_[size_t(y0 + y) * W + size_t(kStripX + x)];
+    auto dissolve = [&] {  // 0x3259E: a 16-bit generator (x = (x + 1) >> 1, xor 0xB400 when a bit fell out, seed 0x5A4A) steps once per pixel; a pixel shows when its value is below the progress
+      if (bestWipe_[i] >= 65535.0) return;
+      const double p = std::max(0.0, bestWipe_[i]);
+      uint16_t x = 0x5a4a;
+      for (int y = 0; y < 46; ++y)
+        for (int xx = 0; xx < 256; ++xx) {
+          x = uint16_t(x + 1);
+          const bool carry = x & 1;
+          x >>= 1;
+          if (carry) x ^= 0xb400;
+          if (!(double(x) < p)) buf_[size_t(y0 + y) * W + size_t(kStripX + xx)] = under[size_t(y) * 256 + size_t(xx)];
+        }
+    };
     for (int y = 0; y < 46; ++y) for (int x = 0; x < 256; ++x) buf_[size_t(y0 + y) * W + size_t(kStripX + x)] = argb(pal_.rgba[dark->pixels[size_t(y0 + y) * size_t(dark->w) + size_t(kStripX + x)]]);
-    if (i >= int(records_[tr].size())) continue;
+    if (i >= int(records_[tr].size())) { dissolve(); continue; }
     const Record& r = records_[tr][size_t(i)];
     HudCanvas fcv = c;
     fcv.pal = fp;
     if (const Sprite* fc = spr("BESTF" + std::to_string(r.ship) + ".SPR")) fcv.blit(*fc, kStripX + 1, y0 + 1, transparentOf(*fc));
     if (const Sprite* b3 = spr("BEST3DBK.SPR")) fcv.blit(*b3, kStripX + 207, y0 + 1, transparentOf(*b3));
-    if (!rf) continue;
+    if (!rf) { dissolve(); continue; }
     auto centre = [&](const std::string& s, int y) { drawText(*rf, s, kStripX + 49 + (206 - 49 + 1 - rf->textWidth(s)) / 2, y0 + y, 0xFF); };
     centre(r.name, 12);
     if (bestEdit_ == i && (int(t_ / 0.6) & 1)) {  // the cursor: a bar after the text (0x42889)
@@ -1126,6 +1144,7 @@ void FrontEnd::drawBest() {
     const int cs = (r.ms + 5) / 10;
     std::snprintf(t, sizeof t, "%02d'%02d\"%02d", cs / 6000, (cs / 100) % 60, cs % 100);
     centre(t, 26);
+    dissolve();
   }
 }
 

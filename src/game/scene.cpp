@@ -297,6 +297,7 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
         const Vec3& v0 = s->track.verts[mp.first];
         if (mp.normal.x == 0 && mp.normal.y == 0 && mp.normal.z == 0) continue;
         pb.planes.push_back({mp.normal.x, mp.normal.y, mp.normal.z, -(mp.normal.x * v0.x + mp.normal.y * v0.y + mp.normal.z * v0.z)});
+        pb.rayPolys.push_back(uint32_t(it->second));
       }
       s->pieceBoxes.push_back(pb);
     }
@@ -660,6 +661,80 @@ bool Scene::pieceContains(size_t i, const float p[3], float slack) const {
     if (p[k] < b.bb[2 * k] || p[k] > b.bb[2 * k + 1]) return false;
   for (const auto& pl : b.planes)
     if (pl[0] * p[0] + pl[1] * p[1] + pl[2] * p[2] + pl[3] < -slack) return false;
+  return true;
+}
+
+int Scene::pieceAt(const float p[3]) const {
+  int best = -1;
+  double bestVol = 1e300;
+  for (size_t i = 0; i < pieceBoxes.size(); ++i) {
+    const PieceBox& b = pieceBoxes[i];
+    if (b.empty || !pieceContains(i, p)) continue;
+    const double vol = double(b.hi[0] - b.lo[0]) * double(b.hi[1] - b.lo[1]) * double(b.hi[2] - b.lo[2]);
+    if (vol < bestVol) { bestVol = vol; best = int(i); }
+  }
+  return best;
+}
+
+bool Scene::rayBlocked(const double A0[3], const double B0[3]) const {
+  double A[3] = {A0[0] - origin[0], A0[1] - origin[1], A0[2] - origin[2]};
+  const double B[3] = {B0[0] - origin[0], B0[1] - origin[1], B0[2] - origin[2]};
+  const float fa[3] = {float(A[0]), float(A[1]), float(A[2])}, fb[3] = {float(B[0]), float(B[1]), float(B[2])};
+  const int endPiece = pieceAt(fb);
+  int cur = pieceAt(fa);
+  if (cur < 0 || endPiece < 0 || cur == endPiece) return false;  // 0x35674..0x356AB: no piece at an end, or the same piece: free
+  auto unit = [](const double* a, const double* b, double* d) {
+    d[0] = b[0] - a[0]; d[1] = b[1] - a[1]; d[2] = b[2] - a[2];
+    const double l = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (l < 1e-9) return false;
+    for (int k = 0; k < 3; ++k) d[k] /= l;
+    return true;
+  };
+  double dir[3];
+  if (!unit(A, B, dir)) return false;
+  for (int hop = 0; hop < 64; ++hop) {
+    const PieceBox& pb = pieceBoxes[size_t(cur)];
+    int hit = -1;
+    double X[3] = {0, 0, 0};
+    for (uint32_t idx : pb.rayPolys) {  // 0x35742: every list-A polygon without flag 0x40 that faces the ray
+      const MeshPoly& mp = track.polys[idx];
+      const Vec3& n = mp.normal;
+      const double dot = n.x * dir[0] + n.y * dir[1] + n.z * dir[2];
+      if (dot >= -16.0 / 16384.0) continue;  // 0x35790..0x3579D: the ray must come against the polygon, by at least 0x10 (2.14)
+      const Vec3& v0 = track.verts[mp.first];
+      const double s = n.x * (A[0] - v0.x) + n.y * (A[1] - v0.y) + n.z * (A[2] - v0.z);
+      if (s < 0) continue;
+      const double t = s / -dot;
+      const double P[3] = {A[0] + dir[0] * t, A[1] + dir[1] * t, A[2] + dir[2] * t};
+      bool inside = true, pos = false, neg = false;  // 0x36CEC: the point lies inside the polygon
+      for (uint16_t k = 0; k < mp.count && inside; ++k) {
+        const Vec3& a = track.verts[mp.first + k];
+        const Vec3& b = track.verts[mp.first + (k + 1) % mp.count];
+        const double e[3] = {b.x - a.x, b.y - a.y, b.z - a.z}, q[3] = {P[0] - a.x, P[1] - a.y, P[2] - a.z};
+        const double c = (e[1] * q[2] - e[2] * q[1]) * n.x + (e[2] * q[0] - e[0] * q[2]) * n.y + (e[0] * q[1] - e[1] * q[0]) * n.z;
+        const double tol = 1e-4 * (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+        if (c > tol) pos = true;
+        if (c < -tol) neg = true;
+        inside = !(pos && neg);
+      }
+      if (!inside) continue;
+      hit = int(idx);
+      for (int k = 0; k < 3; ++k) X[k] = P[k];
+      break;
+    }
+    if (hit < 0) return true;                 // 0x35A19: the ray leaves the piece nowhere
+    if (!track.polys[size_t(hit)].portal) return true;  // a solid polygon
+    int next = -1;
+    for (int j = 0; j < 3; ++j) if (pb.linkPoly[j] == hit) next = pb.link[j];  // 0x35939..0x35985: the neighbour behind this portal
+    if (next < 0) return true;
+    if (next == endPiece) return false;       // 0x3598C
+    double nd[3];
+    for (int k = 0; k < 3; ++k) A[k] = X[k];
+    if (!unit(A, B, nd)) return false;
+    if (nd[0] * dir[0] + nd[1] * dir[1] + nd[2] * dir[2] < 0) return true;  // 0x359D8: the direction turned round
+    for (int k = 0; k < 3; ++k) dir[k] = nd[k];
+    cur = next;
+  }
   return true;
 }
 

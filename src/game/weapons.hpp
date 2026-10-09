@@ -152,9 +152,9 @@ class CombatWorld {
   // championship adds +50 credits; the last entry of each table is never drawn: Random(count - 1)); it disappears after `life` seconds.
   int randomBonusType(bool championship);
   void dropPickup(const double* pos, int type, double life);
-  void explodeAt(const double* pos) {
+  void explodeAt(const double* pos, bool pieces = true) {
     particles.fireball(pos);
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 4 && pieces; ++i) {
       const int k = int(particles.irand(4));
       const double p[3] = {pos[0] + droneFrag[k][0], pos[1] + droneFrag[k][1], pos[2] + droneFrag[k][2]};
       particles.debrisPiece(p, 10, k);
@@ -170,6 +170,7 @@ class CombatWorld {
   std::array<CombatState, 10> combat;
   std::vector<Projectile> projectiles;
   std::vector<Pickup> pickups;
+  uint32_t monitorProj = 0;  // id of the homing missile the player fired last (0x43E92 -> [0x43237]): the weapons monitor shows its view while it flies
   ParticleSystem particles;  // smoke trails, explosions, debris (game/particles.hpp)
   std::vector<CombatEvent> events;  // drained by the front end
   // multiplayer: what happened here that the other peers must hear about (drained by game/netplay)

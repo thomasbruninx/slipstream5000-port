@@ -73,14 +73,18 @@ offers `--unlock-all`.
   {u16 craft, 32 byte name, u32 ms at +0x22} - "Slipstream 5000", "Gremlin Interactive", "The Software Refinery", 0'50"00..1'30"00). A human lap that beats an entry (an equal time stays behind) opens the track's
   screen with a new empty entry where the name is typed (blinking cursor; Enter or Esc finish, an empty name becomes the pilot's) before the points are awarded. Screen layout: sky `BESTBACK` / `BESTDARK`,
   title button (40,5)-(278,23), `<` (88,177)-(109,195), Ok (115,177)-(200,195), `>` (206,177)-(227,195); three strips 256 x 46 at x 32, y 30 / 78 / 126: portrait `BESTF<n>` at (1,1), name and
-  time centred in x 49..206 at y 12 / 26 (`RESULTS.FNT`, colour 0xFF), `BEST3DBK` box at (207,1) with the craft turning in it (about 0.19 turn per second, INFERRED from `0x4292A`; the original also wipes the strips in one after the other, not ported).
+  time centred in x 49..206 at y 12 / 26 (`RESULTS.FNT`, colour 0xFF), `BEST3DBK` box at (207,1) with the craft turning in it (about 0.19 turn per second, INFERRED from `0x4292A`).
+  **Dissolve-in** (CONFIRMED, `0x4208E` / `0x4292A` / `0x3259E`): the three strips are drawn through a pixel dissolve. Progress words `[0x42000..0x42008]` start at 0, 0, 0 on the first visit and become 0, -0x8000, -0x10000 after a page change (`<` / `>`);
+  each grows by 0xC000 per second up to 0xFFFF (1.33 s per strip, the strips start 0.67 s apart). `0x3259E` steps a 16-bit generator (`x = (x + 1) >> 1`, xor 0xB400 when a bit fell out, seed 0x5A4A) once per pixel (rows in order) and keeps a
+  pixel of the strip only when the generator's value is below the progress, otherwise the screen behind shows; at 0xFFFF the plain blit is used. The craft in the 3D box appears once its strip is complete.
   The port keeps its own copy in `records.txt` (`v2` + `track ship ms name`).
-* **TV camera line of sight**: the original tests that the camera lies inside a track piece (`0x36669`) and a line of sight through the collision system (`0x140B2`, a run-time function pointer,
-  not decoded). The port samples the camera -> ship segment against the piece volumes (every sample must lie inside a piece), takes the nearest camera that sees the ship (first eight), keeps the
-  current one while it still sees the ship and is within 1.3x of the best distance.
+* **TV camera line of sight** (CONFIRMED, `0x45196`): the nearest of the 60 camera points is used when it lies outside every track piece (`0x36669` = the spatial query `0x383F8` finds no piece) or when the ray from the ship to it is free (`0x140B2` calls the
+  collision callback `0x35642`, installed by `CollideSetTrackCallbacks` 0x33FA2). Otherwise the second nearest is tried with the same ray; if that is blocked too, the camera of the last frame stays (the nearest one if there was none).
+  The ray (`Scene::rayBlocked`): find the pieces of both ends (the same piece, or no piece: free); in the start piece look at the list-A polygons without flag 0x40 that face the ray (n.dir < -0x10/0x4000), intersect the ray with the plane
+  and test whether the point lies inside the polygon (`0x36CEC`); a solid polygon blocks, a portal polygon leads to the neighbour piece (the piece link whose portal polygon it is), the ray continues from the crossing point; reaching the end piece
+  is free, a ray that leaves a piece through no polygon, a portal without a link or a direction that turns round is blocked.
 * **Controls**: docs/controls.md (original default keys, remapping, cameras F1..F5, debug shortcuts moved to Ctrl+Shift).
 * **Drones** (`0x4A240..0x4A847`): see docs/weapons.md "Drones".
 
 ## Not done
-The original's two-player championship, language switching (the `.ST1` / `.ST2` tables and samples exist), joystick calibration, the wipe-in of the best-lap strips, the original's exact TV camera
-line of sight (`0x140B2`), the drone's exact curvature-dependent speed along the lateral path offset and its removal rule.
+The original's two-player championship, language switching (the `.ST1` / `.ST2` tables and samples exist), joystick calibration.

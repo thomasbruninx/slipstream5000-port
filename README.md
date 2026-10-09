@@ -72,13 +72,12 @@ Things that are not (or not exactly) in the original, mostly on request:
 * **Drones** ("little airbuses") that can be shot for bonus pickups, with lock-on and a bonus from any kill.
 * **Tactical AI weapons**: opponents start calm, grow more aggressive with race time and when they are hit, keep their heavy weapons for revenge and good shots (original behaviour: `SLIP_CLASSIC_AI=1`).
 * Start speed bonus off by default, random first championship grid, weapons are not refilled for free between championship races.
-* Rear monitor with the console (the original's second monitor), TV camera line of sight approximated.
+* Rear monitor with the console (the original's second monitor) and the weapons monitor (the missile's view).
 * Joystick calibration pages replaced by SDL3 controller mapping (optional extra mappings in `gamecontrollerdb.txt`).
 
 ## Not ported yet
 * Language switching (the original's other-language string tables and samples exist)
 * Two-player championship and split-screen layout
-* The weapons monitor that replaces the rear monitor after firing; the original's wipe-in of the best-lap strips; the exact line-of-sight test of the TV camera; the drones' exact speed and removal rules.
 * Internet play (NAT traversal, matchmaking, host migration, authentication); the network code is LAN only.
 * An app icon / installer for Windows and Linux, Linux and Windows builds that have been tested on real machines.
 * Everything is documented per area in `docs/` (start with `docs/project-status.md`; each topic file has a "Not done" section).
