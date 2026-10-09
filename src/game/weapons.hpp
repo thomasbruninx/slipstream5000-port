@@ -81,6 +81,10 @@ struct CombatState {
   double lockDronePos[3] = {0, 0, 0};
   bool fireHeld = false, firePrev = false;  // [+0x3C] / [+0x3D]
   double aiClock = 0;               // AI decision cadence
+  // tactical AI (own addition, see aiDecide): how angry the pilot is (hits taken), whom it blames, the pause after a heavy shot
+  double anger = 0;
+  int angerTarget = -1;
+  double holdoff = 0;
   int credits = 0;                  // record +4 (bonus type 4 adds 50)
   int shotsFired = 0, hitsDealt = 0;
 };
@@ -137,6 +141,7 @@ struct CombatContext {
   std::vector<const ShipState*> obstacles;  // door panels (static boxes): missiles stop at them (their 0x106 handler destroys the missile)
   int humanShip = -1;                 // the listener ([0x543DD]): receives the pilot / announcer cues
   std::vector<bool> remote;           // multiplayer: ships simulated on another peer (no ship logic, never a victim here; hits arrive as events)
+  double raceTime = 0;                // seconds since the start of the race (the tactical AI grows more aggressive with it)
   std::vector<DroneTarget>* drones = nullptr;  // the drones of the race (hits are written back into them)
 };
 
@@ -154,6 +159,7 @@ class CombatWorld {
   void step(const CombatContext& ctx, double dt);
 
   const WeaponTable& table() const { return *table_; }
+  bool classicAi = false;  // the original AI weapon logic (random cycling, fires everything at any lock) instead of the tactical one
   int difficulty = 1;  // [0x49F04]: 2 doubles the blaster damage again (0x5C0F9)
   std::array<CombatState, 10> combat;
   std::vector<Projectile> projectiles;
@@ -176,6 +182,8 @@ class CombatWorld {
   unsigned dropCounter_ = 0;
   double stepDt_ = 1.0 / 120.0;
   void updateLock(const CombatContext& ctx, int i);
+  void provoke(int victim, int owner, double amount);
+  bool tableCone(int weapon) const { return weapon >= 0 && table_->w[size_t(weapon)].cone > 0; }
   void aiDecide(const CombatContext& ctx, int i, double dt, bool* fire, bool* cycle);
   void cycleWeapon(int i);
   void fire(const CombatContext& ctx, int i);

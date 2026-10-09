@@ -269,6 +269,7 @@ class ViewerApp {
   bool cockpit() const { return view_ != 2; }
   int lastLap_ = 0;
   RaceStatus raceStatus_;
+  double raceClock_ = 0;  // seconds since the lights went green (the tactical AI becomes more aggressive with it)
   double startPhase_ = 15.0;  // [0x54404]: the first 15 s after GO give a rank dependent speed bonus (table 0x50252)
   bool raceOverHandled_ = false;
   double resultCueTimer_ = -1;

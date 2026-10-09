@@ -442,9 +442,64 @@ void CombatWorld::aiDecide(const CombatContext& ctx, int i, double dt, bool* fir
   c.aiClock = 0;
   bool fire = false, cycle = false;
   const bool done = ctx.finished.size() > size_t(i) && ctx.finished[size_t(i)];
-  if (!done) {
+  if (!done && classicAi) {
     if ((rng_.next() & 0xFFFF) <= 0x2000) cycle = true;               // 0x5155E: 1/8 per decision
     else if (c.selected != 3 && c.lockTarget >= 0) fire = true;       // 0x51570..0x5157E
+  } else if (!done) {
+    // Tactical AI (own addition; the original cycles weapons at random and fires whatever is selected at any lock, which empties the heavy weapons in the first seconds).
+    // Aggression = temper * (calm start, growing with the race time) + anger (hits taken from anyone). It decides whether to shoot at all, whether the heavy weapon may
+    // be used (only when fairly aggressive or for revenge, at a reasonable range, with a pause between shots) and how often the blaster is used.
+    const double dtTick = 1.0 / 30.0;
+    c.holdoff = std::max(0.0, c.holdoff - dtTick);
+    c.anger = std::max(0.0, c.anger - 0.012 * dtTick);  // calms down by about 0.012 per second
+    const double temper = 0.8 + 0.4 * std::fmod(double(i) * 0.618, 1.0);
+    const double progress = std::clamp((ctx.raceTime - 15.0) / 150.0, 0.0, 1.0);
+    const double aggr = std::clamp(temper * (0.12 + 0.55 * progress) + c.anger, 0.0, 1.0);
+    const bool revenge = c.anger > 0.25 && c.lockTarget >= 0 && c.lockTarget == c.angerTarget;
+    double dist = 1e30;
+    if (c.lockTarget >= 0 && ctx.ships[size_t(c.lockTarget)]) {
+      const ShipState& me = *ctx.ships[size_t(i)];
+      const ShipState& o = *ctx.ships[size_t(c.lockTarget)];
+      dist = std::sqrt((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) + (o.z - me.z) * (o.z - me.z));
+    }
+    const bool heavyOk = (aggr >= 0.45 || revenge) && c.holdoff <= 0 && dist < 0.55 * kLockRange;
+    auto has = [&](int sel) { return sel == 0 || (sel == 1 && c.load.weaponA >= 0 && c.load.ammoA != 0) || (sel == 2 && c.load.weaponB >= 0 && c.load.ammoB != 0); };
+    // which slot is wanted: the heavy ones only when allowed and a target is locked, otherwise the blaster
+    int want = 0;
+    if (heavyOk && c.lockTarget >= 0) {
+      const int a = has(1) && tableCone(c.load.weaponA) ? 1 : 0, b = has(2) && tableCone(c.load.weaponB) ? 2 : 0;
+      want = b && (!a || (rng_.next() & 1)) ? b : a;
+    }
+    if (c.selected != want) cycle = true;
+    else if (c.lockTarget >= 0) {
+      if (want == 0) {
+        const double p = (0.02 + 0.10 * aggr) * (revenge || aggr >= 0.35 ? 1.0 : 0.3);
+        if (aggr >= 0.15 && double(rng_.next() & 0xFFFF) / 65536.0 < p) fire = true;
+      } else {
+        fire = true;
+        c.holdoff = 5.0 + 6.0 * (1.0 - aggr);
+      }
+    }
+    // defensive weapons (no lock-on cone: mines, smoke): used against a rival right behind when the pilot is angry enough
+    if (!fire && !cycle && aggr >= 0.35) {
+      const int sel = has(1) && !tableCone(c.load.weaponA) ? 1 : has(2) && !tableCone(c.load.weaponB) ? 2 : 0;
+      if (sel && c.holdoff <= 0) {
+        const ShipState& me = *ctx.ships[size_t(i)];
+        bool behind = false;
+        for (int j = 0; j < int(ctx.ships.size()) && j < 10; ++j) {
+          if (j == i || !ctx.ships[size_t(j)] || ctx.ships[size_t(j)]->wrecked) continue;
+          const ShipState& o = *ctx.ships[size_t(j)];
+          const double d[3] = {o.x - me.x, o.y - me.y, o.z - me.z};
+          double l[3];
+          toLocal(me, d, l);
+          if (l[2] < -2000 && l[2] > -60000 && std::fabs(l[0]) < 12000 && std::fabs(l[1]) < 12000) behind = true;
+        }
+        if (behind) {
+          if (c.selected != sel) cycle = true;
+          else { fire = true; c.holdoff = 4.0; }
+        }
+      }
+    }
   }
   if (c.lockTarget >= 0 && c.lockTarget == ctx.humanShip && ctx.humanShip >= 0 && ctx.shipClass.size() > size_t(i))
     emitCue(ctx, i, cues::aiTargetsHuman(ctx.shipClass[size_t(i)]));  // 0x51588: the pilot taunts the player it has locked
@@ -698,7 +753,15 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
   for (int k = 0; k < 3; ++k) p.pos[k] = np[k];
 }
 
+void CombatWorld::provoke(int victim, int owner, double amount) {  // the tactical AI remembers who hurt it
+  if (victim < 0 || victim >= 10 || owner == victim) return;
+  CombatState& c = combat[size_t(victim)];
+  c.anger = std::min(1.0, c.anger + amount);
+  if (owner >= 0) c.angerTarget = owner;
+}
+
 void CombatWorld::hitShip(const CombatContext& ctx, const Projectile& p, int victim) {  // victim side of message 0x106 (0x5082F..0x50A57)
+  provoke(victim, p.owner, p.kind == kMiniMines ? 0.25 : 0.4);
   ShipState& v = *ctx.ships[size_t(victim)];
   const WeaponDef& w = table_->w[size_t(p.kind)];
   int fx = 9;
@@ -717,6 +780,7 @@ void CombatWorld::hitShip(const CombatContext& ctx, const Projectile& p, int vic
 }
 
 void CombatWorld::beamHit(const CombatContext& ctx, const Projectile& p, int victim) {  // message 0x202 (0x50651..0x506FA)
+  provoke(victim, p.owner, 0.15);
   ShipState& v = *ctx.ships[size_t(victim)];
   const bool human = ctx.human.size() > size_t(victim) && ctx.human[size_t(victim)];
   if (human) { v.boostTime = 0; v.slowTime = 0.25; }  // 0x50660: the boost is lost, steering jolts for 0xFA ms

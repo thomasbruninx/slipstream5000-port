@@ -88,6 +88,24 @@ int main() {
     r.run(15.5);
     CHECK(r.w.pickups.empty());  // the bonus lasts 15 s
   }
+  {  // tactical AI (own addition): calm at the start of the race, the heavy weapon stays unused; later in the race (or after being hit) it is fired
+    Rig r;
+    ShipState c = makeShip(2, 0, 0, 200000);
+    r.b.z = 0; r.b.x = 0; r.a.z = -300000;  // ship 1 (AI) in the middle, ship 2 right ahead of it, the human far behind
+    r.ctx.ships = {&r.a, &r.b, &c};
+    r.ctx.human = {true, false, false};
+    r.ctx.finished = {false, false, false};
+    r.ctx.shipClass = {1, 2, 3};
+    r.ctx.controls = {CombatControls{}, CombatControls{}, CombatControls{}};
+    Loadout l; l.weaponA = kSeeker; l.ammoA = 5;
+    r.w.setLoadout(1, l);
+    r.ctx.raceTime = 0;
+    for (int t = 0; t < 120 * 10; ++t) { r.w.step(r.ctx, 1.0 / 120); r.ctx.raceTime += 1.0 / 120; }
+    CHECK(r.w.combat[1].load.ammoA == 5);  // 10 s into the race: nothing heavy
+    r.ctx.raceTime = 300;
+    r.run(20);
+    CHECK(r.w.combat[1].load.ammoA < 5);
+  }
   {  // lock-on: Seeker locks a ship straight ahead inside the 0x145 cone, not one far to the side; the human cannot lock for 15 s
     Rig r;
     Loadout l; l.weaponA = kSeeker; l.ammoA = 3;

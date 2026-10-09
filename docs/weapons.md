@@ -133,3 +133,15 @@ Little white-and-red craft (`DRONE.SHP`: WHITEPLASTIC, REDMETAL, BLUEGLASS; `DRO
   never drops. Message `0x106` (a missile, mine or ship touching it) -> explosion only. Message `0x107` (wall) -> a burst. The hit sphere is 0.9 of the model's radius (own estimate).
 Own additions (user request, not in the original as far as decoded): the human's lock-on cone (`updateLock`) also picks drones (a nearer drone beats a farther ship; `CombatState::lockDrone`, the HUD marker follows it) and locked missiles / beams home on them; anything the human shoots down leaves a bonus, not only beams.
 Port: `src/game/drones.*` (flight, spawning, ship collisions), `CombatWorld::stepProjectile` (drone hits), `dropPickup / randomBonusType`; test in `tests/weapons_tests.cpp`.
+
+## Tactical AI (own addition, `CombatWorld::aiDecide`)
+The original's AI (0x5154F..0x515D0) cycles its weapon at random (1/8 per decision, 30 decisions a second) and fires whatever is selected at any lock-on, so it spends its heavy weapons in the first seconds.
+The port replaces that by default (`SLIP_CLASSIC_AI=1` brings the original logic back; nothing else in the weapons or the AI driving changes):
+* **Aggression** = pilot temper (0.8..1.2 per ship) x (0.12 + 0.55 x race progress) + **anger**. Race progress is 0 for the first 15 s and reaches 1 after another 150 s. Anger rises with every hit the pilot takes from anyone
+  (beam 0.15, missile 0.4, mine 0.25), remembers who did it and fades by 0.012 per second. So the field starts calm and gets nastier with time and with provocation, the human and other AI ships alike.
+* **Blaster** only when aggression >= 0.15, with a firing chance per decision of 0.02 + 0.10 x aggression (scaled down to 30 % when the pilot is calm and the target is not the one it blames).
+* **Heavy weapons** (weapon A / B with a lock-on cone) only when aggression >= 0.45 or for revenge on the ship it blames, with a lock closer than 55 % of the lock range, one shot and then a pause of 5..11 s
+  (shorter when angrier). The pilot selects the weapon itself (blaster otherwise), it no longer cycles at random.
+* **Defensive weapons** (no cone: mines, smoke): used when aggression >= 0.35 and a rival is within 60000 units right behind, with a 4 s pause.
+* The booster is not touched (as in the original, where the AI never fires with the booster selected).
+Test: `tests/weapons_tests.cpp` ("tactical AI").

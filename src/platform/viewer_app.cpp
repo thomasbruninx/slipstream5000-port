@@ -178,6 +178,8 @@ void ViewerApp::setupCombat() {
   lastLap_ = 0;
   resultCueTimer_ = -1;
   cyclePending_ = false;
+  raceClock_ = 0;
+  combat_.classicAi = std::getenv("SLIP_CLASSIC_AI") != nullptr;  // test / purist switch: the original's weapon logic
 }
 
 void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
@@ -187,6 +189,8 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
   for (size_t d = 0; d < doors_.list.size(); ++d) doorBoxes.push_back(doors_.proxy(d));
   for (const ShipState& b : doorBoxes) cc.obstacles.push_back(&b);
   cc.humanShip = player_.ship;
+  if (!held) raceClock_ += step;
+  cc.raceTime = raceClock_;
   cc.drones = netplay_ || introMode_ ? nullptr : &drones_.targets;
   cc.controls.assign(10, CombatControls{});
   for (int i = 0; i < 10; ++i) {
