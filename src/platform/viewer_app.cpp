@@ -175,6 +175,8 @@ int ViewerApp::ambientForPlayer() const {  // 0x58CB6..0x58CED
 void ViewerApp::setupCombat() {
   std::vector<PickupSpot> spots;
   if (opt_.pickups) spots = loadPickupSpots(*data_, track_);
+  if (!lastSetup_.championship)  // single races (own change): the bonus objects of the course are drawn at random (the original's fixed types stay in the championship)
+    for (PickupSpot& sp : spots) sp.type = -1;
   combat_.init(weaponTable_, refPoints_, track_, spots, netSeed_ ? netSeed_ : replayMode_ ? raceSeed_ : (raceSeed_ = unsigned(std::rand()) | 1u));
   combat_.difficulty = aiTables_.difficulty;
   for (int k = 0; k < kWeaponCount; ++k) {
