@@ -35,14 +35,14 @@ struct Reject { std::string reason; };
 
 struct LobbyEntry { uint8_t id = 0; std::string name; uint8_t ship = 0; uint8_t ready = 0; };
 struct Lobby {            // host -> everyone whenever something changes
-  uint8_t track = 1, laps = 3, difficulty = 1, aiFill = 1;
+  uint8_t track = 1, laps = 6, difficulty = 1, aiFill = 1;
   std::vector<LobbyEntry> players;
 };
 struct LobbyIntent { uint8_t ship = 0; uint8_t ready = 0; };  // player -> host
 
 struct StartSlot { uint8_t kind = 0; uint8_t playerId = kNoPlayer; std::string name; };  // kind 0 empty, 1 human, 2 AI
 struct Start {            // host -> everyone: the race begins at startInMs on the receiver's clock after offset correction
-  uint8_t track = 1, laps = 3, difficulty = 1;
+  uint8_t track = 1, laps = 6, difficulty = 1;
   uint32_t seed = 1;
   uint32_t startAtMs = 0;  // host clock (ms) at which the countdown starts
   std::array<StartSlot, kMaxPlayers> slots;

@@ -10,7 +10,7 @@ namespace slip::net {
 
 struct SessionInfo {
   std::string name;       // host's player name / session title
-  uint8_t track = 1, laps = 3, players = 1, maxPlayers = 10;
+  uint8_t track = 1, laps = 6, players = 1, maxPlayers = 10;
   uint32_t version = 0, dataHash = 0;
   std::string host;       // address to connect to (filled from the packet source when browsing)
   uint16_t port = 0;

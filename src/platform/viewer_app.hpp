@@ -46,7 +46,7 @@ struct AppOptions {
   bool startBonus = false;  // the original's 15 s start-phase speed bonus by rank (0x50252, up to +75 %); off by default, it makes the leader far too fast
   float shipScale = 1.0f;  // --ship-scale: 1 = the original size
   bool countdown = true;   // 5 s start sequence with announcer and held ships
-  int laps = 3;            // race length for the finish (result music, HUD)
+  int laps = 6;            // race length ([0x5440E] = 6 in the executable's data)
   AudioConfig audio;       // --soundfont, --no-audio, --music-volume ...
   std::string music;       // --music NAME.HMP (default: one of the race songs, as the original picks at random)
   bool noMusic = false;

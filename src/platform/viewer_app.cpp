@@ -736,6 +736,7 @@ void ViewerApp::drawSprite() {
 void ViewerApp::startRaceFromFront(const RaceSetup& s, bool replay) {
   lastSetup_ = s;
   haveSetup_ = true;
+  if (std::getenv("SLIP_RACE_LOG")) std::fprintf(stderr, "race from the menus: track %d ship %d laps %d championship %d\n", s.track, s.ship, s.laps, int(s.championship));
   replayMode_ = replay;
   opt_.ship = s.ship;
   opt_.laps = s.laps;
@@ -1270,7 +1271,7 @@ void ViewerApp::drawHud() {
   st.speed = me.speed;
   st.kph = settings_.kph;
   st.rank = rec.rank;
-  st.lap = rec.laps;
+  st.lap = std::min(rec.laps, opt_.laps);  // the ship keeps flying after the finish: the counter stops at the race length instead of running on (LAP 4, 5, 6 ...)
   st.totalLaps = opt_.laps;
   st.lapTime = rec.lapTime;
   st.lastLapTime = lapPopupTimer_ > 0 ? lastLapShown_ : -1;

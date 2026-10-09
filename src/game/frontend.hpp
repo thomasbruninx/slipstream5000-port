@@ -36,7 +36,7 @@ struct RaceResult {  // handed to the results screen when a race ends
 struct RaceSetup {  // what the front end hands to the race
   int track = 1;      // 1..10
   int ship = 0;       // 0..9
-  int laps = 3;
+  int laps = 6;  // the original's default race length ([0x5440E])
   Loadout loadout;
   std::array<int, 10> grid = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};  // start slot (0 = pole) of every ship
   bool championship = false;

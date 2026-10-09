@@ -34,7 +34,7 @@ static void usage() {
       "  --bench N           headless: render N frames and report speed\n"
       "  --soundfont FILE    SoundFont for the MIDI music (default: resources/GeneralUser-GS.sf2, bundled in the app)\n"
       "  --music NAME        play this song (INGAME2/3/4/6, INTRO, WIN, LOSE .HMP) instead of a random race song\n"
-      "  --laps N            race length for the finish / result music (default 3)\n"
+      "  --laps N            race length for the finish / result music (default 6, the original's)\n"
       "  --start-bonus       restore the original's 15 s start speed bonus by rank (up to +75 %, off by default)\n"
       "  --unlock-all        single races: every track is open from the start (the original opens them one by one, finishing in the top four)\n"
       "  --no-countdown      skip the 5 s start sequence\n"
