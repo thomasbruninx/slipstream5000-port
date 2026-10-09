@@ -50,6 +50,7 @@ WeaponTable loadWeaponTable(const GameData& data);
 
 struct ShipRefPoints {  // ART reference points of the root node (unscaled model units)
   double lasl[3] = {-3000, -800, 0}, lasr[3] = {3000, -800, 0}, weap[3] = {0, -1500, 0}, head[3] = {0, 500, 1000}, smok[3] = {0, 0, -5000};
+  double frag[4][3] = {};  // ART debris list 1: where the pieces R<n>FRG50..53 start (ship frame)
 };
 std::array<ShipRefPoints, 10> loadShipRefPoints(const GameData& data);
 
@@ -149,7 +150,15 @@ class CombatWorld {
   // championship adds +50 credits; the last entry of each table is never drawn: Random(count - 1)); it disappears after `life` seconds.
   int randomBonusType(bool championship);
   void dropPickup(const double* pos, int type, double life);
-  void explodeAt(const double* pos) { particles.fireball(pos); particles.debris(pos, 4, 10); emitFx(9, -1, pos); }  // a drone blows up (0x4A4BB: fireball, 0x4A42F: 4 DRFRG pieces)
+  void explodeAt(const double* pos) {
+    particles.fireball(pos);
+    for (int i = 0; i < 4; ++i) {
+      const int k = int(particles.irand(4));
+      const double p[3] = {pos[0] + droneFrag[k][0], pos[1] + droneFrag[k][1], pos[2] + droneFrag[k][2]};
+      particles.debrisPiece(p, 10, k);
+    }
+    emitFx(9, -1, pos);
+  }  // a drone blows up (0x4A4BB: fireball, 0x4A42F: 4 DRFRG pieces)
   // One simulation step (all ships already moved): recharge, lock-on, AI decisions, firing, projectiles, pickups, effects.
   void step(const CombatContext& ctx, double dt);
 
@@ -195,7 +204,12 @@ class CombatWorld {
   void followShip(int emitter, int ship, const double* localOffset);
   void trailFor(const Projectile& p);                       // missile exhaust (0x5CCC6..0x5D214)
   void smokeBurst(const double* pos, double seconds);       // black smoke that rises (0x4F7BC, 1 s wall hit / 2 s mine)
-  void shipDebris(const double* pos, int victim, int count);
+  void shipDebris(const CombatContext& ctx, int victim, int count);  // pieces start at the ART debris points of the craft
+ public:
+  double droneFrag[4][3] = {};  // DRONE.ART debris list 1 (set by the application)
+  // A ship scraped a wall or the water (message 0x107 -> RaceBang 0x4FD93 / 0x4FF2E).
+  void scrapeEffects(const double pos[3], const double n[3], double speed, bool water, int surfaceMaterial) { particles.scrape(pos, n, speed, water, surfaceMaterial); }
+ private:
   void damageSmoke(const CombatContext& ctx, int ship, double damageA);  // RaceSlotDamage 0x52090: a hit of 9.0 or more leaves a smoking engine for 4 s
   struct Follow { int emitter; int kind; uint32_t proj; int ship; double off[3]; };  // kind 0 projectile, 1 ship reference point
   std::vector<Follow> follows_;

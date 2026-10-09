@@ -421,6 +421,8 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
   s->panelDetails = loadPanelDetails(data);
   s->sdYellowMaterial = b.mats.find("SDYellow");
   s->sdCageMaterial = b.mats.find("SDCage");
+  s->sparkMaterial = b.mats.find("Spark");
+  s->splashMaterial = b.mats.find("Splash");
   s->sdOrangeMaterial = b.mats.find("SDOrangeLight");
   s->sdFloorLightMaterial = b.mats.find("SDFloorLight");
   s->sdBlueMaterial = b.mats.find("SDBlueLight");
@@ -529,12 +531,20 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
         addPoly(*m, vs, poly.uv, b.globalMaterial(sh->materials, poly.material), Builder::unitNormal(poly.nx, poly.ny, poly.nz));
       }
     };
+    auto points = [&](const std::string& art, std::array<std::array<double, 3>, 4>* out) {
+      if (auto ab = data.read(art))
+        if (auto a = parseArt(*ab))
+          if (!a->nodes.empty())
+            for (int k = 0; k < 4; ++k) (*out)[size_t(k)] = {double(a->nodes[0].debris[1][size_t(k)].pos.x), double(a->nodes[0].debris[1][size_t(k)].pos.y), double(a->nodes[0].debris[1][size_t(k)].pos.z)};
+    };
+    points("DRONE.ART", &s->droneFragPoints);
+    for (int r = 0; r < 10; ++r) points("RACER" + std::to_string(r) + ".ART", &s->fragPoints[size_t(r)]);
     for (int k = 0; k < 4; ++k) {
       char nm[32];
-      std::snprintf(nm, sizeof nm, "DRFRG%02d.SHP", k);
+      std::snprintf(nm, sizeof nm, "DRFRG%02d.SHP", 50 + k);
       addShape(nm, &s->droneFragMeshes[size_t(k)]);
       for (int r = 0; r < 10; ++r) {
-        std::snprintf(nm, sizeof nm, "R%dFRG%02d.SHP", r, k);
+        std::snprintf(nm, sizeof nm, "R%dFRG%02d.SHP", r, 50 + k);
         addShape(nm, &s->fragMeshes[size_t(r)][size_t(k)]);
       }
     }

@@ -666,6 +666,23 @@ void SoftwareRenderer::drawLineWorld(const double a[3], const double b[3], uint3
   curItem_ = saved;
 }
 
+void SoftwareRenderer::drawStarWorld(const double w[3], double radius, double angle, uint32_t color) {
+  float sx, sy, z;
+  if (!projectToScreen(w, &sx, &sy, &z)) return;
+  const float dx = float(w[0] - cam_.pos[0]), dy = float(w[1] - cam_.pos[1]), dz = float(w[2] - cam_.pos[2]);
+  const P3 c{dx * right_[0] + dy * right_[1] + dz * right_[2], dx * up_[0] + dy * up_[1] + dz * up_[2], dx * fwd_[0] + dy * fwd_[1] + dz * fwd_[2]};
+  const int saved = curItem_;
+  curItem_ = -1;
+  if (radius / z * focal_ <= 2.0) {
+    drawLine3D(c, P3{c.x + 0.8f * z / focal_, c.y, c.z}, color);
+  } else {
+    const float r = float(radius), ca = float(std::cos(angle * 6.283185307179586)), sa = float(std::sin(angle * 6.283185307179586));
+    drawLine3D(P3{c.x - r * ca, c.y - r * sa, c.z}, P3{c.x + r * ca, c.y + r * sa, c.z}, color);
+    drawLine3D(P3{c.x + r * sa, c.y - r * ca, c.z}, P3{c.x - r * sa, c.y + r * ca, c.z}, color);
+  }
+  curItem_ = saved;
+}
+
 void SoftwareRenderer::drawRectScreen(int x0, int y0, int x1, int y1, uint32_t color) {
   auto put = [&](int x, int y) { if (x >= 0 && x < w_ && y >= 0 && y < h_) color_[size_t(y) * size_t(w_) + size_t(x)] = color; };
   for (int x = x0; x <= x1; ++x) { put(x, y0); put(x, y1); }

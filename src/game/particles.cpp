@@ -27,7 +27,7 @@ double Puff::size() const {
 double Fireball::currentSize() const { return size * 0.25 + size * 0.75 * std::clamp(age / total, 0.0, 1.0); }
 
 void ParticleSystem::reset(uint32_t seed) {
-  puffs.clear(); emitters.clear(); fireballs.clear(); pieces.clear();
+  puffs.clear(); emitters.clear(); fireballs.clear(); pieces.clear(); sparks.clear();
   rng_ = seed ? seed : 1;
   nextId_ = 1;
 }
@@ -62,11 +62,15 @@ void ParticleSystem::fireball(const double pos[3], double size, double total) {
 
 void ParticleSystem::debris(const double pos[3], int count, int set) {
   count = std::min(count, 4);  // 0x4F804: cmp ax, 4
-  for (int i = 0; i < count; ++i) {
+  for (int i = 0; i < count; ++i) debrisPiece(pos, set, int(rnd() % 4));
+}
+
+void ParticleSystem::debrisPiece(const double pos[3], int set, int piece) {
+  {
     DebrisPiece d;
     for (int k = 0; k < 3; ++k) d.pos[k] = pos[k];
     d.set = set;
-    d.piece = int(rnd() % 4);
+    d.piece = piece;
     // direction: the unit vector from the craft to the spawn point plus a jitter of up to +-2.0 per axis dominates, so the pieces fly in random directions
     double v[3];
     double l = 0;
@@ -79,6 +83,37 @@ void ParticleSystem::debris(const double pos[3], int count, int set) {
     for (int k = 0; k < 3; ++k) d.rate[k] = (0x3000 + frand() * 0x1000) / 65536.0 * (rnd() & 1 ? 1.0 : -1.0);  // 0x4F96C..0x4F99C (words 0x3000..0x3FFF per second)
     pieces.push_back(d);
   }
+}
+
+void ParticleSystem::scrape(const double pos[3], const double n[3], double shipSpeed, bool water, int surfaceMaterial) {
+  const double kTurn = 6.283185307179586;
+  // an orthonormal frame around the surface normal
+  const double ref[3] = {std::fabs(n[0]) < 0.9 ? 1.0 : 0.0, std::fabs(n[0]) < 0.9 ? 0.0 : 1.0, 0.0};
+  double u[3] = {n[1] * ref[2] - n[2] * ref[1], n[2] * ref[0] - n[0] * ref[2], n[0] * ref[1] - n[1] * ref[0]};
+  const double ul = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+  for (double& c : u) c /= ul > 1e-9 ? ul : 1.0;
+  const double v[3] = {n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]};
+  double origin[3];
+  for (int k = 0; k < 3; ++k) origin[k] = pos[k] + n[k] * 0x1e8;  // 0x4FDF0: 488 units off the wall
+  const double speed = std::max(0.0, shipSpeed) + 0x45d3;      // 0x4FE4D: the ship's speed plus 17875
+  struct Batch { int count; int kind; double size; int material; };
+  const Batch batches[2] = {{water ? 6 : 32, water ? 1 : 0, water ? 1.0 : 976.0, -1}, {6, 2, 244.0, surfaceMaterial}};  // 0x4FEBE / 0x4FEDF, 0x5003F
+  for (const Batch& b : batches)
+    for (int i = 0; i < b.count; ++i) {
+      Spark s;
+      s.kind = b.kind;
+      s.material = b.material;
+      s.life = (1500.0 + double(rnd() >> 2 & 0x3FFF) * 1500.0 / 65536.0) * 0.001;  // 0x28038: 0x5DC + 0..375 ms
+      s.size = b.size * (0x2000 + double(rnd() & 0x1FFF)) / 0x4000;               // 0x28050: 0.5 .. 1.0 of the base size
+      s.angle = frand();
+      s.rate = (0x2000 + double(rnd() & 0x1FFF)) / 65536.0;                       // 0x2807F: turns per second
+      const double a = (frand() * 2 - 1) * (0xa00 / 65536.0) * kTurn, c = (frand() * 2 - 1) * (0xa00 / 65536.0) * kTurn;  // 0x280B5 / 0x280CA: +-14 degrees about two axes
+      for (int k = 0; k < 3; ++k) {
+        s.pos[k] = origin[k];
+        s.vel[k] = (n[k] * std::cos(a) * std::cos(c) + u[k] * std::sin(a) + v[k] * std::cos(a) * std::sin(c)) * speed;
+      }
+      sparks.push_back(s);
+    }
 }
 
 void ParticleSystem::spawnPuff(Emitter& e) {
@@ -152,6 +187,18 @@ void ParticleSystem::step(double dt) {
     }
   }
   fireballs.erase(std::remove_if(fireballs.begin(), fireballs.end(), [](const Fireball& f) { return !f.alive; }), fireballs.end());
+
+  for (Spark& s : sparks) {  // 0x50080: gravity, a step, vanishing when the track is touched
+    s.age += dt;
+    if (s.age > s.life) { s.alive = false; continue; }
+    s.angle += s.rate * dt;
+    s.vel[1] = std::max(s.vel[1] - kGravity * dt, -double(0x6fb8));
+    double np[3];
+    for (int k = 0; k < 3; ++k) np[k] = s.pos[k] + s.vel[k] * dt;
+    if (blocked && blocked(s.pos, np)) { s.alive = false; continue; }
+    for (int k = 0; k < 3; ++k) s.pos[k] = np[k];
+  }
+  sparks.erase(std::remove_if(sparks.begin(), sparks.end(), [](const Spark& s) { return !s.alive; }), sparks.end());
 
   for (DebrisPiece& d : pieces) {
     d.age += dt;

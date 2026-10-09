@@ -220,6 +220,13 @@ std::optional<Art> parseArt(const Bytes& b) {
       std::string s2 = trimmed(b.data() + it.off + 0x8c + 14 * size_t(i), 12);
       if (!s2.empty()) n.shadowShapes.push_back(s2);
     }
+    for (int l = 0; l < 2; ++l)
+      for (int k = 0; k < 4; ++k) {
+        const size_t o = it.off + (l ? 0x164 : 0xFC) + 26 * size_t(k);
+        if (o + 26 > b.size()) continue;
+        n.debris[l][k].shape = trimmed(b.data() + o, 14);
+        n.debris[l][k].pos = {r.s32(o + 14), r.s32(o + 18), r.s32(o + 22)};
+      }
     uint32_t rc = r.u32(it.off + 0x1cc);
     for (uint32_t i = 0; i < rc && i < 16; ++i) {
       size_t o = it.off + 0x1d0 + 16 * size_t(i);

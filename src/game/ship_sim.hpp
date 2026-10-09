@@ -56,6 +56,9 @@ struct ShipState {
   // SCRAPE2 above 0x22E98 u/s else SCRAPE1, ship contact EXPLOSN, wreck EXPLOSN)
   int sfxWallLight = 0, sfxWallHard = 0, sfxContact = 0, sfxWreck = 0, sfxWater = 0;
   int sfxOverDamage = 0;        // damage beyond 100 (0x52107..0x52189: explosion effect, the human pilot speaks cue 2/3)
+  struct WallFx { double n[3], pos[3]; int material; bool water; double speed; };  // one wall contact (message 0x107): sparks / droplets are made from it
+  WallFx wallFx[4];
+  int nWallFx = 0;
   bool hitWater = false;        // the surface of the current wall hit is a WATE* material (set by moveShip)
   int hits = 0;                 // number of wall/floor hits so far (diagnostics)
   double steerAxis = 0;         // ramped steering axis -1..1 (keyboard behaviour of the original)

@@ -90,6 +90,9 @@ struct Scene {
   std::array<PanelDetail, 32> panelDetails;
   int sdOrangeMaterial = -1, sdFloorLightMaterial = -1, sdBlueMaterial = -1, sdRoadLineMaterial = -1;
   int sdCageMaterial = -1;
+  int sparkMaterial = -1, splashMaterial = -1;  // "Spark" / "Splash" (RaceBangInstall 0x4FD0D): the ramps of the wall sparks and water droplets
+  std::array<std::array<std::array<double, 3>, 4>, 10> fragPoints{};  // ART debris list 1 positions (where the pieces start)
+  std::array<std::array<double, 3>, 4> droneFragPoints{};
   int sdYellowMaterial = -1;  // "SDYellow" (colour of the floor border polygons)  // read from the user's executable
   std::vector<Billboard> billboards;
   Mesh track;                         // world coordinates minus `origin`
@@ -98,8 +101,8 @@ struct Scene {
   // Projectile models: AIRMINE, AMBLER, BOMBER, FRAG, HYPER, SCRAMBLE, SEEKER (the .SHP names the launchers load at 0x5BF5E),
   // scaled like the ships. Index = Scene::weaponMeshIndex(weapon id).
   std::array<Mesh, 7> weaponMeshes;
-  std::array<std::array<Mesh, 4>, 10> fragMeshes;  // R<n>FRG00..03: the pieces that break off a craft (RaceBang 0x4F7DE)
-  std::array<Mesh, 4> droneFragMeshes;             // DRFRG00..03
+  std::array<std::array<Mesh, 4>, 10> fragMeshes;  // R<n>FRG50..53: the pieces that break off a craft when it is hit (RaceBang 0x4F7DE, ART debris list 1)
+  std::array<Mesh, 4> droneFragMeshes;             // DRFRG50..53
   Mesh droneMesh;                     // DRONE.SHP: the little flying craft that appear during a race (0x4A240)
   float droneRadius = 3000;
   std::array<float, 7> weaponMeshRadius{};  // half the largest extent in unscaled model units (collision radius)

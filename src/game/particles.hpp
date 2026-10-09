@@ -61,6 +61,16 @@ struct Fireball {
   bool fading() const { return age >= total * 0.75; }
 };
 
+struct Spark {  // 0x27F72: a star of two crossing lines (or a single pixel when it is tiny), flying on a parabola
+  double pos[3] = {0, 0, 0}, vel[3] = {0, 0, 0};
+  double age = 0, life = 1.6;   // seconds
+  double size = 488;            // half length of the lines in world units
+  double angle = 0, rate = 0;   // turns, turns / s
+  int kind = 0;                 // 0 wall spark (SPARK ramp), 1 water droplet (SPLASH ramp), 2 chip in the colour of the surface hit
+  int material = -1;            // Scene::materials index whose ramp gives the colour (-1: the viewer picks by kind)
+  bool alive = true;
+};
+
 struct DebrisPiece {
   double pos[3] = {0, 0, 0}, vel[3] = {0, 0, 0};
   double ang[3] = {0, 0, 0}, rate[3] = {0, 0, 0};  // turns, turns / s
@@ -77,14 +87,19 @@ class ParticleSystem {
   Emitter* emitter(int id);
   void detach(int id);                                       // the owner is gone: the emitter stays where it is until its life ends
   void fireball(const double pos[3], double size = 9760, double total = 3.0);
-  void debris(const double pos[3], int count, int set);      // count is limited to 4
+  void debris(const double pos[3], int count, int set);      // count is limited to 4; pieces start at `pos`
+  void debrisPiece(const double pos[3], int set, int piece); // one piece (shape R<set>FRG5<piece>) at pos
+  // A ship hit a wall (message 0x107, RaceBang 0x4FD93 + 0x4FF2E): 32 sparks (6 water droplets) in a cone around the surface normal n plus 6 chips in the colour of the surface.
+  void scrape(const double pos[3], const double n[3], double shipSpeed, bool water, int surfaceMaterial);
   void step(double dt);
   double rand01() { return frand(); }
+  unsigned irand(unsigned n) { return rnd() % n; }
 
   std::vector<Puff> puffs;
   std::vector<Emitter> emitters;
   std::vector<Fireball> fireballs;
   std::vector<DebrisPiece> pieces;
+  std::vector<Spark> sparks;
   std::function<bool(const double* from, const double* to)> blocked;  // true when the segment touches the track (debris vanish)
 
  private:

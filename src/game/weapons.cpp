@@ -173,6 +173,10 @@ std::array<ShipRefPoints, 10> loadShipRefPoints(const GameData& data) {
                   : r.tag == "head" ? out[size_t(i)].head : r.tag == "smok" ? out[size_t(i)].smok : nullptr;
       if (dst) { dst[0] = r.pos.x; dst[1] = r.pos.y; dst[2] = r.pos.z; }
     }
+    for (int k = 0; k < 4; ++k) {
+      const Vec3i& q = art->nodes[0].debris[1][k].pos;
+      out[size_t(i)].frag[k][0] = q.x; out[size_t(i)].frag[k][1] = q.y; out[size_t(i)].frag[k][2] = q.z;
+    }
   }
   return out;
 }
@@ -321,7 +325,16 @@ void CombatWorld::trailFor(const Projectile& p) {  // 0x4F79E effect 0, life 0x1
 
 void CombatWorld::smokeBurst(const double* pos, double seconds) { particles.addEmitter(1, pos, seconds, 0x6fb8); }  // 0x4F7BC: bp = 0x6FB8
 
-void CombatWorld::shipDebris(const double* pos, int victim, int count) { particles.debris(pos, count, std::clamp(victim, 0, 9)); }
+void CombatWorld::shipDebris(const CombatContext& ctx, int victim, int count) {
+  victim = std::clamp(victim, 0, 9);
+  if (victim >= int(ctx.ships.size()) || !ctx.ships[size_t(victim)]) return;
+  for (int i = 0; i < std::min(count, 4); ++i) {  // 0x4F7DE: each piece starts at a random debris point of the craft (0x12183)
+    const int k = int(particles.irand(4));
+    double pos[3];
+    world(*ctx.ships[size_t(victim)], refs_[size_t(victim)].frag[k], pos);
+    particles.debrisPiece(pos, victim, k);
+  }
+}
 
 void CombatWorld::damageSmoke(const CombatContext& ctx, int ship, double damageA) {
   if (damageA < 9.0 || ship < 0 || ship >= 10 || !ctx.ships[size_t(ship)]) return;
@@ -713,7 +726,7 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
       hitLog.push_back({p.id, j, {p.pos[0], p.pos[1], p.pos[2]}});
       particles.fireball(p.pos);  // 0x4F61B (0x5D33A / 0x5D453): size 0x2620, 3 s
       smokeBurst(p.pos, 2.0);     // 0x5D32B: 2 s
-      shipDebris(p.pos, j, 4);
+      shipDebris(ctx, j, 4);
       p.alive = false;
       return;
     }
@@ -797,7 +810,7 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
   if (bestShip >= 0 && bestT <= wallT) {
     for (int k = 0; k < 3; ++k) p.pos[k] += (np[k] - p.pos[k]) * std::min(bestT, 1.0);
     if (beam) beamHit(ctx, p, bestShip);
-    else { hitShip(ctx, p, bestShip); shipDebris(p.pos, bestShip, 4); }  // 0x50853: RaceBang 5 -> 4 pieces
+    else { hitShip(ctx, p, bestShip); shipDebris(ctx, bestShip, 4); }  // 0x50853: RaceBang 5 -> 4 pieces
     hitLog.push_back({p.id, bestShip, {p.pos[0], p.pos[1], p.pos[2]}});
     if (!p.remote) ++combat[size_t(p.owner)].hitsDealt;
     p.alive = false;
@@ -855,7 +868,7 @@ void CombatWorld::beamHit(const CombatContext& ctx, const Projectile& p, int vic
   const double mul = difficulty == 2 ? 4.0 : 2.0;  // 0x5C0F9: the table value is shifted left by 1 (by 2 at the hardest level)
   shipDamage(v, w.damageA * mul, w.damageB * mul);
   damageSmoke(ctx, victim, w.damageA * mul);
-  if (particles.rand01() <= 0x7000 / 65536.0) shipDebris(vp, victim, 3);  // 0x50693: 44 % of the beam hits break off 3 pieces
+  if (particles.rand01() <= 0x7000 / 65536.0) shipDebris(ctx, victim, 3);  // 0x50693: 44 % of the beam hits break off 3 pieces
   emitFx(10, victim, vp);
   if (victim == ctx.humanShip) emitCue(ctx, victim, cues::underFire);
 }
@@ -928,7 +941,7 @@ void CombatWorld::remoteHit(const CombatContext& ctx, uint32_t id, int victim, c
   for (Projectile& p : projectiles) {
     if (p.id != id || !p.alive) continue;
     p.alive = false;
-    if (p.kind > kDisrupter) shipDebris(pos, victim, 4);
+    if (p.kind > kDisrupter) shipDebris(ctx, victim, 4);
     emitFx(hitFx(p.kind), victim, pos);
     if (!p.remote) {
       ++combat[size_t(p.owner)].hitsDealt;

@@ -310,6 +310,17 @@ void moveShip(ShipState& s, double dt, const Scene& scene, const ShipSimConfig& 
       ++s.hits;
       tr *= 1.0 - h.dist / l;
       s.hitWater = h.material >= 0 && size_t(h.material) < scene.materials.size() && scene.materials[size_t(h.material)].upperName.rfind("WATE", 0) == 0;
+      if (s.nWallFx < 4) {  // RaceSlotControl 0x50A64: RaceBang 0x4FD93 / 0x4FF2E at the contact point
+        ShipState::WallFx& w = s.wallFx[s.nWallFx++];
+        for (int i = 0; i < 3; ++i) w.n[i] = h.n[i];
+        const double sup = std::fabs(h.n[0] * s.m[0] + h.n[1] * s.m[1] + h.n[2] * s.m[2]) * std::max(std::fabs(s.boxLo[0]), std::fabs(s.boxHi[0])) +
+                           std::fabs(h.n[0] * s.m[3] + h.n[1] * s.m[4] + h.n[2] * s.m[5]) * std::max(std::fabs(s.boxLo[1]), std::fabs(s.boxHi[1])) +
+                           std::fabs(h.n[0] * s.m[6] + h.n[1] * s.m[7] + h.n[2] * s.m[8]) * std::max(std::fabs(s.boxLo[2]), std::fabs(s.boxHi[2]));
+        for (int i = 0; i < 3; ++i) w.pos[i] = np[i] - h.n[i] * sup;  // the point of the box nearest to the wall
+        w.material = h.material;
+        w.water = s.hitWater;
+        w.speed = speedNow;
+      }
       shipHitResponse(s, h.n, dir);  // message 0x107 on every contact event, as in CollideStep
     }
     if (insideNow && !shipBoxInsideTrack(scene, np, s.m, s.boxLo, s.boxHi)) {

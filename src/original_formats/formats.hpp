@@ -99,7 +99,12 @@ struct ArtRefPoint {
   std::string tag;  // e.g. "main","weap"
   Vec3i pos;
 };
+struct ArtDebris {  // node +0xFC (list 0: R<n>FRG00..03) and +0x164 (list 1: R<n>FRG50..53, the pieces RaceBang throws off on a hit): {char[14] shape, s32[3] position}
+  std::string shape;
+  Vec3i pos;
+};
 struct ArtNode {
+  ArtDebris debris[2][4];
   std::string tag;
   Vec3i offset;                         // relative to parent
   std::vector<std::string> shapes;      // up to 8 body/damage variants (first = intact body)

@@ -187,6 +187,7 @@ void ViewerApp::setupCombat() {
   resultCueTimer_ = -1;
   cyclePending_ = false;
   raceClock_ = 0;
+  for (int k = 0; k < 4; ++k) for (int c = 0; c < 3; ++c) combat_.droneFrag[k][c] = scene_->droneFragPoints[size_t(k)][size_t(c)];
   combat_.classicAi = std::getenv("SLIP_CLASSIC_AI") != nullptr;  // test / purist switch: the original's weapon logic
 }
 
@@ -209,6 +210,8 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
     at(110000, -20000, 5000, p); combat_.particles.debris(p, 4, 10);
     at(110000, 20000, 0, p); combat_.particles.addEmitter(3, p, 4.0);
     at(50000, 0, 6000, p); combat_.particles.addEmitter(0, p, 5.0);
+    at(45000, -12000, -3000, p); { const double n[3] = {r[0], r[1], r[2]}; combat_.scrapeEffects(p, n, 60000, false, -1); }  // sparks on a wall to the left
+    at(45000, 12000, -3000, p); { const double n[3] = {0, 1, 0}; combat_.scrapeEffects(p, n, 60000, true, -1); }  // water droplets
   }
   cc.raceTime = raceClock_;
   cc.drones = netplay_ || introMode_ ? nullptr : &drones_.targets;
@@ -287,6 +290,8 @@ void ViewerApp::drainSounds(const double listener[3]) {
     ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
     const bool own = driving_ && i == player_.ship;
     const double pos[3] = {s.x, s.y, s.z};
+    for (int k = 0; k < s.nWallFx; ++k) combat_.scrapeEffects(s.wallFx[k].pos, s.wallFx[k].n, s.wallFx[k].speed, s.wallFx[k].water, s.wallFx[k].material);
+    s.nWallFx = 0;
     for (; s.sfxWallLight > 0; --s.sfxWallLight) audio_.playFxAt(Fx::Scrape1, pos, listener, own);
     for (; s.sfxWallHard > 0; --s.sfxWallHard) audio_.playFxAt(Fx::Scrape2, pos, listener, own);
     for (; s.sfxWater > 0; --s.sfxWater) audio_.playFxAt(Fx::WaterHit, pos, listener, own);
@@ -1030,6 +1035,13 @@ void ViewerApp::drawParticles(const Scene& sc) {
   for (const Puff& p : ps.puffs) draw(p.fam, p.fading() ? 1 : 0, p.frame, p.pos, p.size());
   for (const Emitter& e : ps.emitters)  // the flame at the tail of a missile (the head puff shows the Fire list, 0x277D8)
     if (e.attached && effectDesc(e.type).flame) draw(PartFam::Fire, 0, int(animSeconds_ * 100) % 4, e.pos, effectDesc(e.type).s0 * 1.4);
+  for (const Spark& sp : ps.sparks) {  // the colour is the top of the material's ramp (0x281B0: end - 1)
+    int m = sp.material;
+    if (m < 0) m = sp.kind == 1 ? sc.splashMaterial : sc.sparkMaterial;
+    if (m < 0 || m >= int(sc.materials.size())) continue;
+    const int idx = std::clamp(int(sc.materials[size_t(m)].palEnd) - 1, 0, 255);
+    renderer_.drawStarWorld(sp.pos, sp.size, sp.angle, 0xff000000u | (sc.palette.rgba[size_t(idx)] & 0xffffffu));
+  }
   for (const Fireball& f : ps.fireballs) draw(PartFam::Expl, f.fading() ? 1 : 0, f.frame, f.pos, f.currentSize());
   for (const DebrisPiece& d : ps.pieces) {
     const Mesh& m = d.set >= 10 ? sc.droneFragMeshes[size_t(d.piece)] : sc.fragMeshes[size_t(d.set)][size_t(d.piece)];

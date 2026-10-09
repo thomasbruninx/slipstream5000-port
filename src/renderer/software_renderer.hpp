@@ -79,6 +79,8 @@ class SoftwareRenderer {
   bool projectToScreen(const double world[3], float* x, float* y, float* z) const;
   void drawSpriteWorld(const Sprite& spr, const Palette& pal, const double world[3], double worldWidth, int transparent);
   void drawLineWorld(const double a[3], const double b[3], uint32_t color);
+  // A spark (0x28253): two crossing lines of half length `radius` turned by `angle` (turns), facing the camera; one pixel when it projects to 2 pixels or less.
+  void drawStarWorld(const double w[3], double radius, double angle, uint32_t color);
   void drawRectScreen(int x0, int y0, int x1, int y1, uint32_t color);
   // Per-piece lighting (0x39427): the diffuse level and the ambient of the lighting law are multiplied by the light of the piece the
   // polygon belongs to (TRD piece +0x20, 0..1; 0x4000 = full) while that piece is drawn. Indexed like Scene::pieceBoxes; empty = 1.

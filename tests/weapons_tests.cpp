@@ -67,6 +67,14 @@ static void particleTests() {
   }
   ps.step(11.0);
   CHECK(ps.pieces.empty());  // gone after 10 s
+  const double n[3] = {0, 1, 0};
+  ps.scrape(pos, n, 100000, false, 7);
+  CHECK(ps.sparks.size() == 38);  // 32 sparks + 6 chips of the surface colour
+  for (const Spark& s : ps.sparks) CHECK(s.vel[1] > 0 && s.life >= 1.5 && s.life <= 1.88);
+  ps.scrape(pos, n, 100000, true, 7);
+  CHECK(ps.sparks.size() == 38 + 12);  // 6 water droplets + 6 chips
+  ps.step(2.0);
+  CHECK(ps.sparks.empty());
 }
 
 int main() {
