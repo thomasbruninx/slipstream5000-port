@@ -105,6 +105,7 @@ class ViewerApp {
   bool paused() const { return pause_.isOpen(); }
   void openPause();
   void menuKey(PauseMenu::Key k);
+  void pauseMouse(double nx, double ny, int button);  // window position 0..1; button 0 = hover, 1 = left click (select), 2 = right click (back)
   bool wantsQuit() const { return quit_; }
   // multiplayer: lobby UI (Multiplayer entry, Host / Join / browse / lobby screens) and the race session
   bool netActive() const { return session_ != nullptr; }

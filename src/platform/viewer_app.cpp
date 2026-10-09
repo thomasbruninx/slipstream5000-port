@@ -1200,6 +1200,15 @@ void ViewerApp::menuKey(PauseMenu::Key k) {
   else if (act == PauseMenu::Action::ExitGame) quit_ = true;
 }
 
+void ViewerApp::pauseMouse(double nx, double ny, int button) {
+  if (!pause_.isOpen()) return;
+  const int i = pause_.itemAt(int(nx * 320.0), int(ny * 200.0), settings_);  // the HUD is stretched over the whole window
+  if (button == 2) { menuKey(PauseMenu::Key::Back); return; }
+  if (i < 0) return;
+  pause_.setSel(i);
+  if (button == 1) menuKey(PauseMenu::Key::Select);
+}
+
 // Track map (RaceCameraSetup 0x3AF50, CONFIRMED structure): an orthographic camera looking straight down from above the ship, turned with the ship's heading
 // (yaw only), so the ship sits at a fixed screen point (per-track centre, table 0x55680) with its heading pointing up; scale = (table 0x556A8 >> 8) world units per
 // pixel. Drawn: every path node's links (next, alternative) as green lines (colour 0xFC), the lap line node as a white 3x3 square (0xFF), the other ships as black

@@ -102,6 +102,20 @@ PauseMenu::Action PauseMenu::key(Key k, GameSettings* s) {
 // The original's pause popup (0x5A34C / 0x5A3CB): four bevelled buttons directly over the frozen race at x 101..220, y 46..60 / 64..78 / 83..96 / 100..114
 // (table 0x5401C), light edges 0x1C (top, left) and dark 0x0C (bottom, right), fill 0x14 (0xFD for the selected one), the PAUSED.ST0 text in the
 // default font SMALL.FNT, colour 0xFF, centred. The configuration pages are the port's own (the original opens a full screen menu), drawn the same way.
+int PauseMenu::itemAt(int x, int y, const GameSettings& s) const {
+  if (!open_) return -1;
+  const auto list = items(s);
+  const int x0 = 101, x1 = 220, pitch = 18, h = 15;
+  const int y0 = list.size() > 5 ? 34 : 46;
+  if (x < x0 || x > x1) return -1;
+  for (size_t i = 0; i < list.size(); ++i) {
+    static const int kY[4] = {46, 64, 83, 100};
+    const int yy = list.size() <= 4 ? kY[i] : y0 + int(i) * pitch;
+    if (y >= yy && y < yy + h) return int(i);
+  }
+  return -1;
+}
+
 void PauseMenu::draw(const HudCanvas& c, const HudAssets& a, const GameSettings& s) const {
   if (!open_) return;
   const auto list = items(s);

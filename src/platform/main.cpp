@@ -328,6 +328,7 @@ int main(int argc, char** argv) {
         case SDL_EVENT_MOUSE_MOTION:
           mouseDX += e.motion.xrel; mouseDY += e.motion.yrel;
           if (app.frontActive()) { int ww = 1, wh = 1; SDL_GetWindowSize(window, &ww, &wh); app.frontMouse(e.motion.x / ww, e.motion.y / wh, false); }
+          else if (app.paused()) { int ww = 1, wh = 1; SDL_GetWindowSize(window, &ww, &wh); app.pauseMouse(e.motion.x / ww, e.motion.y / wh, 0); }
           break;
         case SDL_EVENT_GAMEPAD_ADDED: pads.open(e.gdevice.which); break;
         case SDL_EVENT_GAMEPAD_REMOVED: pads.close(e.gdevice.which); break;
@@ -364,6 +365,7 @@ int main(int argc, char** argv) {
         }
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
           if (app.frontActive() && e.button.button == SDL_BUTTON_LEFT) { int ww = 1, wh = 1; SDL_GetWindowSize(window, &ww, &wh); app.frontMouse(e.button.x / ww, e.button.y / wh, true); }
+          else if (app.paused() && (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT)) { int ww = 1, wh = 1; SDL_GetWindowSize(window, &ww, &wh); app.pauseMouse(e.button.x / ww, e.button.y / wh, e.button.button == SDL_BUTTON_LEFT ? 1 : 2); }
           else if (app.introActive() && e.button.button == SDL_BUTTON_LEFT) app.endFlyThrough(true);
           break;
         case SDL_EVENT_TEXT_INPUT:
@@ -499,7 +501,7 @@ int main(int argc, char** argv) {
     if (app.wantsQuit()) running = false;
     {
       static bool relative = true;
-      const bool wantRelative = !app.frontActive();
+      const bool wantRelative = !app.frontActive() && !app.paused() && !app.netUiOpen();
       if (wantRelative != relative) { SDL_SetWindowRelativeMouseMode(window, wantRelative); relative = wantRelative; }
     }
     uint64_t now = SDL_GetPerformanceCounter();

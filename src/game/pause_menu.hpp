@@ -38,6 +38,10 @@ class PauseMenu {
   // Returns what the front end must do; edits `s` for the configuration pages (the caller applies the changes).
   Action key(Key k, GameSettings* s);
   void draw(const HudCanvas& c, const HudAssets& a, const GameSettings& s) const;
+  // Mouse: the row under a point of the 320x200 screen (-1 = none); hovering selects it.
+  int itemAt(int x, int y, const GameSettings& s) const;
+  void setSel(int i) { sel_ = i; }
+  int sel() const { return sel_; }
 
  private:
   enum class Page { Main, Config, Sound, General, Difficulty, Detail, Controls };
