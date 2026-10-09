@@ -356,3 +356,8 @@ Open question: the speed bonus table `0x50252` and the AI tier from the start sl
 * Portal walk: neighbouring cell boxes overlap, so the camera is often inside the next piece before it crosses the portal plane. Such a neighbour is entered with the unchanged window; a portal polygon that is at or behind the near plane no longer ends the walk.
 * Debug: `SLIP_CHECKPORTAL=<prefix>` (with `--drive --sim`) compares every 0.05 s the frame with a full draw and saves differing frames (`SLIP_CHECKVIS=1`: reference with the visibility classes off); `SLIP_CELLLOG`, `SLIP_HINTLOG`, `SLIP_PORTAL_LOG` print the cell / portal decisions.
   Differences after a crash are false alarms (screen shake changes between the two renders).
+
+## Session: lamp templates (ceiling lights, floor lights)
+* The detail templates (`PanelDetail::mid`) define points as midpoints of two other points, and a point may reference a point listed *after* it (the chase / lamp templates do). The port computed them in list order, so those lamp polygons got zero-vertices and showed up partial or as black bars (Canyon ceilings). `detailPoints` now evaluates points on demand.
+* Debug: `SLIP_DETAILLOG` prints the roof / chase polygons and lamp vertices.
+* Lamps / lane colours (detail polygons drawn with a fixed colour index) are painted over the polygon they belong to without a depth test against it (`polyId_` / `curPoly_` in `rasterTri`). The base polygon is a fan of a bent quad (tunnel corners), so the lamp surface can lie behind it; with a plain depth test only the lamp part in front of the base survived (triangles, partial lamps).

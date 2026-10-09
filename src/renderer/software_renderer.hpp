@@ -137,6 +137,8 @@ class SoftwareRenderer {
   int recvId_ = 0;                 // id written by rasterTri for the polygon being drawn
   int shadowRecv_ = 0;             // >0: rasterTri paints only pixels owned by this receiver, without depth test
   void drawShadowsOn(const Scene& scene, const MeshPoly& rp, int baseId, int sub, int colorIdx);
+  std::vector<uint32_t> polyId_;   // id of the polygon whose base fill last wrote the pixel (detail polygons are painted over their own base without a depth test)
+  uint32_t curPoly_ = 0, polyCounter_ = 0;
   std::vector<int32_t> itemBuf_;   // painter's mode: id of the item that last wrote the pixel
   int curItem_ = -1;
   std::vector<uint8_t> backdrop_;  // per pixel: 0 track, 1 scenery, 2 backdrop scenery

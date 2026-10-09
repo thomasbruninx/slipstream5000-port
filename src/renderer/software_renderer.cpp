@@ -1,3 +1,4 @@
+#include <functional>
 #include <cstdio>
 #include <cstdlib>
 #include "renderer/software_renderer.hpp"
@@ -14,11 +15,13 @@ void SoftwareRenderer::resize(int w, int h) {
   depth_.assign(size_t(w) * size_t(h), 0.0f);
   backdrop_.assign(size_t(w) * size_t(h), 0);
   itemBuf_.assign(size_t(w) * size_t(h), -1);
+  polyId_.assign(size_t(w) * size_t(h), 0);
   recvBuf_.assign(size_t(w) * size_t(h), 0);
 }
 
 void SoftwareRenderer::beginFrame(const Camera& cam, uint32_t sky, uint32_t ground) {
   cam_ = cam;
+  if (const char* nv = std::getenv("SLIP_NEAR")) cam_.nearPlane = float(std::atof(nv));  // debug
   stats_ = {};
   float cy = std::cos(cam.yaw), sy = std::sin(cam.yaw), cp = std::cos(cam.pitch), sp = std::sin(cam.pitch);
   fwd_[0] = sy * cp; fwd_[1] = sp; fwd_[2] = cy * cp;
@@ -60,6 +63,8 @@ void SoftwareRenderer::beginFrame(const Camera& cam, uint32_t sky, uint32_t grou
   std::fill(depth_.begin(), depth_.end(), 0.0f);
   std::fill(backdrop_.begin(), backdrop_.end(), uint8_t(0));
   std::fill(itemBuf_.begin(), itemBuf_.end(), -1);
+  std::fill(polyId_.begin(), polyId_.end(), 0u);
+  polyCounter_ = 0;
   std::fill(recvBuf_.begin(), recvBuf_.end(), 0);
 }
 
@@ -201,7 +206,12 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
     }
     if (clipped.size() < 3) continue;
     stats_.polysDrawn++;
+    curPoly_ = ++polyCounter_;
     const bool detailed = p.detail && mat && !p.hasUV && scene.panelDetails[p.detail].valid;
+    if (std::getenv("SLIP_DETAILLOG") && mat && mat->name == "TrackRoof1") {
+      float nr = 1e30f; for (uint16_t k = 0; k < p.count; ++k) nr = std::min(nr, tv[p.first + k].z);
+      std::fprintf(stderr, "roof piece %d detail %d count %d nBase %d valid %d hasUV %d nearest %.0f scenery %d\n", int(p.piece), int(p.detail), int(p.count), p.detail ? scene.panelDetails[p.detail].nBase : -1, p.detail ? int(scene.panelDetails[p.detail].valid) : -1, int(p.hasUV), double(nr), int(p.scenery));
+    }
     const size_t polyIdx = only ? size_t((*only)[pi_]) : pi_;
     const bool receiver = shadows && !shadowCasters.empty() && p.piece >= 0 && (p.pflags & 2) && !p.scenery;
     const int baseId = receiver ? int((polyIdx + 1) << 2) : 0;
@@ -280,7 +290,10 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
         // cover it (near-ties and slight intrusions of building volumes into tunnel walls resolve to the road);
         // backdrop scenery never covers road. Among equal layers a later-drawn near-tie wins (coplanar decals).
         const float cur = depth_[o];
-        if (curItem_ >= 0) {
+        // lamps / lane colours are painted over the polygon they belong to whatever its (bent) surface does, as the original has no depth test between them
+        const bool overOwnBase = forceIdx >= 0 && polyId_[o] == curPoly_;
+        if (overOwnBase) {
+        } else if (curItem_ >= 0) {
           if (itemBuf_[o] == curItem_ && z < cur * (1.0f - 2e-5f)) continue;
         } else {
           static const bool pureDepth = getenv("SLIP_PUREDEPTH") != nullptr;
@@ -315,6 +328,7 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
         depth_[o] = z;
         backdrop_[o] = layer;
         itemBuf_[o] = curItem_;
+        if (forceIdx < 0) polyId_[o] = curPoly_;
         recvBuf_[o] = recvId_;
         color_[o] = col;
       }
@@ -562,9 +576,17 @@ std::vector<SoftwareRenderer::VV> SoftwareRenderer::detailPoints(const PanelDeta
     for (uint16_t k = 0; k < p.count; ++k) nearest = std::min(nearest, tv[p.first + k].z);
     screenMid = nearest >= 683200.0f;  // 0xA6CC0: the far branch of 0x3F3C4 interpolates in 2D
   }
-  for (size_t k = 0; k < pts.size(); ++k) {
-    if (int(k) < d.nBase) { pts[k] = tv[p.first + k]; continue; }
-    const VV &a = pts[d.mid[k][0] % pts.size()], &b = pts[d.mid[k][1] % pts.size()];
+  // a point is the midpoint of two others, which may be listed after it (the lamp templates reference later points): evaluate on demand
+  std::vector<uint8_t> state(pts.size(), 0);  // 0 = not computed, 1 = in progress, 2 = done
+  std::function<void(size_t)> eval = [&](size_t k) {
+    if (state[k] == 2) return;
+    if (int(k) < d.nBase) { pts[k] = tv[p.first + k]; state[k] = 2; return; }
+    if (state[k] == 1) { if (std::getenv("SLIP_DETAILLOG")) std::fprintf(stderr, "template cycle at point %zu\n", k); return; }  // cycle: leave the placeholder
+    state[k] = 1;
+    const size_t ia = d.mid[k][0] % pts.size(), ib = d.mid[k][1] % pts.size();
+    eval(ia);
+    eval(ib);
+    const VV &a = pts[ia], &b = pts[ib];
     if (screenMid) {
       const float ax = a.x / a.z, ay = a.y / a.z, bx = b.x / b.z, by = b.y / b.z;
       const float z = (a.z + b.z) * 0.5f;
@@ -572,13 +594,16 @@ std::vector<SoftwareRenderer::VV> SoftwareRenderer::detailPoints(const PanelDeta
     } else {
       pts[k] = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f, 0, 0};
     }
-  }
+    state[k] = 2;
+  };
+  for (size_t k = 0; k < pts.size(); ++k) eval(k);
   return pts;
 }
 
 void SoftwareRenderer::fillIdxPoly(const Scene& scene, const SurfaceMaterial* mat, const std::vector<VV>& pts, const std::vector<uint16_t>& idx, int colorIdx) {
   std::vector<VV> poly, cl;
   for (uint16_t i : idx) poly.push_back(pts[i % pts.size()]);
+  if (std::getenv("SLIP_DETAILLOG")) { std::fprintf(stderr, "  lamp col %d:", colorIdx); for (const VV& v : poly) std::fprintf(stderr, " (%.0f %.0f z=%.0f)", double(v.x), double(v.y), double(v.z)); std::fprintf(stderr, "\n"); }
   for (size_t i = 0; i < poly.size(); ++i) {
     const VV &a = poly[i], &b = poly[(i + 1) % poly.size()];
     const bool ain = a.z >= cam_.nearPlane, bin = b.z >= cam_.nearPlane;
@@ -677,6 +702,7 @@ void SoftwareRenderer::drawChase(const Scene& scene, const MeshPoly& p, const st
   const PanelDetail& d = scene.panelDetails[p.detail];
   float nearest = 1e30f;
   for (uint16_t k = 0; k < p.count; ++k) nearest = std::min(nearest, tv[p.first + k].z);
+  if (std::getenv("SLIP_DETAILLOG")) std::fprintf(stderr, "chase piece %d kind %d count %d nBase %d nearest %.0f gate %d mat %s\n", int(p.piece), int(d.kind), int(p.count), d.nBase, double(nearest), d.gate, mat ? mat->name.c_str() : "-");
   if (int(p.count) != d.nBase || nearest > float(d.gate)) return;
   const std::vector<VV> pts = detailPoints(d, tv, p, d.kind != PanelKind::Refuel);
   const uint32_t t = animTimer;
