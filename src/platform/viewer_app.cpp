@@ -863,7 +863,10 @@ void ViewerApp::drawRearMonitor() {
   const double* m = player_.m;
   double fwd[3] = {-m[6], -m[7], -m[8]};
   const double* h = refPoints_[size_t(player_.ship)].head;
-  for (int k = 0; k < 3; ++k) cam_.pos[k] = (&player_.x)[k] + m[k] * h[0] + m[3 + k] * h[1] + m[6 + k] * h[2];
+  // from the cockpit the monitor looks backwards from the head point; in the third person views (the ship is drawn) it sits just behind the tail so that the tail does not block the view
+  double eye[3] = {h[0], h[1], h[2]};
+  if (view_ != 0) eye[2] = std::min(eye[2], double(player_.boxLo[2]) - 1500.0);
+  for (int k = 0; k < 3; ++k) cam_.pos[k] = (&player_.x)[k] + m[k] * eye[0] + m[3 + k] * eye[1] + m[6 + k] * eye[2];
   cam_.yaw = float(std::atan2(fwd[0], fwd[2]));
   cam_.pitch = float(std::asin(std::clamp(fwd[1], -1.0, 1.0)));
   {
