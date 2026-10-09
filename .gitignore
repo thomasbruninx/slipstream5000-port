@@ -3,3 +3,4 @@ dist/
 .DS_Store
 build-linux/
 build-win64/
+build-win64-sysroot/

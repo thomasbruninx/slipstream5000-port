@@ -91,7 +91,8 @@ endif()
 add_compile_options($<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall> $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wextra>)
 find_package(PkgConfig QUIET)
 set(SLIP_FLUIDSYNTH_FOUND OFF)
-if(PkgConfig_FOUND AND NOT CMAKE_CROSSCOMPILING)  # a cross build must not pick up the host's libraries
+option(SLIP_PKGCONFIG_CROSS "cross build: use pkg-config (PKG_CONFIG_LIBDIR must point at the target libraries, see scripts/build_windows_cross.sh)" OFF)
+if(PkgConfig_FOUND AND (NOT CMAKE_CROSSCOMPILING OR SLIP_PKGCONFIG_CROSS))  # a cross build must not pick up the host's libraries
   pkg_check_modules(FLUIDSYNTH IMPORTED_TARGET fluidsynth)
   if(FLUIDSYNTH_FOUND)
     set(SLIP_FLUIDSYNTH_FOUND ON)

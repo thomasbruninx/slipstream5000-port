@@ -13,7 +13,7 @@ the game builds and runs with sound effects only.
 | macOS (Apple Silicon) | `scripts/package_macos.sh` | `dist/Slipstream.app` | yes |
 | Linux x64, native | `scripts/build_linux.sh` | `dist/slipstream-linux-<arch>.tar.gz` | yes (if libfluidsynth-dev is installed) |
 | Linux x64, from macOS / Windows / anything with Docker | `scripts/build_linux_docker.sh` | `dist/slipstream-linux-x86_64.tar.gz` | yes |
-| Windows x64, cross compiled from macOS or Linux | `scripts/build_windows_cross.sh` | `dist/slipstream-windows-x64.zip` (one static .exe) | **no** |
+| Windows x64, cross compiled from macOS or Linux | `scripts/build_windows_cross.sh` | `dist/slipstream-windows-x64.zip` (exe + DLLs) | yes (`NOMUSIC=1`: one static .exe, no music) |
 | Windows x64, native (MSYS2) | `scripts/build_windows_msys2.sh` | `dist/slipstream-windows-x64/` with the DLLs | yes |
 
 ## macOS
@@ -42,15 +42,17 @@ PLATFORM=linux/arm64 ./scripts/build_linux_docker.sh   # native speed on Apple S
 ```
 
 ## Windows x64
-### Cross compiling from macOS or Linux (MinGW-w64)
+### Cross compiling from macOS or Linux (MinGW-w64 + MSYS2 packages)
 ```sh
-brew install mingw-w64 cmake ninja                 # macOS
-sudo apt install g++-mingw-w64-x86-64-posix cmake ninja-build   # Debian / Ubuntu  (select the posix flavour: update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix)
+brew install mingw-w64 cmake ninja zstd            # macOS
+sudo apt install g++-mingw-w64-x86-64-posix cmake ninja-build zstd pkg-config zip   # Debian / Ubuntu  (select the posix flavour: update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix)
 ./scripts/build_windows_cross.sh
 ```
-`cmake/toolchain-mingw-w64-x86_64.cmake` does the work; SDL3 is downloaded and built statically (needs network the first time) and the exe links libgcc / libstdc++ statically,
-so `slipstream.exe` needs no DLLs. FluidSynth is **not** included in the cross build (there is no MinGW package of it that a cross compiler can use), so the Windows
-cross build has sound effects but no MIDI music; build natively with MSYS2 for the music. Extra CMake options can be appended to the script.
+MSYS2 itself only runs on Windows, but its package repository is just files: `scripts/fetch_msys2_deps.py` downloads the prebuilt MinGW-w64 packages of `fluidsynth` and `sdl3`
+(plus their 20 dependencies: libsndfile, portaudio, opus, ...) from repo.msys2.org into `build-win64-sysroot/` - exactly what `pacman -S mingw-w64-x86_64-fluidsynth` installs - and the
+cross compiler links against them (`cmake/toolchain-mingw-w64-x86_64.cmake`, pkg-config pointed at the sysroot). The script copies the DLLs the exe imports (found with objdump) next to
+`slipstream.exe`, so the zip is self-contained and has MIDI music. Needs network on the first run. `NOMUSIC=1 ./scripts/build_windows_cross.sh` builds SDL3 from source and links
+everything statically instead: a single DLL-free .exe without MIDI music.
 
 ### Native (MSYS2)
 Install [MSYS2](https://www.msys2.org), open the "MSYS2 MINGW64" shell:
@@ -73,6 +75,6 @@ It holds `config.txt` (options, key and controller bindings), `records.txt` (bes
 ## Status of the ports (honest summary)
 * macOS arm64: built and played every session.
 * Linux x86-64: builds in the Docker container (Ubuntu 24.04, GCC 13), all unit tests pass there (under emulation), the binary starts. Not run on a desktop with a window or sound device.
-* Windows x64: builds and links with MinGW-w64 (GCC 14). **Never run** (no Windows machine / Wine here): the Winsock port of the multiplayer code (`src/net/socket.cpp`, `WSAPoll`,
+* Windows x64: builds and links with MinGW-w64 (the DLLs are MSYS2's, built with GCC 16; the exe uses the UCRT, the DLLs may use the older msvcrt, which is harmless as no CRT objects cross the boundary). **Never run** (no Windows machine / Wine here): the Winsock port of the multiplayer code (`src/net/socket.cpp`, `WSAPoll`,
   adapter enumeration with `GetAdaptersInfo`) and the controller code in particular need a real test. Please report problems.
 * The game is a console-subsystem program on Windows (a console window shows the log lines); no icon / version resources yet.
