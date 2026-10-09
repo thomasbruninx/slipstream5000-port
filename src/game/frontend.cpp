@@ -254,8 +254,6 @@ void FrontEnd::mouseMove(int x, int y) {
   }
   if (screen_ == Screen::Garage) { garHov_ = x < 0 ? -1 : garageZoneAt(x, y); return; }
   if (screen_ == Screen::Reporters) { skipReporters(); return; }
-  if (screen_ == Screen::Best) { const int z = bestZoneAt(x, y); if (z >= 0) bestActivate(z); return; }
-  if (screen_ == Screen::Config) { const int z = cfgZoneAt(x, y); if (z >= 0) { cfgHov_ = z; cfgActivate(z, 1); } return; }
   if (screen_ == Screen::Slots) { if (!slotEntry_ && slotChosen_ < 0) slotHover_ = x < 0 ? -1 : slotZoneAt(x, y); return; }
   if (screen_ == Screen::Config) { cfgHov_ = x < 0 ? -1 : cfgZoneAt(x, y); return; }
   if (screen_ == Screen::Best) { bestHov_ = x < 0 ? -1 : bestZoneAt(x, y); return; }
@@ -274,6 +272,8 @@ void FrontEnd::click(int x, int y) {
     return;
   }
   if (screen_ == Screen::Info) { key(Key::Select); return; }
+  if (screen_ == Screen::Config) { const int z = cfgZoneAt(x, y); if (z >= 0) { cfgHov_ = z; cfgActivate(z, 1); } return; }
+  if (screen_ == Screen::Best) { const int z = bestZoneAt(x, y); if (z >= 0) bestActivate(z); return; }
   if (screen_ == Screen::Garage) { garageClick(x, y); return; }
   if (screen_ == Screen::Slots) { if (!slotEntry_ && slotChosen_ < 0) { const int z = slotZoneAt(x, y); if (z >= 0) { slotHover_ = z; slotsChoose(z); } } return; }
   if (screen_ == Screen::Results || screen_ == Screen::ChampPos || screen_ == Screen::FinalPos) { const int z = resultZoneAt(x, y); if (z >= 0) resultChoose(z); return; }

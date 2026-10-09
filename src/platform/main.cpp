@@ -2,6 +2,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -76,18 +77,27 @@ static void copyDebug(const slip::ViewerApp& app) {
 // Codes in KeyMap::pad: 0..14 an SDL_GamepadButton, 1000 + axis a trigger.
 struct Pads {
   std::vector<SDL_Gamepad*> list;
+  std::vector<std::array<bool, SDL_GAMEPAD_AXIS_COUNT>> centred;  // per pad and axis: has it been near its rest position since the pad was opened?
+  void update() {  // an axis that never rests (a stuck or mis-mapped device) is ignored, so it cannot press menu keys all the time
+    centred.resize(list.size());
+    for (size_t i = 0; i < list.size(); ++i)
+      for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; ++a)
+        if (std::fabs(float(SDL_GetGamepadAxis(list[i], SDL_GamepadAxis(a)))) < 0.3f * 32767.0f) centred[i][size_t(a)] = true;
+  }
   void open(SDL_JoystickID id) {
     for (auto* g : list) if (SDL_GetGamepadID(g) == id) return;
-    if (SDL_Gamepad* g = SDL_OpenGamepad(id)) { list.push_back(g); std::fprintf(stderr, "slipstream: controller connected: %s\n", SDL_GetGamepadName(g)); }
+    if (SDL_Gamepad* g = SDL_OpenGamepad(id)) { list.push_back(g); centred.emplace_back(); std::fprintf(stderr, "slipstream: controller connected: %s\n", SDL_GetGamepadName(g)); }
   }
   void close(SDL_JoystickID id) {
     for (size_t i = 0; i < list.size(); ++i)
-      if (SDL_GetGamepadID(list[i]) == id) { SDL_CloseGamepad(list[i]); list.erase(list.begin() + long(i)); return; }
+      if (SDL_GetGamepadID(list[i]) == id) { SDL_CloseGamepad(list[i]); list.erase(list.begin() + long(i)); if (i < centred.size()) centred.erase(centred.begin() + long(i)); return; }
   }
   void closeAll() { for (auto* g : list) SDL_CloseGamepad(g); list.clear(); }
   float axis(SDL_GamepadAxis a, float dead = 0.15f) const {  // the largest deflection of any pad, dead zone removed and rescaled
     float best = 0;
-    for (auto* g : list) {
+    for (size_t gi = 0; gi < list.size(); ++gi) {
+      auto* g = list[gi];
+      if (gi >= centred.size() || !centred[gi][size_t(a)]) continue;
       float v = float(SDL_GetGamepadAxis(g, a)) / 32767.0f;
       const float m = std::fabs(v);
       if (m > dead) { v = (m - dead) / (1 - dead) * (v < 0 ? -1.0f : 1.0f); if (std::fabs(v) > std::fabs(best)) best = v; }
@@ -526,6 +536,7 @@ int main(int argc, char** argv) {
     in.lookDY = mouseDY * 0.0025f;
     mouseDX = mouseDY = 0;
     clock += dt;
+    pads.update();
     if (!pads.list.empty()) {
       const KeyMap& km = app.keymap();
       const float lx = pads.axis(SDL_GAMEPAD_AXIS_LEFTX), ly = pads.axis(SDL_GAMEPAD_AXIS_LEFTY);
