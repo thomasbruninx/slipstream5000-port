@@ -50,7 +50,8 @@ WeaponTable loadWeaponTable(const GameData& data);
 
 struct ShipRefPoints {  // ART reference points of the root node (unscaled model units)
   double lasl[3] = {-3000, -800, 0}, lasr[3] = {3000, -800, 0}, weap[3] = {0, -1500, 0}, head[3] = {0, 500, 1000}, smok[3] = {0, 0, -5000};
-  double frag[4][3] = {};  // ART debris list 1: where the pieces R<n>FRG50..53 start (ship frame)
+  double frag[4][3] = {};   // ART debris list 1: where the pieces R<n>FRG50..53 start (ship frame)
+  double frag0[4][3] = {};  // ART debris list 0: where the pieces R<n>FRG00..03 of a destroyed craft start
 };
 std::array<ShipRefPoints, 10> loadShipRefPoints(const GameData& data);
 
@@ -87,6 +88,7 @@ struct CombatState {
   double anger = 0;
   int angerTarget = -1;
   double holdoff = 0;
+  double deathFx = 0;               // seconds until the destruction effect may play again
   int credits = 0;                  // record +4 (bonus type 4 adds 50)
   int shotsFired = 0, hitsDealt = 0;
 };
@@ -211,6 +213,10 @@ class CombatWorld {
   void scrapeEffects(const double pos[3], const double n[3], double speed, bool water, int surfaceMaterial) { particles.scrape(pos, n, speed, water, surfaceMaterial); }
  private:
   void damageSmoke(const CombatContext& ctx, int ship, double damageA);  // RaceSlotDamage 0x52090: a hit of 9.0 or more leaves a smoking engine for 4 s
+  // A craft was destroyed (damage beyond 100, RaceSlotDamage 0x52107 -> 0x4F414): four pieces R<n>FRG00..03 fly off and fireballs flare up around it for 2 s.
+ public:
+  void shipDestroyed(int ship, const ShipState& s);
+ private:
   struct Follow { int emitter; int kind; uint32_t proj; int ship; double off[3]; };  // kind 0 projectile, 1 ship reference point
   std::vector<Follow> follows_;
   void stepFollows(const CombatContext& ctx);

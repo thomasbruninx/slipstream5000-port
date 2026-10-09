@@ -154,6 +154,7 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
   b.buildMaterials();
 
   // Origin: first start position keeps float coordinates small and exactly representable.
+  s->startDir = t.startDir;
   s->origin = {double(t.start[0].x), double(t.start[0].y), double(t.start[0].z)};
   for (int i = 0; i < 10; ++i) s->startPos[size_t(i)] = {double(t.start[size_t(i)].x), double(t.start[size_t(i)].y), double(t.start[size_t(i)].z)};
 
@@ -546,6 +547,8 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
       for (int r = 0; r < 10; ++r) {
         std::snprintf(nm, sizeof nm, "R%dFRG%02d.SHP", r, 50 + k);
         addShape(nm, &s->fragMeshes[size_t(r)][size_t(k)]);
+        std::snprintf(nm, sizeof nm, "R%dFRG%02d.SHP", r, k);
+        addShape(nm, &s->deadFragMeshes[size_t(r)][size_t(k)]);
       }
     }
   }

@@ -102,6 +102,7 @@ struct Scene {
   // scaled like the ships. Index = Scene::weaponMeshIndex(weapon id).
   std::array<Mesh, 7> weaponMeshes;
   std::array<std::array<Mesh, 4>, 10> fragMeshes;  // R<n>FRG50..53: the pieces that break off a craft when it is hit (RaceBang 0x4F7DE, ART debris list 1)
+  std::array<std::array<Mesh, 4>, 10> deadFragMeshes;  // R<n>FRG00..03: the pieces of a destroyed craft (ART debris list 0)
   std::array<Mesh, 4> droneFragMeshes;             // DRFRG50..53
   Mesh droneMesh;                     // DRONE.SHP: the little flying craft that appear during a race (0x4A240)
   float droneRadius = 3000;
@@ -109,6 +110,7 @@ struct Scene {
   static int weaponMeshIndex(int weapon) {  // 0x5BF34 table order
     switch (weapon) { case 11: return 0; case 6: return 1; case 10: return 2; case 2: case 3: return 3; case 8: return 4; case 7: return 5; case 4: case 5: return 6; default: return -1; }
   }
+  std::array<double, 3> startDir{0, 0, 1};  // heading of the grid (TRK +0x12)
   std::array<std::array<double, 3>, 10> startPos{};  // world coordinates of the start grid
   Track track_data;                   // raw parsed data (for tools / physics)
   float shipScale = 1.0f;             // display scale applied to ART/SHP ship models (1 = the original size)

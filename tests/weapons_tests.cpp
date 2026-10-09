@@ -49,9 +49,9 @@ static void particleTests() {
   for (int i = 0; i < 60; ++i) ps.step(1.0 / 60);
   CHECK(ps.puffs.size() >= 4 && ps.puffs.size() <= 5);
   CHECK(ps.emitters.empty());
-  for (const Puff& p : ps.puffs) CHECK(p.pos[1] > 0 && p.size() >= 400 && p.size() <= 4400);  // they rise and grow (488 -> 3904)
-  for (int i = 0; i < 60 * 12; ++i) ps.step(1.0 / 60);
-  CHECK(ps.puffs.empty());  // 3.9 s growth + 4.4 s fade at most
+  for (const Puff& p : ps.puffs) CHECK(p.pos[1] > 0 && p.size() >= 400 && p.size() <= 4500);  // they rise and grow (488 -> 3904 in 250 ms, then 4392)
+  for (int i = 0; i < 60 * 3; ++i) ps.step(1.0 / 60);
+  CHECK(ps.puffs.empty());  // 250 ms growth + 1.5 s hold + 300 ms fade at most
   ps.fireball(pos);
   ps.step(2.0);
   CHECK(ps.fireballs.size() == 1 && !ps.fireballs[0].fading());

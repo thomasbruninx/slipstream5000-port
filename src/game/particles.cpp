@@ -8,26 +8,26 @@ namespace slip {
 namespace {
 // 0x4F208 (trail: grey smoke + fire), 0x4F15C (black smoke), 0x4F188 (black smoke, unused), 0x4F1B4 (grey smoke screen)
 const EffectDesc kEffects[4] = {
-    {PartFam::SmkGry, 0x1e8, 0x3d0, 0x3d0, 200, 0, true},
-    {PartFam::SmkBlk, 0x1e8, 0xf40, 0x1128, 250, 0, false},
-    {PartFam::SmkBlk, 0x5b8, 0x7a0, 0x7a0, 100, 0, false},
-    {PartFam::SmkGry, 0x988, 0x1e80, 0x2620, 400, 0x16e0, false},
+    {PartFam::SmkGry, 0x1e8, 0x3d0, 0x3d0, 0x64, 0x190, 0xc8, 0xc8, 0, true},
+    {PartFam::SmkBlk, 0x1e8, 0xf40, 0x1128, 0xfa, 0x5dc, 0x12c, 0xfa, 0, false},
+    {PartFam::SmkBlk, 0x5b8, 0x7a0, 0x7a0, 0x190, 0x4b0, 0x12c, 0x64, 0, false},
+    {PartFam::SmkGry, 0x988, 0x1e80, 0x2620, 0x1f4, 0x7d0, 0x3e8, 0x190, 0x16e0, false},
 };
 constexpr double kGravity = 0x3d50;  // 15696 units/s^2; terminal fall speed 0x6FB8 = 28600
 }  // namespace
 
 const EffectDesc& effectDesc(int type) { return kEffects[std::clamp(type, 0, 3)]; }
 
-double Puff::size() const {
-  if (fading()) return s1;
-  const double a = s1 * 0.001;
-  return s0 + (s1 - s0) * (a > 0 ? age / a : 1.0);
+double Puff::size() const {  // 0x27A9A: grows from s0 to s1; 0x27A52: after the hold it moves on to sEnd while the second list plays
+  if (age < tGrow) return s0 + (s1 - s0) * (tGrow > 0 ? age / tGrow : 1.0);
+  if (age < tGrow + tHold) return s1;
+  return s1 + (sEnd - s1) * (tFade > 0 ? std::min(1.0, (age - tGrow - tHold) / tFade) : 1.0);
 }
 
 double Fireball::currentSize() const { return size * 0.25 + size * 0.75 * std::clamp(age / total, 0.0, 1.0); }
 
 void ParticleSystem::reset(uint32_t seed) {
-  puffs.clear(); emitters.clear(); fireballs.clear(); pieces.clear(); sparks.clear();
+  puffs.clear(); emitters.clear(); fireballs.clear(); pieces.clear(); sparks.clear(); bangs.clear();
   rng_ = seed ? seed : 1;
   nextId_ = 1;
 }
@@ -65,9 +65,10 @@ void ParticleSystem::debris(const double pos[3], int count, int set) {
   for (int i = 0; i < count; ++i) debrisPiece(pos, set, int(rnd() % 4));
 }
 
-void ParticleSystem::debrisPiece(const double pos[3], int set, int piece) {
+void ParticleSystem::debrisPiece(const double pos[3], int set, int piece, bool dead) {
   {
     DebrisPiece d;
+    d.dead = dead;
     for (int k = 0; k < 3; ++k) d.pos[k] = pos[k];
     d.set = set;
     d.piece = piece;
@@ -116,6 +117,19 @@ void ParticleSystem::scrape(const double pos[3], const double n[3], double shipS
     }
 }
 
+int ParticleSystem::addBang(const double pos[3]) {
+  Bang b;
+  b.id = nextId_++;
+  for (int k = 0; k < 3; ++k) b.pos[k] = pos[k];
+  bangs.push_back(b);
+  return b.id;
+}
+
+Bang* ParticleSystem::bang(int id) {
+  for (Bang& b : bangs) if (b.id == id && b.alive) return &b;
+  return nullptr;
+}
+
 void ParticleSystem::spawnPuff(Emitter& e) {
   const EffectDesc& d = effectDesc(e.type);
   Puff p;
@@ -127,7 +141,8 @@ void ParticleSystem::spawnPuff(Emitter& e) {
   p.fam = d.fam;
   p.s0 = d.s0 * (1.0 + (double((int(rnd() & 0xFFFF) ^ 0x8000) - 0x8000) / 32.0) / 16384.0);   // 0x27CCB: +-1/16
   p.s1 = d.s1 * (1.0 + (double((int(rnd() & 0xFFFF) ^ 0x8000) - 0x8000) / 16.0) / 16384.0);   // 0x27CAA: +-1/8
-  p.durF = d.durF * 0.001;
+  p.sEnd = d.sEnd;
+  p.tGrow = d.tGrow * 0.001; p.tHold = d.tHold * 0.001; p.tFade = d.tFade * 0.001;
   p.riseMax = e.riseMax;
   p.frame = int(rnd() % unsigned(kPartFrames[int(d.fam)][0]));
   puffs.push_back(p);
@@ -148,9 +163,8 @@ void ParticleSystem::step(double dt) {
 
   for (Puff& p : puffs) {
     p.age += dt;
-    const double a = p.s1 * 0.001;
-    if (p.age >= a + p.durF) { p.alive = false; continue; }
-    if (p.age < a) {  // first list: a random frame every few milliseconds
+    if (p.age >= p.total()) { p.alive = false; continue; }
+    if (!p.fading()) {  // first list: a random frame every few milliseconds
       p.frameTimer += dt;
       const int n = kPartFrames[int(p.fam)][0];
       if (p.frameTimer >= kPartFramePeriod[int(p.fam)]) {
@@ -161,7 +175,7 @@ void ParticleSystem::step(double dt) {
       }
     } else {  // second list: in order over the fade time
       const int n = kPartFrames[int(p.fam)][1];
-      p.frame = std::min(n - 1, int(n * (p.durF > 0 ? (p.age - a) / p.durF : 1.0)));
+      p.frame = std::min(n - 1, int(n * (p.tFade > 0 ? (p.age - p.tGrow - p.tHold) / p.tFade : 1.0)));
     }
     if (p.riseMax > 0) {  // 0x27BC5: the speed grows by riseMax per second up to riseMax
       p.rise = std::min(p.riseMax, p.rise + p.riseMax * dt);
@@ -187,6 +201,19 @@ void ParticleSystem::step(double dt) {
     }
   }
   fireballs.erase(std::remove_if(fireballs.begin(), fireballs.end(), [](const Fireball& f) { return !f.alive; }), fireballs.end());
+
+  for (Bang& b : bangs) {  // every 200 ms a fireball (size 0x16E0, 0x190 ms) at a random offset of up to +-0xB70 on each axis (0x4F6B0..0x4F715)
+    b.life -= dt;
+    if (b.life < 0) { b.alive = false; continue; }
+    b.timer -= dt;
+    if (b.timer < 0) {
+      b.timer = 0.2;
+      double p[3];
+      for (int k = 0; k < 3; ++k) p[k] = b.pos[k] + (frand() * 2 - 1) * b.spread;
+      fireball(p, 0x16e0, 0.4);
+    }
+  }
+  bangs.erase(std::remove_if(bangs.begin(), bangs.end(), [](const Bang& b) { return !b.alive; }), bangs.end());
 
   for (Spark& s : sparks) {  // 0x50080: gravity, a step, vanishing when the track is touched
     s.age += dt;

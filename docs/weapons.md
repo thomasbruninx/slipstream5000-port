@@ -155,10 +155,11 @@ beam ended or hit something. The port draws the head half in the low word's colo
 
 ## Particle effects (RaceBang; CONFIRMED structure, INFERRED details)
 `src/game/particles.{hpp,cpp}`. The original's effect engine (0x274A0..0x27F60, effect table 0x4F14C, sprites installed by `RaceBangInstallSprites` 0x4FB76: `Expl*`, `ExplF*`, `SmkBlk*`, `SmkBlkF*`, `SmkGry*`, `SmkGryF*`, `Fire*`):
-* **Emitter** (0x4F79E follows a ship / missile, 0x4F7BC sits still): life in ms, one smoke puff every `period` ms at its position. Four effect records: 0 missile trail (grey smoke, a Fire flame at the tail, period 200 ms, sizes 488 -> 976),
-  1 black smoke (250 ms, 488 -> 3904, fade 4392 ms), 2 black smoke (unused), 3 smoke screen (400 ms, 2440 -> 7808, fade 9760 ms, lateral jitter 5856).
-* **Puff**: an animated sprite (half side = size, a square of side 2 x size, 0x19ACC): while it grows (the growth time in ms equals the end size) it shows a random frame of the first list every 30 ms (SmkGry) / 50 ms (SmkBlk), then the second
-  list in order over the fade time; the explosion smoke rises with an acceleration of 28600 units/s^2 up to 28600 units/s (0x27BC5, bp = 0x6FB8).
+* **Emitter** (0x4F79E follows a ship / missile, 0x4F7BC sits still): life in ms, one smoke puff every `period` ms at its position (the effect record holds eleven dwords `{size0, size1, sizeEnd, tGrow, tHold, tFade, listA, listB, flameList, period,
+  jitter}`; the engine reads them in 0x27A03 / 0x27C38 / 0x275F7 / 0x27ED7, CONFIRMED). Four records: 0 missile trail (grey smoke, a Fire flame at the tail, period 200 ms; 488 -> 976 in 100 ms, hold 400 ms, fade 200 ms to 976),
+  1 black smoke (250 ms; 488 -> 3904 in 250 ms, hold 1500, fade 300 to 4392), 2 black smoke (unused: 1464 -> 1952, 400 / 1200 / 300 ms), 3 smoke screen (400 ms; 2440 -> 7808 in 500 ms, hold 2000, fade 1000 to 9760, lateral jitter 5856).
+* **Puff**: an animated sprite (half side = size, a square of side 2 x size, 0x19ACC) with three phases: while it grows (tGrow) and holds (tHold) it shows a random frame of the first list every 30 ms (SmkGry) / 50 ms (SmkBlk); then the
+  second list plays in order over tFade while the size moves on to sizeEnd. Start / end sizes are randomised by +-1/16 / +-1/8. The explosion smoke rises with an acceleration of 28600 units/s^2 up to 28600 units/s (0x27BC5, bp = 0x6FB8).
 * **Fireball** (0x4F61B -> 0x1E774): size 0x2620, 3 s, grows from a quarter to full size, 75 % random `Expl` frames every 100 ms, 25 % `ExplF` in order.
 * **Debris** (0x4F3A0 -> 0x4F7DE, at most 4 pieces; the piece models are `R<n>FRG00..03` / `DRFRG00..03`): flying off at 10725..28600 units/s in random directions, tumbling at 0.19..0.25 turn/s, gravity 15696 units/s^2 down to a terminal speed of 28600,
   gone after 10 s or when they touch the track (the port sweeps a tiny box).
@@ -170,4 +171,7 @@ beam ended or hit something. The port draws the head half in the low word's colo
   (`Splash`, ramp 75..79, a single pixel), plus 6 chips (244 units) in the colour of the surface hit. They start 488 units off the wall, fly in a cone of +-14 degrees about the surface normal (two random turns of up to 0xA00) at the ship's speed + 17875,
   live 1.5..1.9 s, fall with the debris gravity and vanish when they touch the track. A spark is drawn as two crossing lines (a star) of half length 0.5..1 x 976 units turned at 0.125..0.25 turn/s, a single pixel when it projects to 2 pixels or less; its
   colour is the next to last entry of the material's ramp. The contact point is the box point nearest to the wall (the port has no contact point; the original passes it in the collision record).
-* INFERRED / not ported: the fields 0x0C..0x14 of the effect records (probably timing jitters), the head puff sprite swap, the destroyed-craft pieces (list 0), the unknown call `0x3BD82` in front of the spark setup. Test hook: `SLIP_PARTICLE_DEMO=1` shows one of each effect 0.5 s into a race.
+* **A destroyed craft** (damage beyond 100: `RaceSlotDamage` 0x52107 -> 0x4F414, CONFIRMED): the original replaces the ship's handler by the dying object 0x4F452, which keeps flying, bounces 2 or 3 times on walls and then throws four pieces
+  `R<n>FRG00..03` (ART debris list 0, `0x4F7DE` with ebx = -1) and turns into the bang object 0x4F639: every 200 ms a fireball (size 0x16E0, 0.4 s) at a random offset of up to +-0xB70 per axis, for 2 s. The port, whose ships go on driving, plays the show at once
+  (pieces + bang following the craft, at most once per 8 s per ship); the bounces are not reproduced.
+* INFERRED / not ported: the head puff sprite swap of the missile trail, the unknown call `0x3BD82` in front of the spark setup, the dying object's bounces. Test hook: `SLIP_PARTICLE_DEMO=1` shows one of each effect 0.5 s into a race.

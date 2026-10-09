@@ -100,6 +100,8 @@ struct Track {
   std::vector<std::vector<GroupTreeNode>> groupTrees;  // per group; node 0 is the root
   std::vector<std::array<int32_t, 3>> pieceEntryPos, sceneryEntryPos;  // unused helpers (kept empty)
   std::array<Vec3i, 10> start{};
+  std::array<double, 3> startDir{0, 0, 1};  // TRK +0x12 (s16 x3, 2.14): the heading of the start grid (read by RaceInitRacer 0x34C95); unit length in all ten files
+  std::array<Vec3i, 2> startAlt{};         // TRK +0xB0: the two start spots of the other start mode (RaceInitRacer with a non-zero flag, 0x34C6C); not used by the port
   uint16_t trkVersion = 0;
   bool portalOnly = false;  // TRK +0x9E != 0 ([0x33D08]): only portal-reached pieces are drawn (CONFIRMED use, 0x3A60C)
 };

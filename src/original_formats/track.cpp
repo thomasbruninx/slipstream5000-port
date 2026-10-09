@@ -73,6 +73,8 @@ bool loadTrack(const GameData& data, int index, Track* out, std::string* error) 
     t.trkVersion = r.u16(2);
     if (r.u16(0) != trkB->size() || t.trkVersion != 0x2b) return fail("unexpected TRK header");
     t.portalOnly = r.s16(0x9E) != 0;
+    t.startDir = {double(int16_t(r.u16(0x12))) / 16384.0, double(int16_t(r.u16(0x14))) / 16384.0, double(int16_t(r.u16(0x16))) / 16384.0};
+    for (int i = 0; i < 2; ++i) t.startAlt[size_t(i)] = {r.s32(0xB0 + 12 * size_t(i)), r.s32(0xB4 + 12 * size_t(i)), r.s32(0xB8 + 12 * size_t(i))};
     for (int i = 0; i < 10; ++i) t.start[size_t(i)] = {r.s32(0x18 + 12 * size_t(i)), r.s32(0x1c + 12 * size_t(i)), r.s32(0x20 + 12 * size_t(i))};
     if (!r.ok) return fail("truncated TRK");
   }

@@ -51,7 +51,7 @@ all remappable in *Configuration > Controls > Controller*.
 **Racing**
 * Ship physics ported from the original (thrust, drag, steering, banking, pitch, ship-to-ship contact, track-polygon collision, damage model, wrecks); lap counting, ranks, finish rules, three difficulty levels.
 * AI opponents (route following, avoidance, pit and branch choices, door handling, speed tiers, boost).
-* Particle effects of the original (missile smoke trails and flames, smoke screens, explosion smoke, fireballs, debris of hit craft, wall sparks and water droplets), two-colour beams, all voice cues of the executable.
+* Particle effects of the original (missile smoke trails and flames, smoke screens, explosion smoke, fireballs, debris of hit and destroyed craft, wall sparks and water droplets), two-colour beams, all voice cues of the executable.
 * All 12 weapons (blaster, disrupter, frag / super frag, seeker / super seeker, ambler, scrambler, hyper neuro, bomber, mini mines, smoker), boosters, six bonus types, status effects, lock-on, pilot and announcer voice lines with the original rules.
 * Cameras: cockpit with the original console, chase, rear, TV camera, free camera; rear monitor; track map; talking pilot portraits; race HUD of the original; pause menu.
 * Sound: original samples and positional rules, MIDI music through FluidSynth with a bundled SoundFont, ambient loops, announcer.
@@ -76,12 +76,16 @@ Things that are not (or not exactly) in the original, mostly on request:
 * Joystick calibration pages replaced by SDL3 controller mapping (optional extra mappings in `gamecontrollerdb.txt`).
 
 ## Not ported yet
-* Language switching (the original's other-language string tables and samples exist), two-player championship and split-screen layout, joystick calibration (replaced).
+* Language switching (the original's other-language string tables and samples exist)
+* Two-player championship and split-screen layout
 * The weapons monitor that replaces the rear monitor after firing; the original's wipe-in of the best-lap strips; the exact line-of-sight test of the TV camera; the drones' exact speed and removal rules.
-* Some timing fields of the effect records, the pieces of a destroyed craft; six unplaced track records (their use is unknown), the meaning of material byte +0x14, a few TRK header words. The TRK cells (a BSP), the polygon flags, particle effects, beam colours and every voice cue are done.
 * Internet play (NAT traversal, matchmaking, host migration, authentication); the network code is LAN only.
 * An app icon / installer for Windows and Linux, Linux and Windows builds that have been tested on real machines.
 * Everything is documented per area in `docs/` (start with `docs/project-status.md`; each topic file has a "Not done" section).
+
+## Skipped features
+* Joystick calibration (replaced with SDL3 controller mapping).
+* Direct modem connection (the original's peer-to-peer feature).
 
 ## Layout
 `src/original_formats` parsers · `src/game` game logic (physics, AI, weapons, championship, front end) · `src/renderer` software renderer · `src/audio` mixer + music · `src/net` network code ·

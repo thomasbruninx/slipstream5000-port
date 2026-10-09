@@ -176,6 +176,8 @@ std::array<ShipRefPoints, 10> loadShipRefPoints(const GameData& data) {
     for (int k = 0; k < 4; ++k) {
       const Vec3i& q = art->nodes[0].debris[1][k].pos;
       out[size_t(i)].frag[k][0] = q.x; out[size_t(i)].frag[k][1] = q.y; out[size_t(i)].frag[k][2] = q.z;
+      const Vec3i& q0 = art->nodes[0].debris[0][k].pos;
+      out[size_t(i)].frag0[k][0] = q0.x; out[size_t(i)].frag0[k][1] = q0.y; out[size_t(i)].frag0[k][2] = q0.z;
     }
   }
   return out;
@@ -310,7 +312,10 @@ void CombatWorld::emitCue(const CombatContext&, int ship, int cue) {
 }
 
 void CombatWorld::followProjectile(int emitter, uint32_t projId) { Follow f{emitter, 0, projId, -1, {0, 0, 0}}; follows_.push_back(f); }
-void CombatWorld::followShip(int emitter, int ship, const double* off) { Follow f{emitter, 1, 0, ship, {off[0], off[1], off[2]}}; follows_.push_back(f); }
+void CombatWorld::followShip(int emitter, int ship, const double* off) {
+  Follow f{emitter, off ? 1 : 2, 0, ship, {off ? off[0] : 0, off ? off[1] : 0, off ? off[2] : 0}};  // no offset: a bang
+  follows_.push_back(f);
+}
 
 void CombatWorld::trailFor(const Projectile& p) {  // 0x4F79E effect 0, life 0x1388 ms, 2151 units behind the missile (0xFFFFF799)
   switch (p.kind) {
@@ -336,6 +341,19 @@ void CombatWorld::shipDebris(const CombatContext& ctx, int victim, int count) {
   }
 }
 
+void CombatWorld::shipDestroyed(int ship, const ShipState& s) {
+  if (ship < 0 || ship >= 10 || combat[size_t(ship)].deathFx > 0) return;  // the port's ships go on driving, so one show per ship in a while
+  combat[size_t(ship)].deathFx = 8.0;
+  for (int k = 0; k < 4; ++k) {
+    double pos[3];
+    world(s, refs_[size_t(ship)].frag0[k], pos);
+    particles.debrisPiece(pos, ship, k, true);
+  }
+  const double c[3] = {s.x, s.y, s.z};
+  followShip(particles.addBang(c), ship, nullptr);
+  emitFx(9, ship, c);
+}
+
 void CombatWorld::damageSmoke(const CombatContext& ctx, int ship, double damageA) {
   if (damageA < 9.0 || ship < 0 || ship >= 10 || !ctx.ships[size_t(ship)]) return;
   const double* r = refs_[size_t(ship)].smok;
@@ -347,6 +365,13 @@ void CombatWorld::damageSmoke(const CombatContext& ctx, int ship, double damageA
 void CombatWorld::stepFollows(const CombatContext& ctx) {
   for (size_t i = 0; i < follows_.size();) {
     Follow& f = follows_[i];
+    if (f.kind == 2) {  // a bang follows the craft
+      Bang* b = particles.bang(f.emitter);
+      bool ok = b && f.ship >= 0 && f.ship < int(ctx.ships.size()) && ctx.ships[size_t(f.ship)];
+      if (ok) { b->pos[0] = ctx.ships[size_t(f.ship)]->x; b->pos[1] = ctx.ships[size_t(f.ship)]->y; b->pos[2] = ctx.ships[size_t(f.ship)]->z; ++i; }
+      else follows_.erase(follows_.begin() + long(i));
+      continue;
+    }
     Emitter* e = particles.emitter(f.emitter);
     bool keep = e != nullptr;
     if (keep && f.kind == 0) {
@@ -402,6 +427,7 @@ void CombatWorld::shipLogic(const CombatContext& ctx, int i, double dt) {
   s.boosterGain = c.load.booster >= 0 ? tb.boosters[size_t(c.load.booster)].gain : 0.0;
   if (s.wrecked) { c.fireHeld = false; c.lockTarget = -1; return; }  // the debris handler replaces the ship handler
   c.cooldown = std::max(0.0, c.cooldown - dt);
+  c.deathFx = std::max(0.0, c.deathFx - dt);
   c.lockout = std::max(0.0, c.lockout - dt);
 
   // Pit lane (0x50E97..0x50EF1): inside the refuel piece the damage melts away (25 points/s) and the booster fuel refills.

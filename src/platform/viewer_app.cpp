@@ -134,8 +134,7 @@ bool ViewerApp::loadTrack(int idx, std::string* err) {
 
 void ViewerApp::placeGrid() {
   const auto& st = scene_->startPos;
-  const double hx = st[0][0] - st[1][0], hz = st[0][2] - st[1][2];
-  const double yaw = std::atan2(hx, hz);
+  const double yaw = std::atan2(scene_->startDir[0], scene_->startDir[2]);  // TRK +0x12 (RaceInitRacer 0x34C95); the grid vector 0 -> 1 gives the same angle to within a degree
   for (int i = 0; i < 10; ++i) {
     const auto& p = st[size_t(std::clamp(gridSlot_[size_t(i)], 0, 9))];
     grid_[size_t(i)] = ShipState{p[0], p[1], p[2], yaw, 0, 0, i};
@@ -212,6 +211,7 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
     at(50000, 0, 6000, p); combat_.particles.addEmitter(0, p, 5.0);
     at(45000, -12000, -3000, p); { const double n[3] = {r[0], r[1], r[2]}; combat_.scrapeEffects(p, n, 60000, false, -1); }  // sparks on a wall to the left
     at(45000, 12000, -3000, p); { const double n[3] = {0, 1, 0}; combat_.scrapeEffects(p, n, 60000, true, -1); }  // water droplets
+    if (std::getenv("SLIP_PARTICLE_DEMO")[0] == '2') combat_.shipDestroyed(player_.ship, player_);  // SLIP_PARTICLE_DEMO=2: also destroy the player's craft
   }
   cc.raceTime = raceClock_;
   cc.drones = netplay_ || introMode_ ? nullptr : &drones_.targets;
@@ -277,10 +277,14 @@ void ViewerApp::drainSounds(const double listener[3]) {
   combat_.events.clear();
   if (driving_ && player_.sfxOverDamage > 0) {  // 0x52122..0x5213A: the human pilot's ship is breaking up: cue 2 or 3
     player_.sfxOverDamage = 0;
+    combat_.shipDestroyed(player_.ship, player_);
     if (gameOverTimer_ <= 0 && !finished_) gameOverTimer_ = 4.0;  // 0x4411A: the human's ship is destroyed -> GAME OVER
     if (voicesOn()) audio_.playCue((std::rand() & 1) ? cues::shipBreaking1 : cues::shipBreaking2);
   }
-  for (int i = 0; i < 10; ++i) grid_[size_t(i)].sfxOverDamage = 0;
+  for (int i = 0; i < 10; ++i) {
+    if (grid_[size_t(i)].sfxOverDamage > 0 && i != player_.ship) combat_.shipDestroyed(i, grid_[size_t(i)]);
+    grid_[size_t(i)].sfxOverDamage = 0;
+  }
   for (int i = 0; i < 10; ++i) {
     ShipState& s = i == player_.ship ? player_ : grid_[size_t(i)];
     if (s.cueContact > 0 && voicesOn()) audio_.playCue(cues::contact(i + 1));  // 0x509B7
@@ -1047,7 +1051,7 @@ void ViewerApp::drawParticles(const Scene& sc) {
   }
   for (const Fireball& f : ps.fireballs) draw(PartFam::Expl, f.fading() ? 1 : 0, f.frame, f.pos, f.currentSize());
   for (const DebrisPiece& d : ps.pieces) {
-    const Mesh& m = d.set >= 10 ? sc.droneFragMeshes[size_t(d.piece)] : sc.fragMeshes[size_t(d.set)][size_t(d.piece)];
+    const Mesh& m = d.set >= 10 ? sc.droneFragMeshes[size_t(d.piece)] : d.dead ? sc.deadFragMeshes[size_t(d.set)][size_t(d.piece)] : sc.fragMeshes[size_t(d.set)][size_t(d.piece)];
     if (m.polys.empty()) continue;
     MeshTransform xf;
     for (int k = 0; k < 3; ++k) xf.pos[k] = d.pos[k];
