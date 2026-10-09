@@ -89,7 +89,7 @@ owner's orientation; the owner's sound: effect 4 (beams), 5 (missiles, smoker), 
   the pilot of the victim's class answers with a line (cue 13+class, table 0x50881).
 * Not ported: the push along the contact normal and the
   0.625 speed factor of the pair response for projectile contacts, screen shake and flash (0x440F3, 0x4F3A0), and the particle effects
-  (the port uses the EXPL / FIRE sprites for explosions and smoke).
+  (see "Particle effects" below).
 
 ## 6. Bonus objects (CONFIRMED structure)
 Placement table `0x5502C` (per track 1..10: count + 16-byte entries x, y, z, type; type -1 = random, 0x42A9A picks from {0,1,3,2,5}). The
@@ -107,10 +107,9 @@ human locked says a line (cue 43+class, table 0x515A4, checked every update, rat
 loadout ([0x53FF8]: Seeker + Scrambler, 9 rounds each, booster 0); the real game fills it from the shop (not ported). `--weapons none`
 gives a bare ship, `--weapons seeker:5,mines:8,booster:3` anything else.
 
-## 8. Voice cues (CONFIRMED mechanism and tables)
+## 8. Voice cues (CONFIRMED mechanism and tables; every trigger of the executable is wired, see the end of this section)
 `VoiceCue` 0x530B8, list of mode 3 (initialised with `InitVoices(3, 0, no-repeat=1)` at race start): 85 entries `{name, ..., pilot}` (stride
-0x1C, list pointer at `[0x52EE4 + 3*4]`): 0-1 announcer/winner lines (EF93, EF104), 2-3 "breaking up" (EM38, EM41), 4-13 contact (table 0x509BA, never reached in the port:
-the original tests slot data +2 == 2 there), 14-23 victim answers when the human hits a ship, 24-43 passing lines (tables 0x50C03/0x50C2B, not triggered by the port),
+0x1C, list pointer at `[0x52EE4 + 3*4]`): 0-1 announcer/winner lines (EF93, EF104), 2-3 "breaking up" (EM38, EM41), 4-13 contact (table 0x509BA: the original only plays it when the high word of the slot's slide x (slot data +2) is 2 after a ship contact, `shipPairResponse` reproduces that quirk), 14-23 victim answers when the human hits a ship, 24-43 passing lines (tables 0x50C03/0x50C2B: when the human passes the best AI ship, random line 1 / 2 of the human's own pilot, 0x50BE7),
 44-53 AI taunts, 54-64 weapon announcer (0x36 Disrupter .. 0x3C Scrambler, 0x3E Bomber, 0x3F "under fire", 0x40 mine hit), 65-74 EPS0-9 (position), 75-84 finish lines.
 Rules: a cue is dropped if one of the last four cues equals it, and dropped while the previous line is still playing (no queue).
 Triggers in the port: launch of the player's weapon, rounds exhausted (cue 0), hit on the player (0x3F / 0x40), player hits a ship (14+),
@@ -145,3 +144,25 @@ The port replaces that by default (`SLIP_CLASSIC_AI=1` brings the original logic
 * **Defensive weapons** (no cone: mines, smoke): used when aggression >= 0.35 and a rival is within 60000 units right behind, with a 4 s pause.
 * The booster is not touched (as in the original, where the AI never fires with the booster selected).
 Test: `tests/weapons_tests.cpp` ("tactical AI").
+
+All callers of `VoiceCue` (0x530B8) in the executable were listed: 0x46C95 (vehicle card), 0x50689 / 0x506D2 / 0x50940 (under fire / mine), 0x5087E (victim answer), 0x509B7 (contact), 0x50C00 (passing), 0x50D3A / 0x50D7C (out of ammo),
+0x515A1 (AI taunt), 0x5213A / 0x52184 (breaking up), 0x5A613 / 0x5A6B4 / 0x5A9CC (position, finish, result), 0x5C689 .. 0x5D147 (weapon announcer; the Hyper Neuro launcher has none) and 0x5D5CF (mines: cue 1). All of them are implemented.
+
+## Beam colours (CONFIRMED, 0x5C569 / 0x5C829)
+Both beams are drawn as a segment from the previous to the new head position (speed 0x77240 per second, about 30 frames a second) through the line queue 0x3D4B7 with two colour indices packed in `esi`: the blaster `0x00FD00FE`
+(0xFE yellow head, 0xFD red tail: the executable's UI colours 248..255 are grey, black, black, grey 0x82, green, red, yellow, white) and the disrupter `0x0040004F` (palette entries 0x4F / 0x40 of the track's palette). Bit 31 is set when the
+beam ended or hit something. The port draws the head half in the low word's colour and the tail half in the high word's (the split is INFERRED, the line drawer 0x3E26C was not decoded to the last detail).
+
+## Particle effects (RaceBang; CONFIRMED structure, INFERRED details)
+`src/game/particles.{hpp,cpp}`. The original's effect engine (0x274A0..0x27F60, effect table 0x4F14C, sprites installed by `RaceBangInstallSprites` 0x4FB76: `Expl*`, `ExplF*`, `SmkBlk*`, `SmkBlkF*`, `SmkGry*`, `SmkGryF*`, `Fire*`):
+* **Emitter** (0x4F79E follows a ship / missile, 0x4F7BC sits still): life in ms, one smoke puff every `period` ms at its position. Four effect records: 0 missile trail (grey smoke, a Fire flame at the tail, period 200 ms, sizes 488 -> 976),
+  1 black smoke (250 ms, 488 -> 3904, fade 4392 ms), 2 black smoke (unused), 3 smoke screen (400 ms, 2440 -> 7808, fade 9760 ms, lateral jitter 5856).
+* **Puff**: an animated sprite (half side = size, a square of side 2 x size, 0x19ACC): while it grows (the growth time in ms equals the end size) it shows a random frame of the first list every 30 ms (SmkGry) / 50 ms (SmkBlk), then the second
+  list in order over the fade time; the explosion smoke rises with an acceleration of 28600 units/s^2 up to 28600 units/s (0x27BC5, bp = 0x6FB8).
+* **Fireball** (0x4F61B -> 0x1E774): size 0x2620, 3 s, grows from a quarter to full size, 75 % random `Expl` frames every 100 ms, 25 % `ExplF` in order.
+* **Debris** (0x4F3A0 -> 0x4F7DE, at most 4 pieces; the piece models are `R<n>FRG00..03` / `DRFRG00..03`): flying off at 10725..28600 units/s in random directions, tumbling at 0.19..0.25 turn/s, gravity 15696 units/s^2 down to a terminal speed of 28600,
+  gone after 10 s or when they touch the track (the port sweeps a tiny box).
+* Call sites: missile exhaust (Frag, Super Frag, Seeker, Super Seeker, Bomber, Scrambler: effect 0, 5 s, 2151 units behind the missile) / smoker (effect 3, 4 s at the `smok` point) / a hit of 9.0 or more damage on the engine leaves effect 1 at `smok` for
+  4 s (RaceSlotDamage 0x52090) / missile hit on a ship: 4 debris pieces / missile against a wall: black smoke 1 s / mine: fireball + 2 s black smoke + debris / blaster hit: 44 % chance of 3 debris pieces / drone destroyed: fireball + 4 DRFRG pieces.
+* INFERRED / not ported: the fields 0x0C..0x14 of the effect records (probably timing jitters), the head puff sprite swap, the debris spawn at a random reference point of the shape (the port starts them at the hit point), the sparks (`SPARK`
+  material, 0x4FD93) and the water splash (`SPLASH`, 0x4FF2E) that a ship scraping a wall / water makes (the port has the sound only). Test hook: `SLIP_PARTICLE_DEMO=1` shows one of each effect 0.5 s into a race.

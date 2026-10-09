@@ -511,6 +511,35 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
       }
   }
 
+  {  // debris pieces of the ships and the drone (0x4F81F picks one of four at random)
+    auto addShape = [&](const std::string& name, Mesh* m) {
+      auto bytes = data.read(name);
+      if (!bytes) return;
+      auto sh = parseShape(*bytes);
+      if (!sh) return;
+      for (auto& poly : sh->polys) {
+        std::vector<Vec3> vs;
+        bool bad = false;
+        for (uint16_t idx : poly.index) {
+          if (idx >= sh->verts.size()) { bad = true; break; }
+          const auto& v = sh->verts[idx];
+          vs.push_back({float(v.x) * s->shipScale, float(v.y) * s->shipScale, float(v.z) * s->shipScale});
+        }
+        if (bad || vs.size() < 3) continue;
+        addPoly(*m, vs, poly.uv, b.globalMaterial(sh->materials, poly.material), Builder::unitNormal(poly.nx, poly.ny, poly.nz));
+      }
+    };
+    for (int k = 0; k < 4; ++k) {
+      char nm[32];
+      std::snprintf(nm, sizeof nm, "DRFRG%02d.SHP", k);
+      addShape(nm, &s->droneFragMeshes[size_t(k)]);
+      for (int r = 0; r < 10; ++r) {
+        std::snprintf(nm, sizeof nm, "R%dFRG%02d.SHP", r, k);
+        addShape(nm, &s->fragMeshes[size_t(r)][size_t(k)]);
+      }
+    }
+  }
+
   s->track_data = std::move(t);
   s->buildFloorIndex();
   *out = std::move(*s);

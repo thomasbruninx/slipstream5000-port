@@ -62,8 +62,16 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
     auto load = [&](const std::string& name, Sprite* dst) {
       if (auto b = data_->read(name)) if (auto sp = parseSprite(*b)) *dst = *sp;
     };
-    for (size_t i = 0; i < 6; ++i) { load("BONUS" + std::to_string(i) + ".SPR", &bonusSprites_[i]); load("EXPL" + std::to_string(i + 1) + ".SPR", &explSprites_[i]); }
-    for (size_t i = 0; i < 4; ++i) load("FIRE" + std::to_string(i + 1) + ".SPR", &fireSprites_[i]);
+    for (size_t i = 0; i < 6; ++i) load("BONUS" + std::to_string(i) + ".SPR", &bonusSprites_[i]);
+    {  // the particle sprites (RaceBangInstallSprites 0x4FB76): Smk(Gry|Blk)[F]n, Expl[F]n, Firen
+      static const char* kNames[4][2] = {{"SMKGRY", "SMKGRYF"}, {"SMKBLK", "SMKBLKF"}, {"EXPL", "EXPLF"}, {"FIRE", nullptr}};
+      for (int f = 0; f < 4; ++f)
+        for (int l = 0; l < 2; ++l) {
+          if (!kNames[f][l]) continue;
+          partSprites_[f][l].resize(size_t(kPartFrames[f][l]));
+          for (int i = 0; i < kPartFrames[f][l]; ++i) load(std::string(kNames[f][l]) + std::to_string(i + 1) + ".SPR", &partSprites_[f][l][size_t(i)]);
+        }
+    }
   }
   renderer_.resize(opt.width, opt.height);
   cam_.fovY = 1.15f;
@@ -190,6 +198,18 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
   for (const ShipState& b : doorBoxes) cc.obstacles.push_back(&b);
   cc.humanShip = player_.ship;
   if (!held) raceClock_ += step;
+  if (std::getenv("SLIP_PARTICLE_DEMO") && !held && raceClock_ >= 0.5 && raceClock_ < 0.5 + step) {  // test hook: one of every effect ahead of the player
+    const double* f = player_.m + 6;
+    const double* r = player_.m;
+    auto at = [&](double ahead, double side, double up, double* o) { for (int k = 0; k < 3; ++k) o[k] = (&player_.x)[k] + f[k] * ahead + r[k] * side + player_.m[3 + k] * up; };
+    double p[3];
+    at(70000, -30000, 0, p); combat_.particles.addEmitter(1, p, 2.0, 0x6fb8);
+    at(70000, 0, 0, p); combat_.particles.fireball(p);
+    at(70000, 30000, 0, p); combat_.particles.debris(p, 4, player_.ship);
+    at(110000, -20000, 5000, p); combat_.particles.debris(p, 4, 10);
+    at(110000, 20000, 0, p); combat_.particles.addEmitter(3, p, 4.0);
+    at(50000, 0, 6000, p); combat_.particles.addEmitter(0, p, 5.0);
+  }
   cc.raceTime = raceClock_;
   cc.drones = netplay_ || introMode_ ? nullptr : &drones_.targets;
   cc.controls.assign(10, CombatControls{});
@@ -996,6 +1016,34 @@ void ViewerApp::drawWorld() {
 }
 
 // Projectiles (the original's .SHP models), beams, bonus sprites, explosions and the lock marker, drawn over the finished frame.
+// Smoke puffs, fireballs, missile flames and the debris pieces (game/particles.hpp). A sprite is a square with side 2 x size (0x19ACC).
+void ViewerApp::drawParticles(const Scene& sc) {
+  const ParticleSystem& ps = combat_.particles;
+  auto transparent = [](const Sprite& sp) { return sp.hdr8 == 0xFFFF ? -1 : int(sp.hdr8 & 0xFF); };
+  auto draw = [&](PartFam fam, int list, int frame, const double* pos, double size) {
+    const auto& v = partSprites_[int(fam)][list];
+    if (v.empty()) return;
+    const Sprite& sp = v[size_t(std::clamp(frame, 0, int(v.size()) - 1))];
+    if (sp.w == 0) return;
+    renderer_.drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, pos, 2.0 * size, transparent(sp));
+  };
+  for (const Puff& p : ps.puffs) draw(p.fam, p.fading() ? 1 : 0, p.frame, p.pos, p.size());
+  for (const Emitter& e : ps.emitters)  // the flame at the tail of a missile (the head puff shows the Fire list, 0x277D8)
+    if (e.attached && effectDesc(e.type).flame) draw(PartFam::Fire, 0, int(animSeconds_ * 100) % 4, e.pos, effectDesc(e.type).s0 * 1.4);
+  for (const Fireball& f : ps.fireballs) draw(PartFam::Expl, f.fading() ? 1 : 0, f.frame, f.pos, f.currentSize());
+  for (const DebrisPiece& d : ps.pieces) {
+    const Mesh& m = d.set >= 10 ? sc.droneFragMeshes[size_t(d.piece)] : sc.fragMeshes[size_t(d.set)][size_t(d.piece)];
+    if (m.polys.empty()) continue;
+    MeshTransform xf;
+    for (int k = 0; k < 3; ++k) xf.pos[k] = d.pos[k];
+    const double a = d.ang[0] * 6.283185307179586, b = d.ang[1] * 6.283185307179586, c = d.ang[2] * 6.283185307179586;
+    const double ca = std::cos(a), sa = std::sin(a), cb = std::cos(b), sb = std::sin(b), cc = std::cos(c), sc2 = std::sin(c);
+    const double R[9] = {cb * cc, -cb * sc2, sb, ca * sc2 + sa * sb * cc, ca * cc - sa * sb * sc2, -sa * cb, sa * sc2 - ca * sb * cc, sa * cc + ca * sb * sc2, ca * cb};
+    for (int i = 0; i < 9; ++i) xf.R[i] = float(R[i]);
+    renderer_.drawMesh(sc, m, xf);
+  }
+}
+
 void ViewerApp::drawWorldObjects() {
   if (!driving_ || !scene_) return;
   const Scene& sc = *scene_;
@@ -1003,8 +1051,15 @@ void ViewerApp::drawWorldObjects() {
   for (const Projectile& p : combat_.projectiles) {
     const double* f = p.m + 6;
     if (p.kind == kBlaster || p.kind == kDisrupter) {  // 0x5C4BB: a line from the previous to the new head position (colours are placeholders)
-      const double a[3] = {p.pos[0] - f[0] * 26000, p.pos[1] - f[1] * 26000, p.pos[2] - f[2] * 26000};
-      renderer_.drawLineWorld(a, p.pos, p.kind == kBlaster ? 0xfffff070u : 0xff9080ffu);
+      // The segment of the last frame (speed 0x77240 / s at about 30 frames a second), drawn with two colours (esi = 0xFD00FE for the blaster, 0x40004F for the disrupter,
+      // 0x5C569 / 0x5C829): the head half in the low word's colour, the tail half in the high word's; 0xFD / 0xFE are the executable's UI colours (red / yellow), 0x40 / 0x4F palette entries of the track.
+      const double len = 0x77240 / 30.0;
+      const double a[3] = {p.pos[0] - f[0] * len, p.pos[1] - f[1] * len, p.pos[2] - f[2] * len};
+      const double m[3] = {(a[0] + p.pos[0]) * 0.5, (a[1] + p.pos[1]) * 0.5, (a[2] + p.pos[2]) * 0.5};
+      auto rgb = [&](int idx) { return 0xff000000u | (sc.palette.rgba[size_t(idx)] & 0xffffffu); };
+      const uint32_t head = p.kind == kBlaster ? 0xffffff00u : rgb(0x4F), tail = p.kind == kBlaster ? 0xffff0000u : rgb(0x40);
+      renderer_.drawLineWorld(m, p.pos, head);
+      renderer_.drawLineWorld(a, m, tail);
       continue;
     }
     const int mi = Scene::weaponMeshIndex(p.kind);
@@ -1032,11 +1087,7 @@ void ViewerApp::drawWorldObjects() {
     const Sprite& sp = bonusSprites_[size_t(std::clamp(pk.type, 0, 5))];
     renderer_.drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, pk.pos, 2.0 * 0x2620, transparent(sp));
   }
-  for (const Explosion& x : combat_.explosions) {
-    const double u = x.age / x.life;
-    const Sprite& sp = x.kind == 1 ? fireSprites_[size_t(int(x.age * 8) & 3)] : explSprites_[size_t(std::min(5, int(u * 6)))];
-    renderer_.drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, x.pos, x.kind == 1 ? 18000 + 6000 * x.age : 16000 + 26000 * u, transparent(sp));
-  }
+  drawParticles(sc);
 }
 
 void ViewerApp::drawCombatOverlay() {

@@ -273,8 +273,9 @@ class ViewerApp {
   double startPhase_ = 15.0;  // [0x54404]: the first 15 s after GO give a rank dependent speed bonus (table 0x50252)
   bool raceOverHandled_ = false;
   double resultCueTimer_ = -1;
-  std::array<Sprite, 6> bonusSprites_, explSprites_;
-  std::array<Sprite, 4> fireSprites_;
+  std::array<Sprite, 6> bonusSprites_;
+  std::vector<Sprite> partSprites_[4][2];  // particle sprites by family (SmkGry, SmkBlk, Expl, Fire) and list (first, fade)
+  void drawParticles(const Scene& sc);
   void setupCombat();
   void stepCombat(double step, const InputState& in, bool held);
   void drawCombatOverlay();

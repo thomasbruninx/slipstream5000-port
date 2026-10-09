@@ -265,7 +265,8 @@ void CombatWorld::init(const WeaponTable& table, const std::array<ShipRefPoints,
   track_ = track;
   rng_.s = seed ? seed : 1u;
   projectiles.clear();
-  explosions.clear();
+  particles.reset(seed ? seed * 2654435761u : 1u);
+  follows_.clear();
   events.clear();
   launched.clear(); hitLog.clear(); pickupLog.clear();
   launchCounter_ = 0;
@@ -304,12 +305,56 @@ void CombatWorld::emitCue(const CombatContext&, int ship, int cue) {
   events.push_back(e);
 }
 
-void CombatWorld::addExplosion(const double* pos, int kind) {
-  Explosion x;
-  for (int k = 0; k < 3; ++k) x.pos[k] = pos[k];
-  x.kind = kind;
-  x.life = kind == 1 ? 4.0 : 0.5;
-  explosions.push_back(x);
+void CombatWorld::followProjectile(int emitter, uint32_t projId) { Follow f{emitter, 0, projId, -1, {0, 0, 0}}; follows_.push_back(f); }
+void CombatWorld::followShip(int emitter, int ship, const double* off) { Follow f{emitter, 1, 0, ship, {off[0], off[1], off[2]}}; follows_.push_back(f); }
+
+void CombatWorld::trailFor(const Projectile& p) {  // 0x4F79E effect 0, life 0x1388 ms, 2151 units behind the missile (0xFFFFF799)
+  switch (p.kind) {
+    case kFrag: case kSuperFrag: case kSeeker: case kSuperSeeker: case kBomber: case kScrambler: break;
+    default: return;
+  }
+  const double* f = p.m + 6;
+  const double pos[3] = {p.pos[0] - f[0] * 2151, p.pos[1] - f[1] * 2151, p.pos[2] - f[2] * 2151};
+  const int id = particles.addEmitter(0, pos, 5.0);
+  followProjectile(id, p.id);
+}
+
+void CombatWorld::smokeBurst(const double* pos, double seconds) { particles.addEmitter(1, pos, seconds, 0x6fb8); }  // 0x4F7BC: bp = 0x6FB8
+
+void CombatWorld::shipDebris(const double* pos, int victim, int count) { particles.debris(pos, count, std::clamp(victim, 0, 9)); }
+
+void CombatWorld::damageSmoke(const CombatContext& ctx, int ship, double damageA) {
+  if (damageA < 9.0 || ship < 0 || ship >= 10 || !ctx.ships[size_t(ship)]) return;
+  const double* r = refs_[size_t(ship)].smok;
+  double pos[3];
+  world(*ctx.ships[size_t(ship)], r, pos);
+  followShip(particles.addEmitter(1, pos, 4.0), ship, r);
+}
+
+void CombatWorld::stepFollows(const CombatContext& ctx) {
+  for (size_t i = 0; i < follows_.size();) {
+    Follow& f = follows_[i];
+    Emitter* e = particles.emitter(f.emitter);
+    bool keep = e != nullptr;
+    if (keep && f.kind == 0) {
+      keep = false;
+      for (const Projectile& p : projectiles)
+        if (p.id == f.proj && p.alive) {
+          const double* d = p.m + 6;
+          for (int k = 0; k < 3; ++k) { e->pos[k] = p.pos[k] - d[k] * 2151; e->right[k] = p.m[k]; e->up[k] = p.m[3 + k]; }
+          keep = true;
+          break;
+        }
+      if (!keep && e) particles.detach(f.emitter);
+    } else if (keep && f.kind == 1) {
+      if (f.ship >= 0 && f.ship < int(ctx.ships.size()) && ctx.ships[size_t(f.ship)]) {
+        const ShipState& s = *ctx.ships[size_t(f.ship)];
+        world(s, f.off, e->pos);
+        for (int k = 0; k < 3; ++k) { e->right[k] = s.m[k]; e->up[k] = s.m[3 + k]; }
+      } else keep = false;
+    }
+    if (!keep) follows_.erase(follows_.begin() + long(i)); else ++i;
+  }
 }
 
 void CombatWorld::step(const CombatContext& ctx, double dt) {
@@ -320,8 +365,21 @@ void CombatWorld::step(const CombatContext& ctx, double dt) {
   for (Projectile& p : projectiles) if (p.alive) stepProjectile(ctx, p, dt);
   projectiles.erase(std::remove_if(projectiles.begin(), projectiles.end(), [](const Projectile& p) { return !p.alive; }), projectiles.end());
   stepPickups(ctx);
-  for (Explosion& x : explosions) x.age += dt;
-  explosions.erase(std::remove_if(explosions.begin(), explosions.end(), [](const Explosion& x) { return x.age >= x.life; }), explosions.end());
+  stepFollows(ctx);
+  if (ctx.scene) {  // debris vanish when they touch the track
+    const Scene* sc = ctx.scene;
+    particles.blocked = [sc](const double* a, const double* b) {
+      const double d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+      const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      if (len < 1e-6) return false;
+      const double f[3] = {d[0] / len, d[1] / len, d[2] / len};
+      const double lo[3] = {-200, -200, -200}, hi[3] = {200, 200, 200}, I[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+      return sweepShipBox(*sc, a, I, lo, hi, f, len).hit;
+    };
+  } else {
+    particles.blocked = nullptr;
+  }
+  particles.step(dt);
 }
 
 void CombatWorld::shipLogic(const CombatContext& ctx, int i, double dt) {
@@ -587,7 +645,7 @@ void CombatWorld::launch(const CombatContext& ctx, int i, int weapon) {  // laun
     case kSmoker: {
       double pos[3];
       world(s, refs_[size_t(i)].smok, pos);
-      addExplosion(pos, 1);
+      followShip(particles.addEmitter(3, pos, 4.0), i, refs_[size_t(i)].smok);  // 0x5C3A0: smoke screen, 4 s, at the "smok" reference point
       { Projectile sm; sm.kind = kSmoker; sm.owner = i; sm.first = true; sm.id = (uint32_t(i) << 24) | (launchCounter_ & 0xFFFFFFu); for (int k = 0; k < 3; ++k) sm.pos[k] = pos[k]; launched.push_back(sm); }
       emitFx(5, i, ownerPos);
       break;
@@ -613,6 +671,7 @@ void CombatWorld::launch(const CombatContext& ctx, int i, int weapon) {  // laun
       p.life = -1;
       const double add = (weapon == kAmbler || weapon == kHyperNeuro) ? 0x45D30 : weapon == kScrambler ? 0x1174C : kMissileAccel;
       p.speed = s.speed + add;
+      trailFor(p);
       emitFx(5, i, ownerPos);
       break;
     }
@@ -652,7 +711,9 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
       if (s.wrecked || !s.hasBox || !pointNearShip(s, p.pos, p.radius)) continue;
       hitShip(ctx, p, j);
       hitLog.push_back({p.id, j, {p.pos[0], p.pos[1], p.pos[2]}});
-      addExplosion(p.pos, 0);
+      particles.fireball(p.pos);  // 0x4F61B (0x5D33A / 0x5D453): size 0x2620, 3 s
+      smokeBurst(p.pos, 2.0);     // 0x5D32B: 2 s
+      shipDebris(p.pos, j, 4);
       p.alive = false;
       return;
     }
@@ -704,8 +765,7 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
       DroneTarget& d = (*ctx.drones)[size_t(di)];
       d.hit = beam || p.owner == ctx.humanShip ? 1 : 2;  // own addition: anything the player shoots down leaves a bonus
       for (int k = 0; k < 3; ++k) { p.pos[k] += (np[k] - p.pos[k]) * bestD; d.hitPos[k] = d.pos[k]; }
-      if (!beam) addExplosion(p.pos, 0);
-      p.alive = false;
+      p.alive = false;  // the drone blows up (DroneWorld blast -> explodeAt)
       return;
     }
   }
@@ -737,7 +797,7 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
   if (bestShip >= 0 && bestT <= wallT) {
     for (int k = 0; k < 3; ++k) p.pos[k] += (np[k] - p.pos[k]) * std::min(bestT, 1.0);
     if (beam) beamHit(ctx, p, bestShip);
-    else { hitShip(ctx, p, bestShip); addExplosion(p.pos, 0); }
+    else { hitShip(ctx, p, bestShip); shipDebris(p.pos, bestShip, 4); }  // 0x50853: RaceBang 5 -> 4 pieces
     hitLog.push_back({p.id, bestShip, {p.pos[0], p.pos[1], p.pos[2]}});
     if (!p.remote) ++combat[size_t(p.owner)].hitsDealt;
     p.alive = false;
@@ -745,7 +805,7 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
   }
   if (wallT <= 1.0) {
     for (int k = 0; k < 3; ++k) p.pos[k] += (np[k] - p.pos[k]) * wallT;
-    addExplosion(p.pos, 0);
+    smokeBurst(p.pos, 1.0);  // 0x5CBE3: black smoke, 1 s
     emitFx(9, p.owner, p.pos);
     p.alive = false;
     return;
@@ -777,6 +837,7 @@ void CombatWorld::hitShip(const CombatContext& ctx, const Projectile& p, int vic
   emitFx(fx, victim, vp);
   if (p.owner == ctx.humanShip && ctx.humanShip >= 0 && ctx.shipClass.size() > size_t(victim)) emitCue(ctx, victim, cues::hitByHuman(ctx.shipClass[size_t(victim)]));
   shipDamage(v, w.damageA, w.damageB);
+  damageSmoke(ctx, victim, w.damageA);
 }
 
 void CombatWorld::beamHit(const CombatContext& ctx, const Projectile& p, int victim) {  // message 0x202 (0x50651..0x506FA)
@@ -793,6 +854,8 @@ void CombatWorld::beamHit(const CombatContext& ctx, const Projectile& p, int vic
   const WeaponDef& w = table_->w[kBlaster];
   const double mul = difficulty == 2 ? 4.0 : 2.0;  // 0x5C0F9: the table value is shifted left by 1 (by 2 at the hardest level)
   shipDamage(v, w.damageA * mul, w.damageB * mul);
+  damageSmoke(ctx, victim, w.damageA * mul);
+  if (particles.rand01() <= 0x7000 / 65536.0) shipDebris(vp, victim, 3);  // 0x50693: 44 % of the beam hits break off 3 pieces
   emitFx(10, victim, vp);
   if (victim == ctx.humanShip) emitCue(ctx, victim, cues::underFire);
 }
@@ -846,13 +909,18 @@ int CombatWorld::hitFx(int kind) {
 }
 
 void CombatWorld::spawnRemote(const Projectile& in) {
-  if (in.kind == kSmoker) { addExplosion(in.pos, 1); emitFx(5, in.owner, in.pos); return; }
+  if (in.kind == kSmoker) {
+    if (in.owner >= 0 && in.owner < 10) followShip(particles.addEmitter(3, in.pos, 4.0), in.owner, refs_[size_t(in.owner)].smok);
+    emitFx(5, in.owner, in.pos);
+    return;
+  }
   Projectile p = in;
   p.remote = true;
   p.alive = true;
   for (int k = 0; k < 3; ++k) p.prev[k] = p.pos[k];
   p.radius = radius_[size_t(std::clamp(p.kind, 0, kWeaponCount - 1))];
   projectiles.push_back(p);
+  trailFor(p);
   if (p.first) emitFx(p.kind <= kDisrupter ? 4 : p.kind == kMiniMines ? 7 : 5, p.owner, p.pos);
 }
 
@@ -860,7 +928,7 @@ void CombatWorld::remoteHit(const CombatContext& ctx, uint32_t id, int victim, c
   for (Projectile& p : projectiles) {
     if (p.id != id || !p.alive) continue;
     p.alive = false;
-    if (p.kind > kDisrupter) addExplosion(pos, 0);
+    if (p.kind > kDisrupter) shipDebris(pos, victim, 4);
     emitFx(hitFx(p.kind), victim, pos);
     if (!p.remote) {
       ++combat[size_t(p.owner)].hitsDealt;

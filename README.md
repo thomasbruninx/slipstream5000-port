@@ -46,6 +46,7 @@ all remappable in *Configuration > Controls > Controller*.
 **Racing**
 * Ship physics ported from the original (thrust, drag, steering, banking, pitch, ship-to-ship contact, track-polygon collision, damage model, wrecks); lap counting, ranks, finish rules, three difficulty levels.
 * AI opponents (route following, avoidance, pit and branch choices, door handling, speed tiers, boost).
+* Particle effects of the original (missile smoke trails and flames, smoke screens, explosion smoke, fireballs, debris of destroyed craft), two-colour beams, all voice cues of the executable.
 * All 12 weapons (blaster, disrupter, frag / super frag, seeker / super seeker, ambler, scrambler, hyper neuro, bomber, mini mines, smoker), boosters, six bonus types, status effects, lock-on, pilot and announcer voice lines with the original rules.
 * Cameras: cockpit with the original console, chase, rear, TV camera, free camera; rear monitor; track map; talking pilot portraits; race HUD of the original; pause menu.
 * Sound: original samples and positional rules, MIDI music through FluidSynth with a bundled SoundFont, ambient loops, announcer.
@@ -72,7 +73,7 @@ Things that are not (or not exactly) in the original, mostly on request:
 ## Not ported yet
 * Language switching (the original's other-language string tables and samples exist), two-player championship and split-screen layout, joystick calibration (replaced).
 * The weapons monitor that replaces the rear monitor after firing; the original's wipe-in of the best-lap strips; the exact line-of-sight test of the TV camera; the drones' exact speed and removal rules.
-* Particle effects (sprites are used instead), exact beam colours, some contact / passing voice lines, a few track-format details (TRK cells, some unplaced track records, some material flags).
+* Sparks and water splashes when scraping a wall / water, the exact debris spawn points and some timing fields of the effect records; six unplaced track records (their use is unknown), the meaning of material byte +0x14, a few TRK header words. The TRK cells (a BSP), the polygon flags, particle effects, beam colours and every voice cue are done.
 * Internet play (NAT traversal, matchmaking, host migration, authentication); the network code is LAN only.
 * An app icon / installer for Windows and Linux, Linux and Windows builds that have been tested on real machines.
 * Everything is documented per area in `docs/` (start with `docs/project-status.md`; each topic file has a "Not done" section).

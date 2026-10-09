@@ -5,6 +5,7 @@
 // What is CONFIRMED / STRONGLY INFERRED / SPECULATIVE is listed in docs/simulation.md ("Weapons and pickups").
 #pragma once
 #include <array>
+#include "game/particles.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -116,12 +117,6 @@ struct Pickup {
 // A drone as the weapons see it: beams that hit it destroy it and make it drop a bonus, other projectiles only destroy it (messages 0x202 / 0x106 of 0x4A3B2).
 struct DroneTarget { int id = 0; double pos[3] = {0, 0, 0}; double radius = 3000; bool alive = true; int hit = 0; /* 0 none, 1 beam, 2 other */ double hitPos[3] = {0, 0, 0}; };
 
-struct Explosion {  // purely visual (the original spawns particle effects 0x4F61B / 0x4F79E / 0x4F414)
-  double pos[3] = {0, 0, 0};
-  double age = 0, life = 0.6;
-  int kind = 0;  // 0 fireball, 1 smoke screen
-};
-
 struct CombatEvent {
   enum Kind { Fx, Cue } kind = Fx;
   int id = 0;       // original FxPlay id (1..16) or voice cue index (0..84)
@@ -154,7 +149,7 @@ class CombatWorld {
   // championship adds +50 credits; the last entry of each table is never drawn: Random(count - 1)); it disappears after `life` seconds.
   int randomBonusType(bool championship);
   void dropPickup(const double* pos, int type, double life);
-  void explodeAt(const double* pos) { addExplosion(pos, 0); emitFx(9, -1, pos); }  // a drone blows up
+  void explodeAt(const double* pos) { particles.fireball(pos); particles.debris(pos, 4, 10); emitFx(9, -1, pos); }  // a drone blows up (0x4A4BB: fireball, 0x4A42F: 4 DRFRG pieces)
   // One simulation step (all ships already moved): recharge, lock-on, AI decisions, firing, projectiles, pickups, effects.
   void step(const CombatContext& ctx, double dt);
 
@@ -164,7 +159,7 @@ class CombatWorld {
   std::array<CombatState, 10> combat;
   std::vector<Projectile> projectiles;
   std::vector<Pickup> pickups;
-  std::vector<Explosion> explosions;
+  ParticleSystem particles;  // smoke trails, explosions, debris (game/particles.hpp)
   std::vector<CombatEvent> events;  // drained by the front end
   // multiplayer: what happened here that the other peers must hear about (drained by game/netplay)
   struct HitRec { uint32_t id; int victim; double pos[3]; };
@@ -195,7 +190,16 @@ class CombatWorld {
   void applyPickup(const CombatContext& ctx, int ship, int type);
   void emitFx(int id, int ship, const double* pos);
   void emitCue(const CombatContext& ctx, int ship, int cue);
-  void addExplosion(const double* pos, int kind);
+  // particle effects (the call sites of RaceBang 0x4F61B / 0x4F79E / 0x4F7BC / 0x4F3A0)
+  void followProjectile(int emitter, uint32_t projId);
+  void followShip(int emitter, int ship, const double* localOffset);
+  void trailFor(const Projectile& p);                       // missile exhaust (0x5CCC6..0x5D214)
+  void smokeBurst(const double* pos, double seconds);       // black smoke that rises (0x4F7BC, 1 s wall hit / 2 s mine)
+  void shipDebris(const double* pos, int victim, int count);
+  void damageSmoke(const CombatContext& ctx, int ship, double damageA);  // RaceSlotDamage 0x52090: a hit of 9.0 or more leaves a smoking engine for 4 s
+  struct Follow { int emitter; int kind; uint32_t proj; int ship; double off[3]; };  // kind 0 projectile, 1 ship reference point
+  std::vector<Follow> follows_;
+  void stepFollows(const CombatContext& ctx);
   static bool isRemote(const CombatContext& ctx, int i) { return ctx.remote.size() > size_t(i) && ctx.remote[size_t(i)]; }
   uint32_t launchCounter_ = 0;
   const WeaponTable* table_ = nullptr;

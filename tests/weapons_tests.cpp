@@ -41,7 +41,36 @@ struct Rig {
   }
 };
 
+static void particleTests() {
+  ParticleSystem ps;
+  ps.reset(5);
+  const double pos[3] = {0, 0, 0};
+  ps.addEmitter(1, pos, 1.0, 0x6fb8);  // 1 s of black smoke: a puff every 250 ms
+  for (int i = 0; i < 60; ++i) ps.step(1.0 / 60);
+  CHECK(ps.puffs.size() >= 4 && ps.puffs.size() <= 5);
+  CHECK(ps.emitters.empty());
+  for (const Puff& p : ps.puffs) CHECK(p.pos[1] > 0 && p.size() >= 400 && p.size() <= 4400);  // they rise and grow (488 -> 3904)
+  for (int i = 0; i < 60 * 12; ++i) ps.step(1.0 / 60);
+  CHECK(ps.puffs.empty());  // 3.9 s growth + 4.4 s fade at most
+  ps.fireball(pos);
+  ps.step(2.0);
+  CHECK(ps.fireballs.size() == 1 && !ps.fireballs[0].fading());
+  ps.step(0.4);
+  CHECK(ps.fireballs.size() == 1 && ps.fireballs[0].fading());
+  ps.step(1.0);
+  CHECK(ps.fireballs.empty());
+  ps.debris(pos, 9, 3);
+  CHECK(ps.pieces.size() == 4);  // at most four pieces
+  for (const DebrisPiece& d : ps.pieces) {
+    const double sp = std::sqrt(d.vel[0] * d.vel[0] + d.vel[1] * d.vel[1] + d.vel[2] * d.vel[2]);
+    CHECK(sp >= 10725 - 1 && sp <= 28600 + 1);
+  }
+  ps.step(11.0);
+  CHECK(ps.pieces.empty());  // gone after 10 s
+}
+
 int main() {
+  particleTests();
   {  // loadout parsing and AI defaults (tables 0x58675 / 0x5869D)
     Loadout l;
     std::string err;
@@ -140,7 +169,9 @@ int main() {
     for (auto& e : r.w.events) cue0 = cue0 || (e.kind == CombatEvent::Cue && e.id == cues::outOfAmmo);
     CHECK(cue0);
     r.ctx.controls[0].fire = false;
-    r.run(3.0);
+    r.run(0.5);
+    CHECK(r.w.particles.emitters.size() == 1 && !r.w.particles.puffs.empty());  // the missile leaves a smoke trail (0x4F79E)
+    r.run(2.5);
     NEAR(r.b.damageA, 15.0, 1e-9);
     NEAR(r.b.damageB, 2.0, 1e-9);
     CHECK(r.w.projectiles.empty());

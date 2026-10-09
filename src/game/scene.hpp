@@ -98,6 +98,8 @@ struct Scene {
   // Projectile models: AIRMINE, AMBLER, BOMBER, FRAG, HYPER, SCRAMBLE, SEEKER (the .SHP names the launchers load at 0x5BF5E),
   // scaled like the ships. Index = Scene::weaponMeshIndex(weapon id).
   std::array<Mesh, 7> weaponMeshes;
+  std::array<std::array<Mesh, 4>, 10> fragMeshes;  // R<n>FRG00..03: the pieces that break off a craft (RaceBang 0x4F7DE)
+  std::array<Mesh, 4> droneFragMeshes;             // DRFRG00..03
   Mesh droneMesh;                     // DRONE.SHP: the little flying craft that appear during a race (0x4A240)
   float droneRadius = 3000;
   std::array<float, 7> weaponMeshRadius{};  // half the largest extent in unscaled model units (collision radius)
