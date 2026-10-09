@@ -44,12 +44,61 @@ void SoftwareRenderer::beginFrame(const Camera& cam, uint32_t sky, uint32_t grou
   for (int y = vp_.y0; y <= vp_.y1; ++y) {
     const float a = fwd_[1] * focal_ + up_[1] * (cy_ - (float(y) + 0.5f)), b = right_[1];
     uint32_t* row = &color_[size_t(y) * size_t(w_)];
-    for (int x = vp_.x0; x <= vp_.x1; ++x) row[x] = (a + b * (float(x) + 0.5f - cx_)) > 0 ? sky : ground;
+    if (skyRamp.empty()) {
+      for (int x = vp_.x0; x <= vp_.x1; ++x) row[x] = (a + b * (float(x) + 0.5f - cx_)) > 0 ? sky : ground;
+    } else {
+      // sky gradient: the ramp runs from the zenith colour to the horizon colour with the elevation of the view ray (INFERRED: the original shades the sky in bands through 0x1D242)
+      const float dy = cy_ - (float(y) + 0.5f), n = float(skyRamp.size() - 1);
+      for (int x = vp_.x0; x <= vp_.x1; ++x) {
+        const float dx = float(x) + 0.5f - cx_, ry = a + b * dx;
+        if (ry <= 0) { row[x] = ground; continue; }
+        const float s = ry / std::sqrt(focal_ * focal_ + dx * dx + dy * dy);
+        row[x] = skyRamp[size_t(std::lround(n * (1.0f - std::min(s / skyBand, 1.0f))))];
+      }
+    }
   }
   std::fill(depth_.begin(), depth_.end(), 0.0f);
   std::fill(backdrop_.begin(), backdrop_.end(), uint8_t(0));
   std::fill(itemBuf_.begin(), itemBuf_.end(), -1);
   std::fill(recvBuf_.begin(), recvBuf_.end(), 0);
+}
+
+void SoftwareRenderer::drawSky(const Scene& scene, double seconds) {
+  if (scene.skySprites.empty()) return;
+  const float scale = float(vp_.x1 - vp_.x0 + 1) / 320.0f;
+  const double turn = 6.283185307179586 / 65536.0;
+  for (int layer = 0; layer < 3; ++layer) {
+    const double drift = (layer == 2 ? scene.skySpeed : layer == 0 ? scene.skySpeed / 8.0 : 0.0) * seconds * turn;
+    for (const SkySprite& k : scene.skySprites) {
+      if (k.layer != layer || k.img.w <= 0) continue;
+      const double az = k.az - drift, ce = std::cos(k.el);
+      const double d[3] = {std::sin(az) * ce, std::sin(k.el), std::cos(az) * ce};
+      const float z = float(d[0] * fwd_[0] + d[1] * fwd_[1] + d[2] * fwd_[2]);
+      if (z <= 0.05f) continue;
+      const float x = float(d[0] * right_[0] + d[1] * right_[1] + d[2] * right_[2]), y = float(d[0] * up_[0] + d[1] * up_[1] + d[2] * up_[2]);
+      const float sx = cx_ + x / z * focal_, sy = cy_ - y / z * focal_;
+      const float pw = float(k.img.w) * scale * k.scale, ph = float(k.img.h) * scale * k.scale;
+      // the point is the bottom centre of the picture (INFERRED from the corner setup of 0x1A421: x from -w/2 to w/2, y from -h to 0)
+      // the picture stands upright in the world: it turns with the camera's roll (the original draws a rotated quad when the corners are not axis aligned, 0x1A4B0)
+      const float rn = std::sqrt(right_[1] * right_[1] + up_[1] * up_[1]);
+      const float ux = rn > 1e-4f ? right_[1] / rn : 0.0f, uy = rn > 1e-4f ? -up_[1] / rn : -1.0f;  // world up on screen (y down)
+      const float rx = -uy, ry = ux;                                                                 // world right on screen
+      const float rad = std::hypot(pw * 0.5f, ph) + 1.0f;
+      const int x0 = int(std::floor(sx - rad)), x1 = int(std::ceil(sx + rad)), y0 = int(std::floor(sy - rad)), y1 = int(std::ceil(sy + rad));
+      for (int py = std::max(y0, vp_.y0); py < std::min(y1, vp_.y1 + 1); ++py) {
+        for (int px = std::max(x0, vp_.x0); px < std::min(x1, vp_.x1 + 1); ++px) {
+          const float dx = float(px) + 0.5f - sx, dy = float(py) + 0.5f - sy;
+          const float lu = dx * rx + dy * ry, lh = dx * ux + dy * uy;
+          if (lu < -pw * 0.5f || lu >= pw * 0.5f || lh < 0 || lh >= ph) continue;
+          const int u = std::clamp(int((lu + pw * 0.5f) / pw * float(k.img.w)), 0, k.img.w - 1);
+          const int v = std::clamp(int((1.0f - lh / ph) * float(k.img.h)), 0, k.img.h - 1);
+          const uint8_t idx = k.img.pixels[size_t(v) * size_t(k.img.w) + size_t(u)];
+          if (int(idx) == k.transparent) continue;
+          color_[size_t(py) * size_t(w_) + size_t(px)] = 0xff000000u | scene.palette.rgba[idx];
+        }
+      }
+    }
+  }
 }
 
 bool SoftwareRenderer::visAllows(uint16_t vis) const {
@@ -107,7 +156,8 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
     }
     if (allNear || allFar || allLeft || allRight || allUp || allDown) continue;
 
-    if (p.hidden) continue;
+    static const bool showHidden = std::getenv("SLIP_SHOWHIDDEN") != nullptr;  // debug: draw the polygons the port hides (portals, caps)
+    if (p.hidden && !showHidden) continue;
     sx0_ = vp_.x0; sy0_ = vp_.y0; sx1_ = vp_.x1; sy1_ = vp_.y1;
     if (p.piece >= 0 && !pieceWin_.empty() && size_t(p.piece) < pieceWin_.size()) {
       const WinRect& wr = pieceWin_[size_t(p.piece)];
@@ -116,7 +166,8 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
     } else if (sceneryWin_) {
       sx0_ = sceneryWin_->x0; sy0_ = sceneryWin_->y0; sx1_ = sceneryWin_->x1; sy1_ = sceneryWin_->y1;
     }
-    if (!visAllows(p.vis)) continue;
+    static const bool noVis = std::getenv("SLIP_NOVIS") != nullptr;  // debug: ignore the visibility classes
+    if (!noVis && !visAllows(p.vis)) continue;
     if (p.instance >= 0 && !instOk[size_t(p.instance)]) continue;
     if (p.material >= 0 && size_t(p.material) < scene.materials.size() && scene.materials[size_t(p.material)].invisible) continue;
     // shading
@@ -192,24 +243,6 @@ inline uint32_t shade(uint32_t rgb, float f) {
 }  // namespace
 
 void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, const VV& c, const SurfaceMaterial* mat, bool useTexture, float light, int upLight, uint8_t layer, int forceIdx) {
-  float sx[3], sy[3], iw[3], uw[3], vw[3];
-  const VV* v[3] = {&a, &b, &c};
-  for (int i = 0; i < 3; ++i) {
-    float invz = 1.0f / v[i]->z;
-    sx[i] = cx_ + v[i]->x * invz * focal_;
-    sy[i] = cy_ - v[i]->y * invz * focal_;
-    iw[i] = invz;
-    uw[i] = v[i]->u * invz;
-    vw[i] = v[i]->v * invz;
-  }
-  float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
-  if (std::fabs(area) < 1e-4f) return;
-  stats_.trisRastered++;
-  int minx = std::max(sx0_, int(std::floor(std::min({sx[0], sx[1], sx[2]}))));
-  int maxx = std::min(sx1_, int(std::ceil(std::max({sx[0], sx[1], sx[2]}))));
-  int miny = std::max(sy0_, int(std::floor(std::min({sy[0], sy[1], sy[2]}))));
-  int maxy = std::min(sy1_, int(std::ceil(std::max({sy[0], sy[1], sy[2]}))));
-  if (minx > maxx || miny > maxy) return;
   const Texture* tex = (forceIdx < 0 && useTexture && mat && mat->texture >= 0) ? &scene.textures[size_t(mat->texture)] : nullptr;
   uint32_t flat = 0xff808080u;
   {
@@ -218,58 +251,110 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
     else if (mat) flat = shade(scene.palette.rgba[size_t(std::clamp(flatIndex(mat, upLight), 0, 255))], 1.0f);
     else flat = shade(scene.palette.rgba[0], light);
   }
-  float inv = 1.0f / area;
-  for (int y = miny; y <= maxy; ++y) {
-    float py = float(y) + 0.5f;
-    for (int x = minx; x <= maxx; ++x) {
-      float px = float(x) + 0.5f;
-      float w0 = ((sx[1] - px) * (sy[2] - py) - (sx[2] - px) * (sy[1] - py)) * inv;
-      float w1 = ((sx[2] - px) * (sy[0] - py) - (sx[0] - px) * (sy[2] - py)) * inv;
-      float w2 = 1.0f - w0 - w1;
-      if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-      float z = w0 * iw[0] + w1 * iw[1] + w2 * iw[2];
-      size_t o = size_t(y) * size_t(w_) + size_t(x);
-      if (shadowRecv_) {
-        if (recvBuf_[o] == shadowRecv_) color_[o] = flat;
-        continue;
-      }
-      // Layering of scenery against road (see docs/research-log.md): scenery must be clearly nearer than road to
-      // cover it (near-ties and slight intrusions of building volumes into tunnel walls resolve to the road);
-      // backdrop scenery never covers road. Among equal layers a later-drawn near-tie wins (coplanar decals).
-      const float cur = depth_[o];
-      if (curItem_ >= 0) {
-        if (itemBuf_[o] == curItem_ && z < cur * (1.0f - 2e-5f)) continue;
-      } else {
-        const uint8_t curLayer = backdrop_[o];
-        if (cur > 0) {
-          if (layer == 0) {
-            if (curLayer == 0) { if (z < cur * (1.0f - 2e-5f)) continue; }
-            else if (curLayer == 2) { /* road always covers backdrop */ }
-            else if (z < cur / 1.3f) continue;  // scenery clearly nearer than this road fragment
-          } else {
-            if (curLayer == 0) { if (layer == 2 || z < cur * 1.3f) continue; }
-            else if (z < cur * (1.0f - 2e-5f)) continue;
+  struct SP { double x, y, iw, uw, vw; };
+  auto raster = [&](const float sx[3], const float sy[3], const float iw[3], const float uw[3], const float vw[3]) {
+    float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
+    if (std::fabs(area) < 1e-4f) return;
+    stats_.trisRastered++;
+    int minx = std::max(sx0_, int(std::floor(std::min({sx[0], sx[1], sx[2]}))));
+    int maxx = std::min(sx1_, int(std::ceil(std::max({sx[0], sx[1], sx[2]}))));
+    int miny = std::max(sy0_, int(std::floor(std::min({sy[0], sy[1], sy[2]}))));
+    int maxy = std::min(sy1_, int(std::ceil(std::max({sy[0], sy[1], sy[2]}))));
+    if (minx > maxx || miny > maxy) return;
+    float inv = 1.0f / area;
+    for (int y = miny; y <= maxy; ++y) {
+      float py = float(y) + 0.5f;
+      for (int x = minx; x <= maxx; ++x) {
+        float px = float(x) + 0.5f;
+        float w0 = ((sx[1] - px) * (sy[2] - py) - (sx[2] - px) * (sy[1] - py)) * inv;
+        float w1 = ((sx[2] - px) * (sy[0] - py) - (sx[0] - px) * (sy[2] - py)) * inv;
+        float w2 = 1.0f - w0 - w1;
+        if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+        float z = w0 * iw[0] + w1 * iw[1] + w2 * iw[2];
+        size_t o = size_t(y) * size_t(w_) + size_t(x);
+        if (shadowRecv_) {
+          if (recvBuf_[o] == shadowRecv_) color_[o] = flat;
+          continue;
+        }
+        // Layering of scenery against road (see docs/research-log.md): scenery must be clearly nearer than road to
+        // cover it (near-ties and slight intrusions of building volumes into tunnel walls resolve to the road);
+        // backdrop scenery never covers road. Among equal layers a later-drawn near-tie wins (coplanar decals).
+        const float cur = depth_[o];
+        if (curItem_ >= 0) {
+          if (itemBuf_[o] == curItem_ && z < cur * (1.0f - 2e-5f)) continue;
+        } else {
+          static const bool pureDepth = getenv("SLIP_PUREDEPTH") != nullptr;
+          const uint8_t curLayer = backdrop_[o];
+          if (pureDepth) { if (z < cur) continue; } else
+          if (cur > 0) {
+            if (layer == 0) {
+              if (curLayer == 0) { if (z < cur * (1.0f - 2e-5f)) continue; }
+              else if (curLayer == 2) { /* road always covers backdrop */ }
+              else if (z < cur / 1.3f) continue;  // scenery clearly nearer than this road fragment
+            } else {
+              if (curLayer == 0) { if (layer == 2 || z < cur * 1.3f) continue; }
+              else if (z < cur * (1.0f - 2e-5f)) continue;
+            }
           }
         }
+        uint32_t col = flat;
+        if (tex) {
+          float u = (w0 * uw[0] + w1 * uw[1] + w2 * uw[2]) / z;
+          float vv = (w0 * vw[0] + w1 * vw[1] + w2 * vw[2]) / z;
+          u -= std::floor(u);
+          vv -= std::floor(vv);
+          int tx = std::min(tex->w - 1, int(u * float(tex->w)));
+          int ty = std::min(tex->h - 1, int(vv * float(tex->h)));
+          uint8_t pi = tex->index[size_t(ty) * size_t(tex->w) + size_t(tx)];
+          if (int(pi) == tex->transparent) continue;  // transparent colour from the SPR header (+8)
+          col = shade(scene.palette.rgba[pi], 1.0f);  // textured polygons are not lit in the original (0x19E0D -> 0x1C753 passes no shade)
+        }
+        { static const char* pk = getenv("SLIP_PICK"); static int pkx = -1, pky = -1; static bool init = false;
+          if (pk && !init) { sscanf(pk, "%d,%d", &pkx, &pky); init = true; }
+          if (pk && x == pkx && y == pky) fprintf(stderr, "pick %d,%d mat=%s layer=%d iz=%g tex=%d\n", x, y, mat ? mat->name.c_str() : "-", int(layer), double(z), tex ? 1 : 0); }
+        depth_[o] = z;
+        backdrop_[o] = layer;
+        itemBuf_[o] = curItem_;
+        recvBuf_[o] = recvId_;
+        color_[o] = col;
       }
-      uint32_t col = flat;
-      if (tex) {
-        float u = (w0 * uw[0] + w1 * uw[1] + w2 * uw[2]) / z;
-        float vv = (w0 * vw[0] + w1 * vw[1] + w2 * vw[2]) / z;
-        u -= std::floor(u);
-        vv -= std::floor(vv);
-        int tx = std::min(tex->w - 1, int(u * float(tex->w)));
-        int ty = std::min(tex->h - 1, int(vv * float(tex->h)));
-        uint8_t pi = tex->index[size_t(ty) * size_t(tex->w) + size_t(tx)];
-        if (int(pi) == tex->transparent) continue;  // transparent colour from the SPR header (+8)
-        col = shade(scene.palette.rgba[pi], 1.0f);  // textured polygons are not lit in the original (0x19E0D -> 0x1C753 passes no shade)
-      }
-      depth_[o] = z;
-      backdrop_[o] = layer;
-      itemBuf_[o] = curItem_;
-      recvBuf_[o] = recvId_;
-      color_[o] = col;
     }
+  };
+  // screen space: x / y / 1/z / u/z / v/z are affine, so a triangle that reaches far outside the window (a wall right in front of the camera, 1/z huge) is clipped to the
+  // window first; float edge functions on coordinates of 1e5 and more lose their precision and the polygon would flicker or vanish
+  std::vector<SP> poly;
+  {
+    const VV* v[3] = {&a, &b, &c};
+    for (int i = 0; i < 3; ++i) {
+      const double invz = 1.0 / double(v[i]->z);
+      poly.push_back({double(cx_) + double(v[i]->x) * invz * focal_, double(cy_) - double(v[i]->y) * invz * focal_, invz, double(v[i]->u) * invz, double(v[i]->v) * invz});
+    }
+  }
+  const double gx0 = double(sx0_) - 1, gx1 = double(sx1_) + 2, gy0 = double(sy0_) - 1, gy1 = double(sy1_) + 2;
+  auto clipAxis = [&](std::vector<SP>& in, int axis, double bound, bool keepGreater) {
+    std::vector<SP> out;
+    for (size_t i = 0; i < in.size(); ++i) {
+      const SP& p0 = in[i];
+      const SP& p1 = in[(i + 1) % in.size()];
+      const double d0 = (axis == 0 ? p0.x : p0.y) - bound, d1 = (axis == 0 ? p1.x : p1.y) - bound;
+      const bool in0 = keepGreater ? d0 >= 0 : d0 <= 0, in1 = keepGreater ? d1 >= 0 : d1 <= 0;
+      if (in0) out.push_back(p0);
+      if (in0 != in1) {
+        const double t = d0 / (d0 - d1);
+        out.push_back({p0.x + (p1.x - p0.x) * t, p0.y + (p1.y - p0.y) * t, p0.iw + (p1.iw - p0.iw) * t, p0.uw + (p1.uw - p0.uw) * t, p0.vw + (p1.vw - p0.vw) * t});
+      }
+    }
+    in.swap(out);
+  };
+  clipAxis(poly, 0, gx0, true);
+  if (poly.size() >= 3) clipAxis(poly, 0, gx1, false);
+  if (poly.size() >= 3) clipAxis(poly, 1, gy0, true);
+  if (poly.size() >= 3) clipAxis(poly, 1, gy1, false);
+  for (size_t k = 1; k + 1 < poly.size(); ++k) {
+    const SP* t3[3] = {&poly[0], &poly[k], &poly[k + 1]};
+    float sx[3], sy[3], iw[3], uw[3], vw[3];
+    for (int i = 0; i < 3; ++i) { sx[i] = float(t3[i]->x); sy[i] = float(t3[i]->y); iw[i] = float(t3[i]->iw); uw[i] = float(t3[i]->uw); vw[i] = float(t3[i]->vw); }
+    raster(sx, sy, iw, uw, vw);
   }
 }
 
@@ -292,6 +377,17 @@ void SoftwareRenderer::computePortalVisibility(const Scene& scene) {
     const bool in = scene.pieceContains(i, cp);
     double vol = double(b.hi[0] - b.lo[0]) * double(b.hi[1] - b.lo[1]) * double(b.hi[2] - b.lo[2]);
     if (in && vol < bestVol) { bestVol = vol; start = int(i); }
+  }
+  if (pieceHint >= 0 && size_t(pieceHint) < scene.pieceBoxes.size() && inGraph[size_t(pieceHint)] && !scene.pieceBoxes[size_t(pieceHint)].empty) {
+    // The ship's slot piece changes a little after the camera has passed a portal: a camera that is already inside a neighbour of the hinted piece starts there, otherwise the portal
+    // behind the camera is skipped and the sector it is entering is not drawn until the slot catches up.
+    const auto& hb = scene.pieceBoxes[size_t(pieceHint)];
+    int cand = -1;
+    if (scene.pieceContains(size_t(pieceHint), cp)) cand = pieceHint;
+    for (int j = 0; j < 3 && cand < 0; ++j)
+      if (hb.link[j] >= 0 && size_t(hb.link[j]) < inGraph.size() && inGraph[size_t(hb.link[j])] && !scene.pieceBoxes[size_t(hb.link[j])].empty && scene.pieceContains(size_t(hb.link[j]), cp)) cand = hb.link[j];
+    if (cand < 0 && scene.pieceContains(size_t(pieceHint), cp, 4000.0f)) cand = pieceHint;  // a camera close to a wall may fail the cell test of its own piece and pass the test of a large decor piece: the walk would start there and draw nothing
+    if (cand >= 0) start = cand;
   }
   if (start < 0) return;  // camera outside every piece: draw everything (the original also has no cell then)
   pieceWin_.assign(scene.pieceBoxes.size(), WinRect{});
@@ -327,6 +423,11 @@ void SoftwareRenderer::computePortalVisibility(const Scene& scene) {
     }
   } rec{scene, *this, cp};
   rec.visit(start, fullWin(), -1, 0);
+  if (std::getenv("SLIP_PORTAL_LOG")) {
+    int vis = 0;
+    for (size_t i = 0; i < pieceWin_.size(); ++i) if (inGraph[i] && pieceWin_[i].vis) ++vis;
+    std::fprintf(stderr, "portal: camera %.0f %.0f %.0f start piece %d, %d pieces reached\n", cp[0], cp[1], cp[2], start, vis);
+  }
   if (!union_.vis) {
     // The code only validates the window ([0x33EB0]) through extent polygons (flag 0x08 after the load-time rewrite: cages and
     // chase-light floors, transparent slopes); tracks such as Chicago have none. We then use the union of the portal windows
@@ -723,8 +824,8 @@ void SoftwareRenderer::drawFloorDetail(const Scene& scene, const MeshPoly& p, co
   const int baseRecv = recvId_;
   float nearest = 1e30f;
   for (uint16_t k = 0; k < p.count; ++k) nearest = std::min(nearest, tv[p.first + k].z);
-  bool near = nearest >= cam_.nearPlane;
-  if (!d.valid || int(p.count) != d.nBase || !near || nearest > float(d.gate)) {
+  // a polygon that reaches behind the camera (a ceiling strip the camera is under) still gets its detail: the detail polygons and lines are clipped at the near plane one by one
+  if (!d.valid || int(p.count) != d.nBase || nearest > float(d.gate)) {
     // far branch (0x40B84): the polygon in the 80 % lane colour
     std::vector<VV> poly(tv.begin() + p.first, tv.begin() + p.first + p.count);
     if (baseRecv) recvId_ = baseRecv | 2;
@@ -764,7 +865,7 @@ void SoftwareRenderer::drawPanelLines(const Scene& scene, const MeshPoly& p, con
   if (!d.valid || int(p.count) != d.nBase || !mat) return;
   float nearest = 1e30f;
   for (uint16_t k = 0; k < p.count; ++k) nearest = std::min(nearest, tv[p.first + k].z);
-  if (nearest < cam_.nearPlane || (d.gate && nearest > float(d.gate))) return;
+  if (d.gate && nearest > float(d.gate)) return;
   struct P3 { float x, y, z; };
   std::vector<P3> pts(d.mid.size());
   for (size_t k = 0; k < pts.size(); ++k) {

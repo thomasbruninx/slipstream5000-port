@@ -142,6 +142,82 @@ bool buildShipPreview(const GameData& data, int ship, Scene* out, float scale) {
   return !m.polys.empty();
 }
 
+namespace {
+// Per-track sky layers: the hooks 0x4329E (Canyon), 0x4345A (Hawaii), 0x435D4 (London), 0x437A7 (Norway), 0x4372E (Egypt), 0x4394A (Amazon), 0x43AAA (New York)
+// resolve sprite wildcard patterns to resource ids (ResFindIDsAll 0x24B98: the first `count` matches, in order, one id array for all patterns) and call 0x1298E with
+// a layout table: u16 count + 6-byte entries (id index, azimuth, elevation) for the high layer, again for the low layer, and one more list (the hills) at the
+// second address. All of it is read from the user's executable (CONFIRMED structure; the placement convention is INFERRED, see docs/research-log.md).
+struct SkyDef {
+  int track;
+  const char* patterns[3];
+  int counts[3];
+  bool sun;            // New York: NYSUNS.SPR is id 0 of the array
+  uint32_t layoutVa, hillsVa;
+  int speed;
+};
+constexpr SkyDef kSkyDefs[] = {
+    {2, {"hawcld*A.spr", "hawcld*B.spr", "hawcld*C.spr"}, {2, 7, 8}, false, 0x433E8, 0x43458, 0x80},
+    {4, {"norhill*.spr", nullptr, nullptr}, {2, 0, 0}, false, 0x43778, 0x4377C, 1},
+    {6, {"cancld*A.spr", "cancld*B.spr", "cancld*C.spr"}, {2, 2, 2}, false, 0x43274, 0x4329C, 0x10},
+    {7, {"Amacld*A.spr", "Amacld*B.spr", "Amacld*C.spr"}, {4, 4, 3}, false, 0x4387E, 0x43948, 0x60},
+    {8, {"loncld*A.spr", "loncld*B.spr", "loncld*C.spr"}, {2, 9, 6}, false, 0x43568, 0x435D2, 0x10},
+    {9, {"eghill*.spr", nullptr, nullptr}, {3, 0, 0}, false, 0x43704, 0x43708, 1},
+    {10, {"NYcl**.spr", nullptr, nullptr}, {14, 0, 0}, true, 0x43A4A, 0x43AA8, 0},
+};
+
+void loadSky(const GameData& data, int trackIndex, Scene& s) {
+  if (s.skyMaterial >= 0) {
+    const SurfaceMaterial& m = s.materials[size_t(s.skyMaterial)];
+    for (int i = m.palStart; i <= m.palEnd; ++i) s.skyRamp.push_back(0xff000000u | (s.palette.rgba[size_t(i)] & 0xffffffu));
+  }
+  if (s.groundMaterial >= 0) s.groundColor = 0xff000000u | (s.palette.rgba[size_t(s.materials[size_t(s.groundMaterial)].palStart)] & 0xffffffu);
+  const SkyDef* def = nullptr;
+  for (const SkyDef& d : kSkyDefs) if (d.track == trackIndex) def = &d;
+  auto exe = data.read("SLIPSTRM.EXE");
+  if (!def || !exe) return;
+  auto off = [](uint32_t va) { return size_t(0x4D854) + size_t(va - 0x10000); };
+  auto s16 = [&](size_t o) -> int { return o + 2 <= exe->size() ? int(int16_t((*exe)[o] | ((*exe)[o + 1] << 8))) : 0; };
+  std::vector<Sprite> ids;
+  auto load = [&](const std::string& name) {
+    Sprite sp;
+    if (auto b = data.read(name)) if (auto p = parseSprite(*b)) sp = std::move(*p);
+    ids.push_back(std::move(sp));
+  };
+  if (def->sun) load("NYSUNS.SPR");
+  for (int k = 0; k < 3; ++k) {
+    if (!def->patterns[k]) continue;
+    std::string pat = def->patterns[k];
+    for (char& c : pat) c = char(std::toupper(static_cast<unsigned char>(c)));
+    const auto names = data.glob(pat);
+    for (int i = 0; i < def->counts[k]; ++i) { if (size_t(i) < names.size()) load(names[size_t(i)]); else ids.emplace_back(); }
+  }
+  auto list = [&](size_t& o, int layer) {
+    const int n = s16(o);
+    o += 2;
+    for (int i = 0; i < n && n < 64; ++i, o += 6) {
+      const int id = s16(o);
+      if (id < 0 || size_t(id) >= ids.size() || ids[size_t(id)].w <= 0) continue;
+      SkySprite k;
+      k.img = ids[size_t(id)];
+      // no transparent colour (Canyon's clouds): they are painted on the sky's zenith colour, which is taken as transparent; they are drawn at 70 % of the size so that neighbours
+      // (45..67 degrees apart) do not overlap (INFERRED: opaque pictures cut each other off, full size overlaps)
+      k.transparent = k.img.hdr8 != 0xFFFF ? int(k.img.hdr8 & 0xFF) : s.skyMaterial >= 0 ? int(s.materials[size_t(s.skyMaterial)].palStart) : -1;
+      if (k.img.hdr8 == 0xFFFF) k.scale = 0.7f;
+      k.az = double(s16(o + 2)) * 3.14159265358979323846 / 32768.0;
+      k.el = double(s16(o + 4)) * 3.14159265358979323846 / 32768.0;
+      k.layer = layer;
+      s.skySprites.push_back(std::move(k));
+    }
+  };
+  size_t o = off(def->layoutVa);
+  list(o, 2);  // list in 0x12950: drawn last, [0x12958] = fast angle
+  list(o, 0);  // list in 0x12952: drawn first, [0x1295C] = angle at 1/8 of the speed
+  size_t h = off(def->hillsVa);
+  list(h, 1);
+  s.skySpeed = def->speed;
+}
+}  // namespace
+
 bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* error, float shipScale) {
   auto s = std::make_unique<Scene>();
   s->shipScale = shipScale;
@@ -429,6 +505,15 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
   s->sdFloorLightMaterial = b.mats.find("SDFloorLight");
   s->sdBlueMaterial = b.mats.find("SDBlueLight");
   s->sdRoadLineMaterial = b.mats.find("SDRoadLine");
+  s->skyMaterial = b.mats.find("Sky");
+  s->groundMaterial = b.mats.find("Ground");
+  {  // ebp of the sky draw hooks (0x43321.. 0x43B0A), one per track
+    static constexpr int kBand[10] = {0x600, 0x1800, 0x600, 0xC00, 0x600, 0x600, 0x1200, 0x1200, 0x600, 0x1200};
+    if (trackIndex >= 1 && trackIndex <= 10) s->skyBand = float(kBand[trackIndex - 1]) / 16384.0f;
+  }
+  loadSky(data, trackIndex, *s);
+  if (getenv("SLIP_SKYLOG")) fprintf(stderr, "sky sprites %zu speed %g\n", s->skySprites.size(), s->skySpeed);
+  if (getenv("SLIP_SKYLOG")) for (int k : {s->skyMaterial, s->groundMaterial}) if (k >= 0) { const auto& m = s->materials[size_t(k)]; fprintf(stderr, "mat %s ramp %d..%d fallback %d:", m.name.c_str(), m.palStart, m.palEnd, m.fallbackColor); for (int i = m.palStart; i <= m.palEnd; ++i) fprintf(stderr, " %06x", s->palette.rgba[size_t(i)] & 0xffffff); fprintf(stderr, "\n"); }
   s->groupTrees = t.groupTrees;  // planes come straight from the group points (see track.cpp)
 
   // --- ship models (10 ART files): body shape of the root node plus first shape of each child ---

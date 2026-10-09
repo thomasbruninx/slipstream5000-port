@@ -71,6 +71,16 @@ struct Mesh {
   void clear() { verts.clear(); uv.clear(); polys.clear(); instances.clear(); }
 };
 
+// One sprite of the per-track sky layers (RaceLoadSkyAndScenery hooks 0x4329E..0x43AAA, drawn by 0x12BB6): a cloud, hill or sun picture placed at a direction
+// (azimuth / elevation as 16-bit angles) on the sky dome. layer 0 = low clouds (slow drift), 1 = hills (fixed), 2 = high clouds (fast drift).
+struct SkySprite {
+  Sprite img;
+  int transparent = -1;
+  double az = 0, el = 0;  // radians
+  int layer = 0;
+  float scale = 1.0f;     // on-screen size factor
+};
+
 struct Billboard {  // scenery shape that always faces the camera (TRD entry +0x38 != 0); mesh in model space
   Mesh mesh;
   Vec3 pos;         // relative to Scene::origin
@@ -89,6 +99,12 @@ struct Scene {
   std::vector<SurfaceMaterial> materials;
   std::array<PanelDetail, 32> panelDetails;
   int sdOrangeMaterial = -1, sdFloorLightMaterial = -1, sdBlueMaterial = -1, sdRoadLineMaterial = -1;
+  std::vector<SkySprite> skySprites;
+  double skySpeed = 0;                  // drift of the high layer in 1/65536 turns per second ([0x1295E]); the low layer drifts at 1/8 of it (0x12BAB)
+  float skyBand = 0.375f;               // thickness of the horizon gradient in sin(elevation): the draw hook's ebp / 0x4000 (0x600 .. 0x1800)
+  std::vector<uint32_t> skyRamp;        // "Sky" material ramp as 0xFFRRGGBB, zenith (ramp start) .. horizon (ramp end)
+  uint32_t groundColor = 0;             // "Ground" material colour (0 = none)
+  int skyMaterial = -1, groundMaterial = -1;  // the "Sky" / "Ground" materials ([0x42C9C] / [0x42C9A], RaceLoadSkyAndScenery 0x43BC3)
   int sdCageMaterial = -1;
   int sparkMaterial = -1, splashMaterial = -1;  // "Spark" / "Splash" (RaceBangInstall 0x4FD0D): the ramps of the wall sparks and water droplets
   std::array<std::array<std::array<double, 3>, 4>, 10> fragPoints{};  // ART debris list 1 positions (where the pieces start)

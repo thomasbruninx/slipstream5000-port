@@ -338,3 +338,14 @@ Decoded `0x559D8` (modes 0x11 practice / 0x12 single race / 0x13 championship), 
 `0x492E6` music, `0x492E8` language, `0x492EA` difficulty, `0x492EE` damage, `0x492F2` environment detail, `0x492FE` track map, `0x493E6` unlocked tracks (file offset = VA - 0x4924D).
 **Corrections**: the globe flags used true city coordinates; the original's table gives stylised positions. The start speed bonus (earlier note) is unrelated.
 Open question: the speed bonus table `0x50252` and the AI tier from the start slot suggest that in the original the human starts at the back; the port keeps ship number = slot.
+
+## Session: software renderer fixes (near plane, sky layers)
+* **Near plane** = 12 (`[0x18144]`, set by RaceLoadTrack 0x594EB) instead of 600; the rasterizer clips polygons to the screen guard band so huge coordinates near the camera do not produce float noise (CONFIRMED value, port-side clipping).
+* **Portal walk start** = the piece of the followed ship's track slot (`Renderer::pieceHint`), as in the original; the camera point test is only the fallback. This is what made walls / textures vanish close up on portal-only tracks (Canyon, Norway, Cave, Amazon).
+* **Panel detail near the camera**: floor lights / panel lines are no longer dropped when a corner of the polygon is behind the near plane (they are clipped instead).
+* **Sky** (hooks 0x4329E Canyon, 0x4345A Hawaii, 0x435D4 London, 0x437A7 Norway, 0x4372E Egypt, 0x4394A Amazon, 0x43AAA New York; draw 0x12BB6 / 0x12CE6; layout 0x1298E):
+  each hook resolves sprite patterns (`hawcld*A/B/C`, `cancld*`, `loncld*`, `Amacld*`, `norhill*`, `eghill*`, `NYcl**` + `NYSUNS`) to an id array and passes three lists of `u16 count + (id index, azimuth, elevation)` entries
+  (16-bit angles) plus a drift speed (`[0x1295E]`: 0x80 Hawaii, 0x10 Canyon / London, 0x60 Amazon). List 1 is drawn last and drifts at the speed, list 2 first at 1/8 of it (0x12B8E, 0x12BAB), the third list (hills) is fixed.
+  The tables are read from the executable (`loadSky` in `scene.cpp`). CONFIRMED: structure, tables, speeds, draw order. INFERRED: the picture is placed at its bottom centre at native pixel size, drift direction, and the sky colour:
+  the "Sky" material ramp (16 colours, zenith .. horizon, its last entry equals the "Ground" colour on Canyon / Norway) is used as an elevation gradient (the original shades bands through 0x1D242); "Ground" is the flat colour below the horizon.
+* Debug switches: `SLIP_PUREDEPTH` (plain z test, no scenery / road layering), `SLIP_PICK=x,y` (prints the materials written to a pixel), `SLIP_SKYLOG`, `SLIP_SHOWHIDDEN`, `SLIP_NOVIS`, `SLIP_PORTAL_LOG`.

@@ -15,7 +15,7 @@ struct Camera {
   float pitch = 0;   // radians, positive looks up (+y)
   float roll = 0;    // radians, positive banks right (right wing down); the cockpit camera follows the ship's bank
   float fovY = 1.0f; // radians
-  float nearPlane = 600.0f;
+  float nearPlane = 12.0f;  // [0x18144] = 0xC (RaceLoadTrack 0x594EB): the original clips at 12 units
 };
 
 // world = pos + R * meshVertex (R row-major 3x3). Identity for the track.
@@ -47,6 +47,10 @@ class SoftwareRenderer {
   void setViewport(int x0, int y0, int x1, int y1, float cx, float cy) { vp_ = {x0, y0, x1, y1, cx, cy}; }
   void resetViewport() { vp_ = Viewport{}; }
   void beginFrame(const Camera& cam, uint32_t skyColor, uint32_t groundColor);
+  // The track's sky: the "Sky" ramp (zenith .. horizon) replaces the flat sky colour of beginFrame when set; drawSky() adds the cloud / hill sprites (call right after beginFrame).
+  std::vector<uint32_t> skyRamp;
+  float skyBand = 0.375f;
+  void drawSky(const Scene& scene, double seconds);
   // `only` restricts drawing to the listed polygon indices. `item` >= 0 selects painter's mode: fragments of a
   // new item overwrite earlier items unconditionally (items are drawn far-to-near) and are depth-tested only
   // against fragments of the same item (the original has no global z-buffer).
@@ -66,6 +70,7 @@ class SoftwareRenderer {
   // each clipped to its window. Windows are rectangles here (the original clips to its own window too).
   struct WinRect { int x0 = 0, y0 = 0, x1 = -1, y1 = -1; bool vis = false; };
   bool portalCulling = true;
+  int pieceHint = -1;  // the piece the followed ship is in (the original starts the portal walk in the ship's track slot, not at a point test of the camera); -1 = test the camera point
   void computePortalVisibility(const Scene& scene);  // call after beginFrame()
   // True unless all eight corners of the world-minus-origin box lie outside one frustum plane (the engine's
   // bounding-volume test 0x36695 / outcodes 0x198B5).

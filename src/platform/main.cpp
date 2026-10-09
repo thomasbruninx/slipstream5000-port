@@ -259,6 +259,7 @@ int main(int argc, char** argv) {
     InputState drive;
     drive.throttle = 1;
     drive.fire = std::getenv("SLIP_FIRE") != nullptr;  // test hook: hold the trigger during --sim
+    if (const char* st = std::getenv("SLIP_STEER")) drive.steer = float(std::atof(st));  // test hook: steer during --sim
     for (double t = 0; t < simSeconds; t += 1.0 / 60.0) app.update(1.0 / 60.0, drive);
     app.update(1.0 / 60.0, simSeconds > 0 ? drive : InputState{});
     if (const char* pk = std::getenv("SLIP_PAUSE")) {  // test hook: open the pause menu, then press the listed keys (u d l r s b)

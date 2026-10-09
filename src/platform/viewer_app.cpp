@@ -897,8 +897,12 @@ void ViewerApp::drawRearMonitor() {
   const double tanHalfX = std::tan(mainCam.fovY * 0.5) * mainW / (double(HudLayout::vy1 - HudLayout::vy0 + 1) * sy);
   cam_.fovY = float(2.0 * std::atan(tanHalfX * monH / monW));
   rearPass_ = true;
-  const uint32_t sky = 0xff5a7fa8u, ground = 0xff2a2a2eu;
+  const uint32_t sky = 0xff5a7fa8u;
+  uint32_t ground = 0xff2a2a2eu;
   renderer_.setViewport(x0, y0, x1, y1, float(x0 + x1 + 1) * 0.5f, float(y0 + y1 + 1) * 0.5f);
+  renderer_.skyRamp = scene_ ? scene_->skyRamp : std::vector<uint32_t>{};
+  if (scene_) renderer_.skyBand = scene_->skyBand;
+  if (scene_ && scene_->groundColor) ground = scene_->groundColor;
   renderer_.beginFrame(cam_, sky, ground);
   drawWorld();
   renderer_.resetViewport();
@@ -987,6 +991,9 @@ void ViewerApp::renderFrame() {
   } else {
     renderer_.resetViewport();
   }
+  renderer_.skyRamp = mode_ != AppMode::Model && scene_ ? scene_->skyRamp : std::vector<uint32_t>{};
+  if (scene_) renderer_.skyBand = scene_->skyBand;
+  if (mode_ != AppMode::Model && scene_ && scene_->groundColor) ground = scene_->groundColor;
   renderer_.beginFrame(cam_, sky, ground);
   if (!scene_) return;
   drawWorld();
@@ -998,8 +1005,10 @@ void ViewerApp::drawWorld() {
   if (std::getenv("SLIP_NOCULL")) cullOverride_ = 0;
   renderer_.cullBackfaces = cullOverride_ >= 0 ? cullOverride_ != 0 : (mode_ == AppMode::Track && (painter_ || driving_));
   renderer_.shadows = !std::getenv("SLIP_NOSHADOW");
+  renderer_.drawSky(*scene_, animSeconds_);
   renderer_.animTimer = uint32_t(animSeconds_ * 16384.0);
   renderer_.portalCulling = useVisMask_ && !std::getenv("SLIP_NOPORTAL");
+  renderer_.pieceHint = driving_ && !rearPass_ && (view_ == 0 || view_ == 1 || view_ == 2 || view_ == 4) ? ai_[size_t(player_.ship)].piece : -1;
   if (mode_ == AppMode::Track) renderer_.computePortalVisibility(*scene_); else renderer_.portalCulling = false;
   renderer_.visMask = (mode_ == AppMode::Track && useVisMask_) ? scene_->visMaskAt(cam_.pos[0], cam_.pos[1], cam_.pos[2]) : 0xFFFF;
   MeshTransform xf;
