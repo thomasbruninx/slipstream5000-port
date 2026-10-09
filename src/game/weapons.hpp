@@ -77,6 +77,8 @@ struct CombatState {
   double cooldown = 0;              // [+0x30] seconds (blaster)
   double lockout = 15.0;            // [+0x4C]: the human cannot lock on for the first 15 s ([+0x4C] = 0x3A98)
   int lockTarget = -1;              // [+0x1C] ship index
+  int lockDrone = 0;                // id of the drone locked on (0 = none; own addition, the drones are not lock-on targets in the original), lockDronePos its position
+  double lockDronePos[3] = {0, 0, 0};
   bool fireHeld = false, firePrev = false;  // [+0x3C] / [+0x3D]
   double aiClock = 0;               // AI decision cadence
   int credits = 0;                  // record +4 (bonus type 4 adds 50)
@@ -85,7 +87,7 @@ struct CombatState {
 
 struct Projectile {
   int kind = 0;          // WeaponId (beam 0/1, missiles 2..8/10, mines 11)
-  int owner = -1, target = -1;
+  int owner = -1, target = -1, targetDrone = 0;
   double pos[3] = {0, 0, 0}, prev[3] = {0, 0, 0};
   double m[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};  // rows right, up, forward (the missile's orientation)
   double speed = 0;
@@ -108,7 +110,7 @@ struct Pickup {
 };
 
 // A drone as the weapons see it: beams that hit it destroy it and make it drop a bonus, other projectiles only destroy it (messages 0x202 / 0x106 of 0x4A3B2).
-struct DroneTarget { double pos[3] = {0, 0, 0}; double radius = 3000; bool alive = true; int hit = 0; /* 0 none, 1 beam, 2 other */ double hitPos[3] = {0, 0, 0}; };
+struct DroneTarget { int id = 0; double pos[3] = {0, 0, 0}; double radius = 3000; bool alive = true; int hit = 0; /* 0 none, 1 beam, 2 other */ double hitPos[3] = {0, 0, 0}; };
 
 struct Explosion {  // purely visual (the original spawns particle effects 0x4F61B / 0x4F79E / 0x4F414)
   double pos[3] = {0, 0, 0};

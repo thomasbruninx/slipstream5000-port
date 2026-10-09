@@ -16,6 +16,7 @@ namespace slip {
 struct Drone {
   double pos[3] = {0, 0, 0};
   double dir[3] = {0, 0, 1};
+  int id = 0;          // unique per race (weapons lock on by id)
   int node = -1;       // path node it flies to
   double speed = 120000;
   double phase = 0;

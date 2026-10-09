@@ -1146,9 +1146,9 @@ void ViewerApp::drawHud() {
   st.time = animSeconds_;
   st.centerX = HudLayout::cx + hudShakeX_;
   st.centerY = HudLayout::cy + hudShakeY_;
-  if (st.canLock && cs.lockTarget >= 0) {
-    const ShipState& tg = grid_[size_t(cs.lockTarget)];
-    const double tp[3] = {tg.x, tg.y, tg.z};
+  if (st.canLock && (cs.lockTarget >= 0 || cs.lockDrone)) {
+    const ShipState* tg = cs.lockTarget >= 0 ? &grid_[size_t(cs.lockTarget)] : nullptr;
+    const double tp[3] = {tg ? tg->x : cs.lockDronePos[0], tg ? tg->y : cs.lockDronePos[1], tg ? tg->z : cs.lockDronePos[2]};
     float sx, sy, z;
     if (renderer_.projectToScreen(tp, &sx, &sy, &z)) {
       st.lockVisible = true;

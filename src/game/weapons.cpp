@@ -385,6 +385,7 @@ void CombatWorld::cycleWeapon(int i) {  // 0x51248
 void CombatWorld::updateLock(const CombatContext& ctx, int i) {  // 0x50FC4..0x510C7 and the cone test 0x140BF
   CombatState& c = combat[size_t(i)];
   c.lockTarget = -1;
+  c.lockDrone = 0;
   const bool human = ctx.human.size() > size_t(i) && ctx.human[size_t(i)];
   if (human && c.selected != 0 && c.lockout > 0) return;  // 0x50FDA: no lock during the first 15 s
   int id = -1;
@@ -412,6 +413,24 @@ void CombatWorld::updateLock(const CombatContext& ctx, int i) {  // 0x50FC4..0x5
     if (dist > kLockRange || dist >= best) continue;
     best = dist;
     c.lockTarget = j;
+  }
+  if (human && ctx.drones) {  // the human's weapons also lock on drones (a nearer drone beats a farther ship)
+    for (const DroneTarget& dr : *ctx.drones) {
+      if (!dr.alive || dr.hit) continue;
+      const double d[3] = {dr.pos[0] - origin[0], dr.pos[1] - origin[1], dr.pos[2] - origin[2]};
+      double l[3];
+      toLocal(me, d, l);
+      const double ext = dr.radius;
+      if (l[2] + ext < kLockMinZ) continue;
+      if (l[2] * sn + l[0] * cs + ext < 0 || l[2] * sn - l[0] * cs + ext < 0) continue;
+      if (l[2] * sn + l[1] * cs + ext < 0 || l[2] * sn - l[1] * cs + ext < 0) continue;
+      const double dist = len3(d);
+      if (dist > kLockRange || dist >= best) continue;
+      best = dist;
+      c.lockTarget = -1;
+      c.lockDrone = dr.id;
+      for (int k = 0; k < 3; ++k) c.lockDronePos[k] = dr.pos[k];
+    }
   }
 }
 
@@ -482,7 +501,7 @@ void CombatWorld::launch(const CombatContext& ctx, int i, int weapon) {  // laun
   auto spawn = [&](int kind, const double* pos) -> Projectile& {
     projectiles.emplace_back();
     Projectile& p = projectiles.back();
-    p.kind = kind; p.owner = i; p.target = c.lockTarget;
+    p.kind = kind; p.owner = i; p.target = c.lockTarget; p.targetDrone = c.lockDrone;
     for (int k = 0; k < 3; ++k) { p.pos[k] = pos[k]; p.prev[k] = pos[k]; }
     for (int k = 0; k < 9; ++k) p.m[k] = s.m[k];
     p.radius = radius_[size_t(kind)];
@@ -586,6 +605,10 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
   }
   // heading
   const ShipState* tgt = (p.target >= 0 && p.target < int(ctx.ships.size())) ? ctx.ships[size_t(p.target)] : nullptr;
+  ShipState droneShip;  // a locked drone: a point target
+  if (!tgt && p.targetDrone && ctx.drones)
+    for (const DroneTarget& dr : *ctx.drones)
+      if (dr.id == p.targetDrone && dr.alive) { droneShip.x = dr.pos[0]; droneShip.y = dr.pos[1]; droneShip.z = dr.pos[2]; tgt = &droneShip; break; }
   if (beam) {
     if (tgt) {  // 0x5C8C8..0x5C90E: while the locked ship is within ~36 degrees of the heading the beam is re-aimed at it
       const double d[3] = {tgt->x - p.pos[0], tgt->y - p.pos[1], tgt->z - p.pos[2]};
@@ -624,7 +647,7 @@ void CombatWorld::stepProjectile(const CombatContext& ctx, Projectile& p, double
     }
     if (di >= 0) {
       DroneTarget& d = (*ctx.drones)[size_t(di)];
-      d.hit = beam ? 1 : 2;
+      d.hit = beam || p.owner == ctx.humanShip ? 1 : 2;  // own addition: anything the player shoots down leaves a bonus
       for (int k = 0; k < 3; ++k) { p.pos[k] += (np[k] - p.pos[k]) * bestD; d.hitPos[k] = d.pos[k]; }
       if (!beam) addExplosion(p.pos, 0);
       p.alive = false;

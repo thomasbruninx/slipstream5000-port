@@ -47,6 +47,7 @@ void DroneWorld::spawn(const Scene& scene, int humanNode) {
   for (int k = 0; k < 3; ++k) d.dir[k] = f[k] / l;
   ++counter_;
   d.phase = double(counter_) * 1.7;
+  d.id = int(counter_);
   drones.push_back(d);
 }
 
@@ -129,6 +130,7 @@ void DroneWorld::step(const Scene& scene, double dt, const double humanPos[3], i
   for (size_t i = 0; i < drones.size(); ++i) {
     for (int k = 0; k < 3; ++k) targets[i].pos[k] = drones[i].pos[k];
     targets[i].radius = radius;
+    targets[i].id = drones[i].id;
     targets[i].alive = true;
     targets[i].hit = 0;
   }

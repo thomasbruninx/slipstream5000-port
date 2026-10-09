@@ -74,6 +74,7 @@ int main() {
   {  // a drone between the ships: the blaster beam hits it first (0x202) and it drops a bonus; a missile only destroys it (0x106); bonus types never include the last table entry
     Rig r;
     std::vector<DroneTarget> drones(1);
+    drones[0].id = 1;  // the blaster locks on the nearer drone and the beam is re-aimed at it
     drones[0].pos[2] = 100000;
     drones[0].radius = 3000;
     r.ctx.drones = &drones;
