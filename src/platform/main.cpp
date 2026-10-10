@@ -287,17 +287,15 @@ int main(int argc, char** argv) {
         app.render();
         const std::vector<uint32_t> a(app.renderer().pixels(), app.renderer().pixels() + size_t(app.renderer().width()) * size_t(app.renderer().height()));
         const bool visRef = std::getenv("SLIP_CHECKVIS") != nullptr;  // reference = the visibility classes off as well (F5)
-        if (visRef) app.toggleVisibility(); else setenv("SLIP_NOPORTAL", "1", 1);
+        if (visRef) app.toggleVisibility(); else SDL_setenv_unsafe("SLIP_NOPORTAL", "1", 1);
         app.render();
-        if (visRef) app.toggleVisibility(); else unsetenv("SLIP_NOPORTAL");
+        if (visRef) app.toggleVisibility(); else SDL_unsetenv_unsafe("SLIP_NOPORTAL");
         size_t diff = 0;
         const uint32_t* b = app.renderer().pixels();
         for (size_t i = 0; i < a.size(); ++i) diff += a[i] != b[i];
         if (diff > 1500) {
           std::fprintf(stderr, "checkportal t=%.2f diff=%zu\n", t, diff);
           writePPM(std::string(chk) + "_" + std::to_string(int(t * 100)) + "_b.ppm", app.renderer());
-          setenv("SLIP_NOPORTAL_OFF", "1", 1);
-          unsetenv("SLIP_NOPORTAL_OFF");
           app.render();
           writePPM(std::string(chk) + "_" + std::to_string(int(t * 100)) + "_a.ppm", app.renderer());
         }

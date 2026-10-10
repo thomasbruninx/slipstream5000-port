@@ -497,7 +497,6 @@ void Renderer::drawShadowsOn(const Scene& scene, const MeshPoly& rp, int baseId,
 }
 
 void Renderer::drawRoadFloor(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat) {
-  if (std::getenv("SLIP_GLTRI")) std::fprintf(stderr, "ROADFLOOR piece %d count %d nBase %d\n", int(p.piece), int(p.count), scene.panelDetails[p.detail].nBase);
   // type 0x90 (0x4147E): two lane polygons (80 % ramp colour and one step darker) and three SDRoadLine polygons
   const PanelDetail& d = scene.panelDetails[p.detail];
   auto ramp80 = [](const SurfaceMaterial& m) { return int(m.palStart) + (((int(m.palEnd) - int(m.palStart)) * 0x3333) >> 14); };

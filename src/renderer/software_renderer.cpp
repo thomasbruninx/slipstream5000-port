@@ -100,7 +100,6 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
     else if (mat) flat = shade(scene.palette.rgba[size_t(std::clamp(flatIndex(mat, upLight), 0, 255))], 1.0f);
     else flat = shade(scene.palette.rgba[0], light);
   }
-  if (std::getenv("SLIP_GLTRI") && forceIdx >= 0) std::fprintf(stderr, "tri idx %d piece %d poly %d scr (%.0f %.0f) (%.0f %.0f) (%.0f %.0f) scis %d,%d-%d,%d\n", forceIdx, dbgTagPiece_, dbgTagPoly_, double(cx_ + a.x / a.z * focal_), double(cy_ - a.y / a.z * focal_), double(cx_ + b.x / b.z * focal_), double(cy_ - b.y / b.z * focal_), double(cx_ + c.x / c.z * focal_), double(cy_ - c.y / c.z * focal_), sx0_, sy0_, sx1_, sy1_);
   struct SP { double x, y, iw, uw, vw; };
   auto raster = [&](const float sx[3], const float sy[3], const float iw[3], const float uw[3], const float vw[3]) {
     float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);

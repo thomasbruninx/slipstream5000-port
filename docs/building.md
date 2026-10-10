@@ -8,6 +8,9 @@ Requirements everywhere: a C++20 compiler (GCC >= 11, Clang >= 14 or MinGW-w64 G
 otherwise CMake downloads the SDL3 release (`SLIP_SDL3_VERSION`, default 3.4.16) and builds it statically (`-DSLIP_FETCH_SDL3=ON` forces that). FluidSynth gives the MIDI music; without it
 the game builds and runs with sound effects only.
 
+The OpenGL renderer (`--renderer opengl`) needs no extra build dependency: it opens an OpenGL 3.3 core context through SDL3 and loads the functions itself (`src/renderer/gl_loader.cpp`); on a machine
+without OpenGL 3.3 the game falls back to the software renderer. See `docs/renderers.md`.
+
 | Target | Script | Result | MIDI music |
 |---|---|---|---|
 | macOS (Apple Silicon) | `scripts/package_macos.sh` | `dist/Slipstream.app` | yes |

@@ -1,7 +1,9 @@
-# Project status (updated 2026-10-08)
+# Project status (updated 2026-10-10)
+
+The game is playable end to end (races, championship, front end, multiplayer, sound); see README.md for the feature list and `docs/` per area. The sections below are the older research-phase log; the newest work is in `docs/renderers.md` (software and OpenGL renderers, shaders, effects), `docs/lighting.md` (real-time lighting and shadows) and `docs/research-log.md`.
 
 ## WORKING
-* **Native macOS app (arm64, SDL3)**: `build/bin/slipstream`, bundle `dist/Slipstream.app` via `scripts/package_macos.sh`. Software renderer, ~120+ fps at 960×540.
+* **Native macOS app (arm64, SDL3)**: `build/bin/slipstream`, bundle `dist/Slipstream.app` via `scripts/package_macos.sh`. Software renderer (default, ~55 fps at 960×540) or `--renderer opengl` (GPU, ~4 ms/frame, optional filtering, anti-aliasing, lighting, shadows, effects shaders).
 * Reads the user's original installation (`SLIPSTRM.RES`/`SLIPCD.RES`, loose-file fallback); **no original assets are in the source tree or the app**.
 * **Track viewer** (all 10 tracks): original geometry, textures, palette, scenery shapes, ships on the start grid. Free camera (WASD/QE, mouse look, Shift fast, `[` `]` change track, Esc quits). Gamepad: sticks move/look.
 * **Shape viewer** (F2): all 280 `.SHP` files, orbit camera. **Sprite viewer** (F3): all 886 `.SPR`.

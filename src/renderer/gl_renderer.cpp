@@ -431,7 +431,7 @@ void GlRenderer::openBatch() {
   batchOpen_ = true;
   if (curItem_ >= 0 && curItem_ != clearedItem_) {  // a new painter item: nothing it draws is tested against earlier items
     gl_.BindFramebuffer(gl::FRAMEBUFFER, renderFbo());
-    if (std::getenv("SLIP_GLCLEARALL")) setScissor(vp_.x0, vp_.y0, vp_.x1, vp_.y1); else setScissor(sx0_, sy0_, sx1_, sy1_);
+    setScissor(sx0_, sy0_, sx1_, sy1_);
     gl_.DepthMask(gl::TRUE_);
     gl_.ClearDepth(0.0);
     gl_.Clear(gl::DEPTH_BUFFER_BIT);
@@ -827,7 +827,6 @@ void GlRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, const V
     auto ch = [&](uint32_t v) { return std::min(255u, uint32_t(float(v) * light)); };
     flat = (ch((p >> 16) & 255) << 16) | (ch((p >> 8) & 255) << 8) | ch(p & 255);
   }
-  if (std::getenv("SLIP_GLTRI") && forceIdx >= 0) std::fprintf(stderr, "tri idx %d piece %d poly %d focal %.1f c %.1f %.1f scr (%.0f %.0f) (%.0f %.0f) (%.0f %.0f) scis %d,%d-%d,%d z %.0f %.0f %.0f xy (%.0f %.0f) (%.0f %.0f) (%.0f %.0f)\n", forceIdx, dbgTagPiece_, dbgTagPoly_, double(focal_), double(cx_), double(cy_), double(cx_ + a.x / a.z * focal_), double(cy_ - a.y / a.z * focal_), double(cx_ + b.x / b.z * focal_), double(cy_ - b.y / b.z * focal_), double(cx_ + c.x / c.z * focal_), double(cy_ - c.y / c.z * focal_), sx0_, sy0_, sx1_, sy1_, double(a.z), double(b.z), double(c.z), double(a.x), double(a.y), double(b.x), double(b.y), double(c.x), double(c.y));
   // Guard-band clip: a long thin polygon (a lane line from the near plane far into the distance) has screen coordinates of millions of pixels, where the GPU's edge arithmetic drops pixels.
   // Clip it to a few screens around the view in camera space first (the software renderer does the same in screen space).
   {
@@ -850,7 +849,6 @@ void GlRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, const V
         poly.swap(out);
         if (poly.size() < 3) return;
       }
-      if (std::getenv("SLIP_GLTRI") && forceIdx >= 0) { std::fprintf(stderr, "  guard clip -> %zu verts:", poly.size()); for (auto& q : poly) std::fprintf(stderr, " (%.0f %.0f)", double(cx_ + q.x / q.z * focal_), double(cy_ - q.y / q.z * focal_)); std::fprintf(stderr, "\n"); }
       guardDone_ = true;
       for (size_t k = 1; k + 1 < poly.size(); ++k) rasterTri(scene, poly[0], poly[k], poly[k + 1], mat, useTexture, light, upLight, layer, forceIdx);
       guardDone_ = false;
@@ -861,9 +859,6 @@ void GlRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, const V
   const VV* src[3] = {&a, &b, &c};
   uint8_t r, g, bl;
   unpack(flat, &r, &g, &bl);
-  if (std::getenv("SLIP_GLRED") && forceIdx == std::atoi(std::getenv("SLIP_GLRED"))) { r = 255; g = 0; bl = 0; }
-  if (const char* skip = std::getenv("SLIP_GLSKIP13")) { static int n13 = 0; if (forceIdx == 13) { int k = n13++; std::string l = std::string(skip) + ","; size_t st = 0, c; while ((c = l.find(',', st)) != std::string::npos) { if (k == std::atoi(l.substr(st, c - st).c_str())) return; st = c + 1; } } }
-  if (const char* only = std::getenv("SLIP_GLONLY")) { bool ok = false; std::string l = std::string(only) + ","; size_t st = 0, c; while ((c = l.find(',', st)) != std::string::npos) { if (forceIdx == std::atoi(l.substr(st, c - st).c_str())) ok = true; st = c + 1; } if (!ok) return; }
   openBatch();
   if (shadowMode_) {  // ship shadow: clip the triangle to the receiver polygon, then fill it
     std::vector<VV> poly = {a, b, c}, out;
