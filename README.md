@@ -75,16 +75,18 @@ Things that are not (or not exactly) in the original, mostly on request:
 * Rear monitor with the console (the original's second monitor) and the weapons monitor (the missile's view).
 * Joystick calibration pages replaced by SDL3 controller mapping (optional extra mappings in `gamecontrollerdb.txt`).
 
-## Not ported yet
-* Language switching (the original's other-language string tables and samples exist)
-* Two-player championship and split-screen layout
-* Internet play (NAT traversal, matchmaking, host migration, authentication); the network code is LAN only.
+## Planned features
+* Hardware acceleration for the renderer. Shader support and GPU optimizations are planned. (Perhaps even ray tracing in the future)
+* Improved AI behavior and additional difficulty settings. Offering more control over opponent behavior and challenge levels.
+* Internet play (NAT traversal, matchmaking, host migration, authentication); the network code is LAN only. Dedicated matchmaking services could be added in the future.
 * An app icon / installer for Windows and Linux, Linux and Windows builds that have been tested on real machines.
 * Everything is documented per area in `docs/` (start with `docs/project-status.md`; each topic file has a "Not done" section).
 
 ## Skipped features
+* Other languages than English (the original's other-language string tables and samples exist, but are not used in this reimplementation)
+* Two-player championship and split-screen layout (the original had this, but it is not implemented in this reimplementation)
 * Joystick calibration (replaced with SDL3 controller mapping).
-* Direct modem connection (the original's peer-to-peer feature).
+* Direct modem connection (the original's peer-to-peer feature, not relevant in this reimplementation).
 
 ## Layout
 `src/original_formats` parsers · `src/game` game logic (physics, AI, weapons, championship, front end) · `src/renderer` software renderer · `src/audio` mixer + music · `src/net` network code ·
