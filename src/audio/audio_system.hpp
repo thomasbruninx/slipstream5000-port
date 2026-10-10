@@ -71,6 +71,9 @@ class AudioSystem {
   // `menu` (0x530D3: the no-repeat test is skipped while [0x52F0C] is clear, i.e. outside a race): the line always plays and replaces a running one.
   bool playCue(int cue, bool menu = false);
   int cueCount() const { return int(cues_.size()); }
+  // The results screen speaks from the voice list of mode 1 (12 entries, set by 0x5A820 with VoiceSetMode(1) = 0x52F10), not from the race list: first place plays entry 0 or 1
+  // (random), place p >= 2 entry table[p] (0x5ACBC: 3, 4 ... 11). `rand` is any random number.
+  bool playResultCue(int place, unsigned rand);
   const std::string& cueSample(int cue) const;  // "EF93.SMP" ("" when out of range)
   int cueSpeaker(int cue) const;                // pilot number 1..10 of the line (entry +0x18), 0 = announcer
   // Pilot narration of the information card (voice list of mode 2 = list pointer [0x52EE4 + 2*4], 10 entries: EF01 EM23 EF05 EM27 EF04 EM24 EF02 EM26 EF03 EM25).
@@ -121,6 +124,7 @@ class AudioSystem {
   std::string speech_[2][11];
   struct Cue { std::string name; int speaker = 0; };
   std::vector<Cue> cues_;
+  std::vector<std::string> resultCues_;  // voice list of mode 1
   std::vector<std::string> narration_;
   int cueVoice_ = 0, cueSpeakerNow_ = 0;
   int cueHistory_[4] = {-1, -1, -1, -1};

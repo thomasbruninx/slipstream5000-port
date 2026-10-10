@@ -135,6 +135,16 @@ bool AudioSystem::init(const GameData& data, const AudioConfig& cfg, std::string
           narration_.emplace_back(nm, strnlen(nm, 14));
         }
     }
+    resultCues_.clear();
+    if (const uint32_t p1 = rd(0x52EE4 + 1 * 4)) {  // mode 1: the results screen lines
+      const size_t l1 = size_t(p1) + 0x10000;
+      const uint32_t n1 = rd(l1);
+      if (n1 == 12)
+        for (uint32_t i = 0; i < n1; ++i) {
+          const char* nm = reinterpret_cast<const char*>(exe->data() + kBase + l1 + 4 + size_t(i) * 0x1C);
+          resultCues_.emplace_back(nm, strnlen(nm, 14));
+        }
+    }
     const uint32_t ptr = rd(0x52EE4 + 3 * 4);
     if (ptr) {
       const size_t list = size_t(ptr) + 0x10000;
@@ -175,6 +185,20 @@ bool AudioSystem::playNarration(int ship) {
   if (cueVoice_) mixer_.stop(cueVoice_);
   cueVoice_ = 0;
   auto s = sample(narration_[size_t(ship)]);
+  if (!s) return false;
+  cueVoice_ = mixer_.play(s, 1.0f);
+  cueSpeakerNow_ = 0;
+  return cueVoice_ != 0;
+}
+
+bool AudioSystem::playResultCue(int place, unsigned rand) {
+  static const int kPlace[12] = {2, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0};  // 0x5ACBC
+  if (!enabled_ || resultCues_.empty()) return false;
+  const int entry = place == 1 ? int(rand & 1) : kPlace[std::clamp(place, 0, 11)];
+  if (entry < 0 || size_t(entry) >= resultCues_.size()) return false;
+  if (cueVoice_) mixer_.stop(cueVoice_);
+  cueVoice_ = 0;
+  auto s = sample(resultCues_[size_t(entry)]);
   if (!s) return false;
   cueVoice_ = mixer_.play(s, 1.0f);
   cueSpeakerNow_ = 0;

@@ -676,7 +676,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
           raceOverHandled_ = true;
           if (!finished_) { finished_ = true; finishRank_ = me.rank; }
           if (!opt_.noMusic && (!front_ || netplay_)) audio_.playMusic(finishRank_ > 3 ? "LOSE.HMP" : "WIN.HMP", false);  // with the menus the results screen plays it
-          if (voicesOn() && (!front_ || netplay_)) audio_.playCue(finishRank_ == 1 ? (std::rand() & 1) : finishRank_ + 1);  // 0x5A9A9..0x5A9CC (with the menus the results screen plays it)
+          if (voicesOn() && (!front_ || netplay_)) audio_.playResultCue(finishRank_, unsigned(std::rand()));  // 0x5A9A9..0x5A9CC (with the menus the results screen plays it)
         }
       }
       if (introMode_) updateFlyThrough(dt);

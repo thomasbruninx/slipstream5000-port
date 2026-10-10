@@ -1043,7 +1043,7 @@ void FrontEnd::showResults(const RaceResult& r) {
   if (audio_) audio_->playMusic(r.place[std::clamp(r.ship, 0, 9)] > 3 ? "LOSE.HMP" : "WIN.HMP", false);  // results screen 0x5A820: WIN.HMP for the first three places, else LOSE.HMP
   if (audio_ && (!cfg_ || cfg_->speech) && !r.noVoice) {  // 0x5A9A9..0x5A9CC: the pilot's line for the place (first place: one of two), when the results screen opens
     const int pl = r.place[std::clamp(r.ship, 0, 9)];
-    audio_->playCue(pl == 1 ? (std::rand() & 1) : pl + 1, true);
+    audio_->playResultCue(pl, unsigned(std::rand()));
   }
 }
 

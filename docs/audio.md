@@ -42,7 +42,7 @@ Offline rendering for checks: `slipstream_audio_dump --music INGAME2.HMP --secon
 * **Weapons, pickups, voices** (this phase, `docs/weapons.md`): BLASTER (beam launch), MISSILE (missile / smoker launch), MINEDROP, LASERHIT,
   DISRUPTR, EXPLOSN (missile / mine hit and wall explosion), BOMBER, SCRAMBLE, HYPERNEU, AMBLER (hit sounds), BONUSCOL (pickups), ENGSTART (booster on)
   are played positionally like every other effect. Pilot / announcer lines come from the 85-entry cue list of the executable
-  (`AudioSystem::playCue`): one voice at a time, a cue is dropped while the previous one still plays and when it equals one of the last four.
+  (`AudioSystem::playCue`; the results screen speaks from the separate 12-entry list of mode 1, EM28a..EM37, `playResultCue`: the original switches the voice list with 0x52F10 and cue 0 of the race list is the out-of-ammo line): one voice at a time, a cue is dropped while the previous one still plays and when it equals one of the last four.
 * **Not wired** because the port has nothing to trigger them: menu sounds (SELECT), the speech samples used by menus, and
   the **jet-by** (JETPASS1): in the original it belongs to the trackside TV camera (`0x45196` picks a camera spot, plays
   JETPASS1 at volume 0x4000 when a ship faster than 0x2BA3E passes within 0x17D40 of it).

@@ -235,7 +235,7 @@ class CombatWorld {
 
 // Voice cue tables of the original (index = pilot class 1..10 -> cue number in the 85 entry list of mode 3).
 namespace cues {
-constexpr int outOfAmmo = 0, wonRace = 0, wonRace2 = 1, shipBreaking1 = 2, shipBreaking2 = 3;
+constexpr int outOfAmmo = 0, shipBreaking1 = 2, shipBreaking2 = 3;  // (the results lines are not in this list: AudioSystem::playResultCue)
 inline int contact(int cls) { return 3 + cls; }          // 0x509BA
 inline int hitByHuman(int cls) { return 13 + cls; }      // 0x50881
 inline int passLine1(int cls) { return 23 + cls; }       // 0x50C03
