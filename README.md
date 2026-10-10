@@ -45,7 +45,7 @@ all remappable in *Configuration > Controls > Controller*.
 
 ## Features implemented
 **Game data and rendering**
-* **Renderers**: a software renderer (the default, follows the original's structure) and an **OpenGL renderer with shader support** (`--renderer opengl`, optional texture filtering `--filter bilinear|smooth`, MSAA `--aa 4`, post-processing `--shader crt|smooth|sharpen|fxaa|<your own>`, effects shaders for water, smoke, fire and sparks `--fx`, real-time lighting with specular, sun shadows, ambient occlusion and bloom `--lighting lights|shadows`, see `docs/lighting.md`), both behind one renderer interface; see `docs/renderers.md`.
+* **Renderers**: a software renderer (the default, follows the original's structure) and an **OpenGL renderer with shader support** (`--renderer opengl`, optional texture filtering `--filter bilinear|smooth`, MSAA `--aa 4`, post-processing `--shader crt|smooth|sharpen|fxaa|<your own>`, effects shaders for water, smoke, fire and sparks `--fx`, real-time lighting with specular, sun shadows, ambient occlusion and bloom `--lighting lights|shadows`, see `docs/lighting.md`); all of it can be set in *Configuration > Detail* (restart needed, fullscreen applies at once), both behind one renderer interface; see `docs/renderers.md`.
 * Parsers for the original formats (resource archives, tracks, shapes, sprites, fonts, string tables, samples, MIDI, movies, animation scripts, config / save files); software renderer that follows the original's structure (portal visibility, BSP painter order, shade ramps, billboards, shadows, translucent decals).
 * All 10 tracks, all 10 craft with their reference points, doors, pit lane, crowds, ambient effects.
 

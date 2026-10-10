@@ -40,6 +40,7 @@ add_library(slipstream_core STATIC
   src/game/particles.cpp
   src/game/hud.cpp
   src/game/pause_menu.cpp
+  src/game/graphics_settings.cpp
   src/game/settings_file.cpp
   src/game/globe.cpp
   src/game/championship.cpp

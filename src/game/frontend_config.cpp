@@ -39,14 +39,27 @@ std::vector<FrontEnd::CfgRow> FrontEnd::cfgRows() {
       r.push_back({"CAT4", onOff("GENERAL.ST0", s.trackMap), flip(&s.trackMap)});
       r.push_back({"CAT5", s.kph ? "km/h" : "mph", flip(&s.kph)});
       break;
-    case CfgPage::Detail:
-      r.push_back({"CAT1", std::to_string(s.detail + 1), [&s](int d) { s.detail = std::clamp(s.detail + d, 0, 3); }});
-      r.push_back({"CAT2", onOff("DETAIL.ST0", s.clouds), flip(&s.clouds)});
-      r.push_back({"CAT3", text("DETAIL.ST0", "SHA" + std::to_string(s.shading)), [&s](int d) { s.shading = (s.shading + d + 3) % 3; }});
-      r.push_back({"CAT4", text("DETAIL.ST0", s.texturesCoarse ? "TEXC" : "TEXF"), flip(&s.texturesCoarse)});
-      r.push_back({"CAT5", text("DETAIL.ST0", s.windowReduced ? "WIN1" : "WIN0"), flip(&s.windowReduced)});
-      r.push_back({"CAT6", onOff("DETAIL.ST0", s.shadows), flip(&s.shadows)});
+    case CfgPage::Detail: {  // the port's graphics options (the original's detail options were never used here)
+      auto cyc = [&s](int* v, int n) { return [&s, v, n](int d) { *v = (*v + (d == 0 ? 1 : d) + n) % n; (void)s; }; };
+      r.push_back({"", std::string("Renderer: ") + GameSettings::rendererName(s.renderer), cyc(&s.renderer, 2)});
+      r.push_back({"", std::string("Fullscreen: ") + (s.fullscreen ? "On" : "Off"), flip(&s.fullscreen)});
+      r.push_back({"", std::string("Resolution: ") + GameSettings::resolutionName(s.resolution), cyc(&s.resolution, GameSettings::kResolutionCount)});
+      r.push_back({"", std::string("Texture filter: ") + GameSettings::filterName(s.filter), cyc(&s.filter, 3)});
+      r.push_back({"", std::string("Anti-aliasing: ") + GameSettings::aaName(s.aa), cyc(&s.aa, 4)});
+      r.push_back({"", std::string("Lighting: ") + GameSettings::lightingName(s.lighting), cyc(&s.lighting, 3)});
+      r.push_back({"", std::string("Effects shaders: ") + (s.fx ? "On" : "Off"), flip(&s.fx)});
+      r.push_back({"", "More effects...", [this](int) { cfgPage_ = CfgPage::Effects; cfgHov_ = -1; }});
       break;
+    }
+    case CfgPage::Effects: {
+      auto cyc = [](int* v, int n) { return [v, n](int d) { *v = (*v + (d == 0 ? 1 : d) + n) % n; }; };
+      r.push_back({"", std::string("Draw distance: ") + GameSettings::distanceName(s.detail), cyc(&s.detail, 4)});
+      r.push_back({"", std::string("Post shader: ") + GameSettings::postName(s.postShader), cyc(&s.postShader, 5)});
+      r.push_back({"", std::string("Ambient occlusion: ") + (s.ao ? "On" : "Off"), flip(&s.ao)});
+      r.push_back({"", std::string("Bloom: ") + (s.bloom ? "On" : "Off"), flip(&s.bloom)});
+      r.push_back({"", std::string("Ship shadows: ") + (s.shadows ? "On" : "Off"), flip(&s.shadows)});
+      break;
+    }
     case CfgPage::Difficulty:
       r.push_back({"CAT1", text("DIFF.ST0", "LEV" + std::to_string(s.difficulty)), [&s](int d) { s.difficulty = (s.difficulty + d + 3) % 3; }});
       r.push_back({"CAT2", onOff("DIFF.ST0", s.damage), flip(&s.damage)});
@@ -91,7 +104,7 @@ const char* FrontEnd::cfgFile() const {
   switch (cfgPage_) {
     case CfgPage::General: return "GENERAL.ST0";
     case CfgPage::Controls: case CfgPage::Keys: case CfgPage::Pad: return "CONTROLS.ST0";
-    case CfgPage::Detail: return "DETAIL.ST0";
+    case CfgPage::Detail: case CfgPage::Effects: return "DETAIL.ST0";
     case CfgPage::Difficulty: return "DIFF.ST0";
     case CfgPage::Sound: return "SOUND.ST0";
     default: return "CONFIG.ST0";
@@ -116,7 +129,7 @@ int FrontEnd::cfgZoneAt(int x, int y) {
     return -1;
   }
   const int n = int(cfgRows().size());
-  for (int i = 0; i < n; ++i) { int y1, y2; rowSpan(cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad, i, &y1, &y2); if (in(Z{25, y1, 281, y2})) return i; }
+  for (int i = 0; i < n; ++i) { int y1, y2; rowSpan(packedPage(cfgPage_), i, &y1, &y2); if (in(Z{25, y1, 281, y2})) return i; }
   return in(kOkZ) ? n : -1;
 }
 
@@ -131,7 +144,7 @@ void FrontEnd::cfgActivate(int i, int dir) {
   }
   const int n = int(cfgRows().size());
   if (i >= n) {  // Ok: back (the key page to the controls page, the others to the main page)
-    cfgPage_ = cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad ? CfgPage::Controls : CfgPage::Main;
+    cfgPage_ = cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad ? CfgPage::Controls : cfgPage_ == CfgPage::Effects ? CfgPage::Detail : CfgPage::Main;
     cfgHov_ = -1;
     return;
   }
@@ -144,7 +157,7 @@ void FrontEnd::cfgKey(Key k) {
   if (keyWait_ || padWait_) { keyWait_ = padWait_ = false; return; }  // Esc cancels the capture (a pressed key / button arrives through rawKey / rawPad)
   if (k == Key::Back) {
     if (cfgPage_ == CfgPage::Main) { cfgChanged_ = true; go(Screen::Main); }
-    else { cfgPage_ = cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad ? CfgPage::Controls : CfgPage::Main; cfgHov_ = -1; }
+    else { cfgPage_ = cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad ? CfgPage::Controls : cfgPage_ == CfgPage::Effects ? CfgPage::Detail : CfgPage::Main; cfgHov_ = -1; }
   } else if (k == Key::Up) cfgHov_ = cfgHov_ <= 0 ? n - 1 : cfgHov_ - 1;
   else if (k == Key::Down) cfgHov_ = cfgHov_ < 0 || cfgHov_ >= n - 1 ? 0 : cfgHov_ + 1;
   else if (k == Key::Left) { if (cfgPage_ == CfgPage::Main) { if (cfgHov_ == 1 || cfgHov_ == 4) cfgHov_ -= 1; else if (cfgHov_ < 0) cfgHov_ = 0; } else cfgActivate(cfgHov_, -1); }
@@ -172,14 +185,14 @@ void FrontEnd::drawConfig() {
   HudCanvas c; c.fb = buf_.data(); c.w = W; c.h = H; c.pal = &pal_;
   c.blit(*A, 0, 0, -1);
   const std::string file = cfgFile();
-  frameButton(kTitleZ.x1, kTitleZ.y1, kTitleZ.x2, kTitleZ.y2, B, text(file, "TITL"));
+  frameButton(kTitleZ.x1, kTitleZ.y1, kTitleZ.x2, kTitleZ.y2, B, cfgPage_ == CfgPage::Effects ? std::string("Effects") : text(file, "TITL"));
   const Font* f = font("CNFFONT.FNT");
   if (cfgPage_ == CfgPage::Main) {
     for (int i = 0; i < 6; ++i) frameButton(kMainZ[i].x1, kMainZ[i].y1, kMainZ[i].x2, kMainZ[i].y2, cfgHov_ == i ? A : B, text("CONFIG.ST0", kMainTag[i]));
     return;
   }
   const auto rows = cfgRows();
-  const bool keysPage = cfgPage_ == CfgPage::Keys || cfgPage_ == CfgPage::Pad;
+  const bool keysPage = packedPage(cfgPage_);
   for (size_t i = 0; i < rows.size(); ++i) {
     int y, y2;
     rowSpan(keysPage, int(i), &y, &y2);
@@ -193,6 +206,10 @@ void FrontEnd::drawConfig() {
     }
   }
   frameButton(kOkZ.x1, kOkZ.y1, kOkZ.x2, kOkZ.y2, cfgHov_ == int(rows.size()) ? A : B, text(file, "BUT1"));
+  if ((cfgPage_ == CfgPage::Detail || cfgPage_ == CfgPage::Effects) && cfg_ && cfg_->graphicsChanged() && f) {  // the graphics options are read at start-up
+    const std::string note = "Restart to apply the changes";
+    drawText(*f, note, (W - f->textWidth(note)) / 2, 189, -1);
+  }
 }
 
 // a key was pressed while a key row waits for it: bind it (a key that another action uses is swapped over)

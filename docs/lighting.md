@@ -33,6 +33,9 @@ side that faces it; polygons without a normal get their geometric one; lines, sh
 * **Bloom** (`--no-bloom`): bright / emissive parts (lamp panels, specular glints, explosions) glow; half-resolution blur, added before a soft tone-mapping shoulder (the lit picture is HDR, RGBA16F).
 * Ship cards (garage, best drivers, results) are drawn without real-time lighting, with the original colours.
 
+## Draw distance
+The *Draw distance* option (*Configuration > Detail > More effects*, applied at once) scales how far lights and shadows reach: the lamps considered around the camera (base 500,000 units beyond their own radius), the wide sun shadow map (radius 650,000 units) and the sharp one (110,000, scaled by the square root). 0.6x / 1x / 2x / 3.5x for Short / Medium / Long / Maximum. A short distance pops lamps and far shadows in earlier; the cost of the maximum is small.
+
 ## Tuning
 All values are in `buildLighting` (environment table, lamp colour / radius / indoor level) and the light multiplier in `GlRenderer::prepareLighting`; the shading itself is in `scene.frag` (replaceable, see renderers.md).
 

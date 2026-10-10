@@ -38,7 +38,7 @@ struct AppOptions {
   std::string shape;
   std::string sprite;
   int width = 960, height = 540;
-  std::string renderer = "software";   // --renderer: software | opengl
+  std::string renderer = "";     // "" = the saved setting (default software)   // --renderer: software | opengl
   std::string shader;                  // --shader: post-processing shader of the OpenGL renderer
   std::string filter = "nearest";      // --filter: texture filtering of the OpenGL renderer
   std::string lighting = "off";        // --lighting: real-time lighting of the OpenGL renderer (off | lights | shadows)
@@ -81,6 +81,8 @@ class ViewerApp {
   void update(double dt, const InputState& in);
   void render();  // 3D view, HUD, and the multiplayer menu on top
   const Renderer& renderer() const { return *renderer_; }
+  bool wantFullscreen() const { return settings_.fullscreen; }          // the Detail menu's toggle (applied by the window loop)
+  void setFullscreenSetting(bool on) { settings_.fullscreen = on; }
   std::vector<std::string> hudLines() const;
 
   // commands from the platform layer

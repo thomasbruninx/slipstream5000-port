@@ -14,6 +14,7 @@
 
 #include "platform/viewer_app.hpp"
 #include "original_formats/user_dir.hpp"
+#include "game/settings_file.hpp"
 
 using namespace slip;
 
@@ -27,7 +28,8 @@ static void usage() {
       "  --drive             start driving ship --ship\n"
       "  --ship N            0..9\n"
       "  --ship-scale F      display scale for ship models (default 1 = original size)\n"
-      "  --res WxH           internal render size (default 960x540)\n"
+      "  --res WxH           internal render size (default 960x540, or the Detail menu setting)\n"
+      "  --fullscreen / --windowed  start in fullscreen / a window (default: the Detail menu setting)\n"
       "  --renderer NAME     3D renderer: software (default) | opengl\n"
       "  --shader NAME       post-processing shader of the opengl renderer: crt | smooth | sharpen | fxaa | <post_NAME.frag in the shader folder>\n"
       "  --filter MODE       texture filtering of the opengl renderer: nearest (default, the original's look) | bilinear | smooth\n"
@@ -179,6 +181,7 @@ int main(int argc, char** argv) {
     else if (a == "--fx") opt.fx = true;
     else if (a == "--no-ao") opt.ao = false;
     else if (a == "--no-bloom") opt.bloom = false;
+    else if (a == "--fullscreen" || a == "--windowed") {}
     else if (a == "--res") { if (std::sscanf(next("--res"), "%dx%d", &opt.width, &opt.height) != 2) { usage(); return 2; } }
     else if (a == "--screenshot") screenshot = next("--screenshot");
     else if (a == "--sim") simSeconds = std::atof(next("--sim"));
@@ -211,6 +214,28 @@ int main(int argc, char** argv) {
   if (!screenshot.empty() && simSeconds > 0) opt.countdown = false;
   if (opt.netRole.empty() && !viewer && (frontForced || (screenshot.empty() && bench == 0 && netRun <= 0))) opt.front = true;
   if (!screenshot.empty() || bench > 0 || netRun > 0) opt.audio.openDevice = false;  // headless runs stay silent (no device, nothing rendered)
+  // graphics options: the command line wins, then the saved settings of the configuration menu, then the defaults
+  bool fullscreenAtStart = false;
+  {
+    auto given = [&](const char* flag) { for (int i = 1; i < argc; ++i) if (std::strcmp(argv[i], flag) == 0) return true; return false; };
+    const SavedConfig sc = loadConfig();
+    const GameSettings& g = sc.settings;
+    if (sc.present) {
+      if (!given("--renderer")) opt.renderer = GameSettings::rendererName(g.renderer);
+      if (!given("--res")) GameSettings::resolutionSize(g.resolution, &opt.width, &opt.height);
+      if (!given("--filter")) opt.filter = g.filter == 1 ? "bilinear" : g.filter == 2 ? "smooth" : "nearest";
+      if (!given("--aa")) opt.aa = GameSettings::aaSamples(g.aa);
+      if (!given("--lighting")) opt.lighting = g.lighting == 1 ? "lights" : g.lighting == 2 ? "shadows" : "off";
+      if (!given("--fx")) opt.fx = g.fx;
+      if (!given("--no-ao")) opt.ao = g.ao;
+      if (!given("--no-bloom")) opt.bloom = g.bloom;
+      if (!given("--shader")) opt.shader = GameSettings::postShaderId(g.postShader);
+      fullscreenAtStart = g.fullscreen;
+    }
+    if (given("--fullscreen")) fullscreenAtStart = true;
+    if (given("--windowed")) fullscreenAtStart = false;
+    if (opt.renderer.empty()) opt.renderer = "software";
+  }
   ViewerApp app;
   std::string err;
   if (!app.init(opt, &err)) {
@@ -330,6 +355,9 @@ int main(int argc, char** argv) {
   if (!tex) { std::fprintf(stderr, "texture: %s\n", SDL_GetError()); return 1; }
   SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_LINEAR);
   SDL_SetWindowRelativeMouseMode(window, true);
+  bool isFullscreen = false;
+  if (fullscreenAtStart && SDL_SetWindowFullscreen(window, true)) isFullscreen = true;
+  app.setFullscreenSetting(isFullscreen);
 
   Pads pads;
   {  // extra mappings for pads SDL does not know (the SDL_GAMECONTROLLERCONFIG variable works as well)
@@ -654,6 +682,7 @@ int main(int argc, char** argv) {
       if (wantText != textInput) { if (wantText) SDL_StartTextInput(window); else SDL_StopTextInput(window); textInput = wantText; }
     }
     app.update(dt, in);
+    if (app.wantFullscreen() != isFullscreen) { if (SDL_SetWindowFullscreen(window, app.wantFullscreen())) isFullscreen = app.wantFullscreen(); else app.setFullscreenSetting(isFullscreen); }
     app.render();
 
     SDL_UpdateTexture(tex, nullptr, app.renderer().pixels(), opt.width * int(sizeof(uint32_t)));

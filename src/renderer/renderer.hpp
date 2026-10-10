@@ -127,6 +127,7 @@ class Renderer {
   std::vector<PointLight> frameLights;  // world coordinates
   void addLight(const double pos[3], float r, float g, float b, float radius) { frameLights.push_back({{pos[0], pos[1], pos[2]}, {r, g, b}, radius}); }
   int lightingMode = 0;
+  float drawDistance = 1.0f;   // scales how far lights and sun shadows reach (the Draw distance setting): lamps and shadow maps beyond it pop in
   // Ripples on water (a back end with a water shader animates them): rings spreading from a point where a craft skims or hits the water. world = world coordinates, age in seconds.
   struct Ripple { double pos[3]; float age; float strength; };
   std::vector<Ripple> ripples;

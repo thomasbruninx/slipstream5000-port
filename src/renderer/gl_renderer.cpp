@@ -585,7 +585,7 @@ void GlRenderer::prepareLighting(const Scene& sc) {
   for (const StaticLight& l : sc.lights) {
     const double d[3] = {double(l.pos[0]) - camRel[0], double(l.pos[1]) - camRel[1], double(l.pos[2]) - camRel[2]};
     const double dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-    if (dist > double(l.radius) + 500000.0) continue;
+    if (dist > double(l.radius) + 500000.0 * double(drawDistance)) continue;
     cands.push_back({float(dist / double(l.radius)), {d[0], d[1], d[2]}, {l.color[0], l.color[1], l.color[2]}, l.radius});
   }
   for (const PointLight& l : frameLights) {
@@ -636,7 +636,7 @@ void GlRenderer::uploadStaticCasters(const Scene& sc) {
 void GlRenderer::renderShadowMap(const Scene& sc) {
   if (casterScene_ != &sc) uploadStaticCasters(sc);
   static const int kSize[2] = {4096, 2048};
-  static const double kRadius[2] = {110000.0, 650000.0};
+  const double kRadius[2] = {110000.0 * std::sqrt(double(drawDistance)), 650000.0 * double(drawDistance)};
   const LightingEnv& env = sc.env;
   double lz[3] = {env.sunDir[0], env.sunDir[1], env.sunDir[2]};
   auto norm = [](double* v) { const double l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); if (l > 0) for (int i = 0; i < 3; ++i) v[i] /= l; };

@@ -193,7 +193,8 @@ class FrontEnd {
   void champRaceFinished();  // results -> points and prize money -> positions / final positions
   void champStart();         // the pilot card was accepted in the championship
   // configuration screens (frontend_config.cpp): the options live in the application's GameSettings (setSettings), the screens edit them directly
-  enum class CfgPage { Main, General, Controls, Keys, Pad, Detail, Difficulty, Sound };
+  enum class CfgPage { Main, General, Controls, Keys, Pad, Detail, Effects, Difficulty, Sound };
+  static bool packedPage(CfgPage p) { return p == CfgPage::Keys || p == CfgPage::Pad || p == CfgPage::Detail || p == CfgPage::Effects; }  // pages with narrow rows whose text is the whole row
   struct CfgRow;
   GameSettings* cfg_ = nullptr;
   GameSettings cfgLocal_;

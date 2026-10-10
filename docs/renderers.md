@@ -10,6 +10,20 @@ The game can draw its 3D view with different back ends, chosen with `--renderer 
 If a back end cannot start (no display, no OpenGL 3.3, a broken shader) the game says why and falls back to the software renderer. `--shader NAME` selects a post-processing shader for the OpenGL
 back end, `--filter MODE` the texture filtering and `--aa N` multisample anti-aliasing (see below).
 
+## Choosing the graphics in the game
+*Configuration > Detail* (main menu and pause menu) replaces the original's unused detail options with the port's graphics settings, saved in `config.txt` of the per-user folder:
+
+| option | values |
+|---|---|
+| Renderer | Software / OpenGL |
+| Fullscreen | On / Off (applied at once) |
+| Resolution | internal render size: 640x360, 960x540, 1280x720, 1600x900, 1920x1080 (the picture is scaled to the window) |
+| Texture filter, Anti-aliasing, Lighting, Effects shaders | the OpenGL options described below (`--filter`, `--aa`, `--lighting`, `--fx`) |
+| More effects... | **draw distance** (Short / Medium / Long / Maximum, applied at once: scenery size cull, reach of lamps and dynamic lights, and the range of the wide sun shadow map = 0.6x / 1x / 2x / 3.5x of the base distance; Maximum is the default), post shader (Off / CRT / Smooth / Sharpen / FXAA), ambient occlusion, bloom, ship shadows (software blob shadows) |
+
+Everything except fullscreen and the draw distance is read when the game starts: after a change the menu says "Restart to apply the changes". Command line options win over the saved settings (`--renderer`, `--res`, `--filter`,
+`--aa`, `--lighting`, `--fx`, `--no-ao`, `--no-bloom`, `--shader`, `--fullscreen`, `--windowed`).
+
 ## Architecture
 
 ```

@@ -25,6 +25,31 @@ struct GameSettings {
   bool sfxOn = true, speech = true, musicOn = true;
   int engine = 2;                   // engine sounds: 0 off, 1 quiet, 2 normal (CFG word 0x492E2)
   int shading = 2;                  // 0 none, 1 Gouraud, 2 specular
+  // Graphics (the port's own, Detail / Effects pages). Everything but `fullscreen` is read at start-up: the menus tell the player that a restart is needed (graphicsChanged()).
+  int renderer = 0;                 // 0 software, 1 OpenGL
+  int resolution = 1;               // index into kResolutions: the internal render size
+  bool fullscreen = false;          // applied at once
+  int filter = 0;                   // OpenGL: 0 nearest, 1 bilinear, 2 smooth
+  int aa = 0;                       // OpenGL: index into kAaSamples: 0 off, 2x, 4x, 8x
+  int lighting = 0;                 // OpenGL: 0 off, 1 lights, 2 lights + sun shadows
+  bool fx = false;                  // OpenGL: effects shaders (water, smoke, fire, sparks)
+  bool ao = true, bloom = true;     // OpenGL with lighting: ambient occlusion, bloom
+  int postShader = 0;               // OpenGL: 0 none, 1 crt, 2 smooth, 3 sharpen, 4 fxaa
+  std::string gfxLaunch;            // graphicsSignature() of what the running game started with (not saved)
+  static constexpr int kResolutionCount = 5;
+  static const char* resolutionName(int i);          // "960 x 540"
+  static void resolutionSize(int i, int* w, int* h);
+  static int aaSamples(int i) { return i <= 0 ? 0 : i == 1 ? 2 : i == 2 ? 4 : 8; }
+  static const char* distanceName(int i) { return i <= 0 ? "Short" : i == 1 ? "Medium" : i == 2 ? "Long" : "Maximum"; }   // the `detail` field: draw distance of scenery, lights and shadows
+  static float distanceScale(int i) { return i <= 0 ? 0.6f : i == 1 ? 1.0f : i == 2 ? 2.0f : 3.5f; }
+  static const char* rendererName(int i) { return i == 1 ? "OpenGL" : "Software"; }
+  static const char* filterName(int i) { return i == 1 ? "Bilinear" : i == 2 ? "Smooth" : "Nearest"; }
+  static const char* aaName(int i) { return i == 1 ? "2x" : i == 2 ? "4x" : i == 3 ? "8x" : "Off"; }
+  static const char* lightingName(int i) { return i == 1 ? "Lights" : i == 2 ? "Lights and shadows" : "Off"; }
+  static const char* postName(int i) { return i == 1 ? "CRT" : i == 2 ? "Smooth" : i == 3 ? "Sharpen" : i == 4 ? "FXAA" : "Off"; }
+  static const char* postShaderId(int i) { return i == 1 ? "crt" : i == 2 ? "smooth" : i == 3 ? "sharpen" : i == 4 ? "fxaa" : ""; }
+  std::string graphicsSignature() const;               // the settings that need a restart (everything but fullscreen)
+  bool graphicsChanged() const { return !gfxLaunch.empty() && graphicsSignature() != gfxLaunch; }
   KeyMap keys;                      // the race controls (Controls page)
 };
 
@@ -44,7 +69,7 @@ class PauseMenu {
   int sel() const { return sel_; }
 
  private:
-  enum class Page { Main, Config, Sound, General, Difficulty, Detail, Controls };
+  enum class Page { Main, Config, Sound, General, Difficulty, Detail, Effects, Controls };
   std::vector<std::string> items(const GameSettings& s) const;
   std::string title() const;
   std::string optMain_[4] = {"Continue Race", "Configuration", "Quit Race", "Exit game"};

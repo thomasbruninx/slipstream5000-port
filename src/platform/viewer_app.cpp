@@ -62,6 +62,7 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
       progress_ = sc.progress;
     }
     settings_.difficulty = aiTables_.difficulty;
+    settings_.gfxLaunch = settings_.graphicsSignature();  // what the graphics menus compare with to tell that a restart is needed
     applySettings();
     renderer_->shadows = settings_.shadows;
   }
@@ -1343,6 +1344,7 @@ void ViewerApp::applySettings() {
   combat_.difficulty = settings_.difficulty;
   static const float kDetail[4] = {32.0f, 20.0f, 10.0f, 5.0f};  // scenery size thresholds of the Detail option (0x350C7)
   renderer_->minScenerySize = kDetail[std::clamp(settings_.detail, 0, 3)];
+  renderer_->drawDistance = GameSettings::distanceScale(settings_.detail);
 }
 
 void ViewerApp::menuKey(PauseMenu::Key k) {

@@ -25,6 +25,7 @@ std::string PauseMenu::title() const {
     case Page::General: return optConfig_[0];
     case Page::Difficulty: return optConfig_[4];
     case Page::Detail: return optConfig_[2];
+    case Page::Effects: return "Effects";
     case Page::Controls: return optConfig_[1];
   }
   return "";
@@ -38,7 +39,13 @@ std::vector<std::string> PauseMenu::items(const GameSettings& s) const {
     case Page::Sound: return {"Music  " + pct(s.music), "Effects  " + pct(s.sfx), optConfig_[3]};
     case Page::General: return {std::string("Speed  ") + (s.kph ? "kph" : "mph"), std::string("Track map  ") + (s.trackMap ? "on" : "off"), optConfig_[3]};
     case Page::Difficulty: return {std::string("Level (main menu)  ") + std::to_string(s.difficulty) + (s.difficulty == 0 ? " (easy)" : s.difficulty == 1 ? " (normal)" : " (hard)"), optConfig_[3]};
-    case Page::Detail: return {"Detail  " + std::to_string(s.detail), optConfig_[3]};
+    case Page::Detail:
+      return {std::string("Renderer  ") + GameSettings::rendererName(s.renderer), std::string("Fullscreen  ") + (s.fullscreen ? "on" : "off"), std::string("Resolution  ") + GameSettings::resolutionName(s.resolution),
+              std::string("Filter  ") + GameSettings::filterName(s.filter), std::string("Anti-aliasing  ") + GameSettings::aaName(s.aa), std::string("Lighting  ") + GameSettings::lightingName(s.lighting),
+              std::string("Effects  ") + (s.fx ? "on" : "off"), "More effects...", s.graphicsChanged() ? "Continue (restart to apply)" : optConfig_[3]};
+    case Page::Effects:
+      return {std::string("Draw distance  ") + GameSettings::distanceName(s.detail), std::string("Post shader  ") + GameSettings::postName(s.postShader), std::string("Ambient occlusion  ") + (s.ao ? "on" : "off"), std::string("Bloom  ") + (s.bloom ? "on" : "off"),
+              std::string("Ship shadows  ") + (s.shadows ? "on" : "off"), s.graphicsChanged() ? "Continue (restart to apply)" : optConfig_[3]};
     case Page::Controls:
       return {"Cursor keys  steer / pitch", "Space  accelerate", "Alt  fire    Ctrl  select weapon", "F1 cockpit  F2 chase  F3 rear", "F4 TV  F5 free (keypad)", optConfig_[3]};  // defaults; remap in the main menu
   }
@@ -52,8 +59,9 @@ PauseMenu::Action PauseMenu::key(Key k, GameSettings* s) {
   if (k == Key::Down) { sel_ = (sel_ + 1) % n; return Action::None; }
   if (k == Key::Back) {
     if (page_ == Page::Main) { open_ = false; return Action::Resume; }
-    page_ = (page_ == Page::Config) ? Page::Main : Page::Config;
-    sel_ = 0;
+    const bool wasEffects = page_ == Page::Effects;
+    page_ = wasEffects ? Page::Detail : (page_ == Page::Config) ? Page::Main : Page::Config;
+    sel_ = wasEffects ? 7 : 0;
     return Action::None;
   }
   const int dir = k == Key::Left ? -1 : k == Key::Right ? 1 : 0;  // Select acts like "right" on value rows
@@ -89,10 +97,33 @@ PauseMenu::Action PauseMenu::key(Key k, GameSettings* s) {
       // the level can only be changed from the main menu's configuration screen: the original greys the button out during a race (0x47421, [0x47230] = 0)
       if (sel_ != 0 && k == Key::Select) { page_ = Page::Config; sel_ = 3; }
       return Action::None;
-    case Page::Detail:
-      if (sel_ == 0) s->detail = dir == 0 ? (s->detail + 1) % 4 : step(s->detail, 0, 3);
-      else if (k == Key::Select) { page_ = Page::Config; sel_ = 2; }
+    case Page::Detail: {
+      auto cyc = [&](int cur, int count) { return (cur + (dir == 0 ? 1 : dir) + count) % count; };
+      switch (sel_) {
+        case 0: s->renderer = cyc(s->renderer, 2); break;
+        case 1: s->fullscreen = !s->fullscreen; break;
+        case 2: s->resolution = cyc(s->resolution, GameSettings::kResolutionCount); break;
+        case 3: s->filter = cyc(s->filter, 3); break;
+        case 4: s->aa = cyc(s->aa, 4); break;
+        case 5: s->lighting = cyc(s->lighting, 3); break;
+        case 6: s->fx = !s->fx; break;
+        case 7: if (k == Key::Select) { page_ = Page::Effects; sel_ = 0; } break;
+        default: if (k == Key::Select) { page_ = Page::Config; sel_ = 2; } break;
+      }
       return Action::None;
+    }
+    case Page::Effects: {
+      auto cyc = [&](int cur, int count) { return (cur + (dir == 0 ? 1 : dir) + count) % count; };
+      switch (sel_) {
+        case 0: s->detail = cyc(s->detail, 4); break;
+        case 1: s->postShader = cyc(s->postShader, 5); break;
+        case 2: s->ao = !s->ao; break;
+        case 3: s->bloom = !s->bloom; break;
+        case 4: s->shadows = !s->shadows; break;
+        default: if (k == Key::Select) { page_ = Page::Detail; sel_ = 7; } break;
+      }
+      return Action::None;
+    }
     case Page::Controls:
       if (k == Key::Select && sel_ == n - 1) { page_ = Page::Config; sel_ = 1; }
       return Action::None;
