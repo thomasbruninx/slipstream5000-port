@@ -97,7 +97,7 @@ float cascadeShadow(int k, vec3 P, vec3 N, float ndl) {
   vec2 uv = l.xy / (2.0 * par.x) + 0.5;
   if (uv.x < 0.02 || uv.y < 0.02 || uv.x > 0.98 || uv.y > 0.98) return -1.0;   // outside this cascade
   float depth = (par.y - l.z) / (2.0 * par.y);
-  vec2 texel = 1.0 / vec2(textureSize(k == 0 ? uShadow0 : uShadow1, 0));
+  vec2 texel = k == 0 ? 1.0 / vec2(textureSize(uShadow0, 0)) : 1.0 / vec2(textureSize(uShadow1, 0));   // (a sampler cannot be the operand of ?:, strict compilers reject it)
   float bias = 0.00025 + 0.0006 * (1.0 - ndl);
   float lit = 0.0;
   for (int y = -2; y <= 2; ++y)

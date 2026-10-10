@@ -40,6 +40,9 @@ ViewerApp ──► slip::Renderer  (src/renderer/renderer.hpp, renderer.cpp)   
   delivers its picture into it in `finishScene()`, which the application calls at the end of every 3D pass (main view, rear monitor, ship preview) before the HUD is drawn.
 * The application only holds a `std::unique_ptr<Renderer>`; `createRenderer(name, options, &warning)` (`renderer_factory.cpp`) is the only place that knows the concrete classes.
 
+### Checking shaders
+`tools/check_shaders.sh` compiles every built-in shader with the reference compiler (`glslangValidator`). macOS drivers accept code that NVIDIA / Windows drivers reject (for example a sampler as the operand of `?:`), so run it after every shader change.
+
 ### Adding a back end
 1. Derive from `slip::Renderer`, implement the pure virtual functions (the software renderer is the reference, `docs` of each function are in `renderer.hpp`), allocate `color_` in `resize`.
 2. Register the name in `renderer_factory.cpp` (`rendererNames`, `createRenderer`) and add the sources to `CMakeLists.txt` (`slipstream_renderers`).
