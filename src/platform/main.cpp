@@ -32,6 +32,7 @@ static void usage() {
       "  --shader NAME       post-processing shader of the opengl renderer: crt | smooth | sharpen | fxaa | <post_NAME.frag in the shader folder>\n"
       "  --filter MODE       texture filtering of the opengl renderer: nearest (default, the original's look) | bilinear | smooth\n"
       "  --lighting MODE     real-time lighting of the opengl renderer: off (default, the original's flat look) | lights | shadows\n"
+      "  --fx                effects shaders of the opengl renderer: animated water, soft lit smoke, glowing fire, spark streaks\n"
       "  --no-ao, --no-bloom ambient occlusion / bloom of the lit opengl picture off\n"
       "  --aa N              multisample anti-aliasing of the opengl renderer: 0 (default) | 2 | 4 | 8\n"
       "  --screenshot FILE   render one frame to a PPM file and exit (no window)\n"
@@ -175,6 +176,7 @@ int main(int argc, char** argv) {
     else if (a == "--filter") opt.filter = next("--filter");
     else if (a == "--aa") opt.aa = std::atoi(next("--aa"));
     else if (a == "--lighting") opt.lighting = next("--lighting");
+    else if (a == "--fx") opt.fx = true;
     else if (a == "--no-ao") opt.ao = false;
     else if (a == "--no-bloom") opt.bloom = false;
     else if (a == "--res") { if (std::sscanf(next("--res"), "%dx%d", &opt.width, &opt.height) != 2) { usage(); return 2; } }

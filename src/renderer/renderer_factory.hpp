@@ -12,6 +12,7 @@ struct RendererOptions {
   std::string shader;  // --shader: post-processing shader of the OpenGL renderer ("" = none)
   std::string filter = "nearest";  // --filter: texture filtering of the OpenGL renderer (nearest | bilinear | smooth)
   std::string lighting = "off";  // --lighting: real-time lighting of the OpenGL renderer (off | lights | shadows)
+  bool fx = false;     // --fx: effects shaders of the OpenGL renderer (water, soft particles, spark streaks)
   bool ao = true, bloom = true;  // --no-ao / --no-bloom: with lighting on, ambient occlusion and bloom
   int aa = 0;          // --aa: multisample anti-aliasing of the OpenGL renderer (0 = off, 2, 4, 8)
 };

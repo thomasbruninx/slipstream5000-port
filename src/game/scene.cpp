@@ -186,6 +186,7 @@ void buildLighting(const Track& t, Scene& s, const std::vector<Box>& roadBoxes) 
   const float er = v.elev * 3.14159265f / 180.0f, ar = v.azim * 3.14159265f / 180.0f;
   e.sunDir[0] = std::cos(er) * std::sin(ar); e.sunDir[1] = std::sin(er); e.sunDir[2] = std::cos(er) * std::cos(ar);
   e.night = ti == 3 || ti == 10;
+  e.waterGround = ti == 2 || ti == 10;
   for (int k = 0; k < 3; ++k) {
     e.sunColor[k] = v.sun * (k == 2 ? 0.88f : k == 1 ? 0.97f : 1.0f);
     e.skyAmbient[k] = v.amb * (k == 2 ? 1.12f : k == 1 ? 1.0f : 0.92f);

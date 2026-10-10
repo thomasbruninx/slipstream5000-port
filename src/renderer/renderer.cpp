@@ -126,6 +126,7 @@ void Renderer::drawMesh(const Scene& scene, const Mesh& mesh, const MeshTransfor
         if (nvx * v0.x + nvy * v0.y + nvz * v0.z > 0) continue;  // facing away from the camera
       }
     }
+    curWater_ = p.material >= 0 && size_t(p.material) < scene.materials.size() && scene.materials[size_t(p.material)].upperName.rfind("WATE", 0) == 0;
     curSpec_ = &mesh != &scene.track ? 0.6f : (p.material >= 0 && size_t(p.material) < scene.materials.size() && scene.materials[size_t(p.material)].upperName.rfind("WATE", 0) == 0) ? 0.8f : 0.10f;
     curIndoor_ = p.piece >= 0 ? (size_t(p.piece) < scene.pieceBoxes.size() && scene.pieceBoxes[size_t(p.piece)].roofed) : (p.scenery ? false : meshIndoor);
     lightScale_ = (p.piece >= 0 && size_t(p.piece) < pieceLight.size()) ? pieceLight[size_t(p.piece)] : 1.0f;

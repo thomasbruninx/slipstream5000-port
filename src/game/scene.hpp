@@ -100,6 +100,7 @@ struct LightingEnv {
   float exposure = 1.0f;                        // scales sun + sky so that an average open-air surface keeps the brightness of the original
   float indoorLevel = 0.78f;                    // brightness of a tunnel surface away from lamps, in units of the original's look
   bool night = false;
+  bool waterGround = false;                     // the "Ground" below the horizon is a sea (Hawaii, New York): renderers with a water shader animate it
 };
 
 struct Billboard {  // scenery shape that always faces the camera (TRD entry +0x38 != 0); mesh in model space

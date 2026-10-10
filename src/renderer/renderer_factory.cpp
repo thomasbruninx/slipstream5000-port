@@ -24,6 +24,7 @@ std::unique_ptr<Renderer> createRenderer(const std::string& nameIn, const Render
     go.msaa = opt.aa;
     go.lighting = opt.lighting;
     go.ao = opt.ao;
+    go.fx = opt.fx;
     go.bloom = opt.bloom;
     if (r->init(go, &err)) {
       std::fprintf(stderr, "opengl renderer: %s\n", r->glInfo().c_str());

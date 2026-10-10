@@ -41,7 +41,7 @@ int main() {
       g2->finishScene();
       CHECK(g2->pixels()[0] == 0xff112233u || g2->pixels()[0] == 0xff445566u);
     }
-    o.lighting = "shadows";
+    o.fx = true; o.lighting = "shadows";
     CHECK(createRenderer("opengl", o, &warn));
     o.filter = "bogus"; o.aa = 3;
     CHECK(createRenderer("opengl", o, &warn));

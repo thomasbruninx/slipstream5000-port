@@ -24,6 +24,7 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
     ro.aa = opt.aa;
     ro.lighting = opt.lighting;
     ro.ao = opt.ao;
+    ro.fx = opt.fx;
     ro.bloom = opt.bloom;
     renderer_ = createRenderer(opt.renderer, ro, &warn);
     if (!warn.empty()) std::fprintf(stderr, "%s\n", warn.c_str());
@@ -1048,6 +1049,7 @@ void ViewerApp::renderFrame() {
   renderer_->skyRamp = mode_ != AppMode::Model && scene_ ? scene_->skyRamp : std::vector<uint32_t>{};
   if (scene_) renderer_->skyBand = scene_->skyBand;
   if (mode_ != AppMode::Model && scene_ && scene_->groundColor) ground = scene_->groundColor;
+  if (scene_) renderer_->setScene(scene_.get());
   renderer_->beginFrame(cam_, sky, ground);
   if (!scene_) return;
   drawWorld();
@@ -1133,24 +1135,26 @@ void ViewerApp::drawWorld() {
 void ViewerApp::drawParticles(const Scene& sc) {
   const ParticleSystem& ps = combat_.particles;
   auto transparent = [](const Sprite& sp) { return sp.hdr8 == 0xFFFF ? -1 : int(sp.hdr8 & 0xFF); };
-  auto draw = [&](PartFam fam, int list, int frame, const double* pos, double size) {
+  auto draw = [&](PartFam fam, int list, int frame, const double* pos, double size, float life01 = 0.0f) {
     const auto& v = partSprites_[int(fam)][list];
     if (v.empty()) return;
     const Sprite& sp = v[size_t(std::clamp(frame, 0, int(v.size()) - 1))];
     if (sp.w == 0) return;
-    renderer_->drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, pos, 2.0 * size, transparent(sp));
+    const float seed = float(std::fmod(std::fabs(pos[0] * 0.00137 + pos[1] * 0.00091 + pos[2] * 0.00073), 1.0));
+    const Renderer::FxKind kind = fam == PartFam::Expl ? Renderer::FxKind::Explosion : fam == PartFam::Fire ? Renderer::FxKind::Fire : Renderer::FxKind::Smoke;
+    renderer_->drawFxSprite(kind, sp, sp.palette ? *sp.palette : sc.palette, pos, 2.0 * size, transparent(sp), life01, seed);
   };
-  for (const Puff& p : ps.puffs) draw(p.fam, p.fading() ? 1 : 0, p.frame, p.pos, p.size());
+  for (const Puff& p : ps.puffs) draw(p.fam, p.fading() ? 1 : 0, p.frame, p.pos, p.size(), float(std::clamp(p.age / std::max(p.total(), 1e-3), 0.0, 1.0)));
   for (const Emitter& e : ps.emitters)  // the flame at the tail of a missile (the head puff shows the Fire list, 0x277D8)
-    if (e.attached && effectDesc(e.type).flame) draw(PartFam::Fire, 0, int(animSeconds_ * 100) % 4, e.pos, effectDesc(e.type).s0 * 1.4);
+    if (e.attached && effectDesc(e.type).flame) draw(PartFam::Fire, 0, int(animSeconds_ * 100) % 4, e.pos, effectDesc(e.type).s0 * 1.4, 0.2f);
   for (const Spark& sp : ps.sparks) {  // the colour is the top of the material's ramp (0x281B0: end - 1)
     int m = sp.material;
     if (m < 0) m = sp.kind == 1 ? sc.splashMaterial : sc.sparkMaterial;
     if (m < 0 || m >= int(sc.materials.size())) continue;
     const int idx = std::clamp(int(sc.materials[size_t(m)].palEnd) - 1, 0, 255);
-    renderer_->drawStarWorld(sp.pos, sp.size, sp.angle, 0xff000000u | (sc.palette.rgba[size_t(idx)] & 0xffffffu));
+    renderer_->drawSparkWorld(sp.pos, sp.vel, sp.size, sp.angle, 0xff000000u | (sc.palette.rgba[size_t(idx)] & 0xffffffu), float(std::clamp(sp.age / std::max(sp.life, 1e-3), 0.0, 1.0)));
   }
-  for (const Fireball& f : ps.fireballs) draw(PartFam::Expl, f.fading() ? 1 : 0, f.frame, f.pos, f.currentSize());
+  for (const Fireball& f : ps.fireballs) draw(PartFam::Expl, f.fading() ? 1 : 0, f.frame, f.pos, f.currentSize(), float(std::clamp(f.age / std::max(f.total, 1e-3), 0.0, 1.0)));
   for (const DebrisPiece& d : ps.pieces) {
     const Mesh& m = d.set >= 10 ? sc.droneFragMeshes[size_t(d.piece)] : d.dead ? sc.deadFragMeshes[size_t(d.set)][size_t(d.piece)] : sc.fragMeshes[size_t(d.set)][size_t(d.piece)];
     if (m.polys.empty()) continue;

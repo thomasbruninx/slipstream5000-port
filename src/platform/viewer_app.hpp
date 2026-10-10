@@ -42,6 +42,7 @@ struct AppOptions {
   std::string shader;                  // --shader: post-processing shader of the OpenGL renderer
   std::string filter = "nearest";      // --filter: texture filtering of the OpenGL renderer
   std::string lighting = "off";        // --lighting: real-time lighting of the OpenGL renderer (off | lights | shadows)
+  bool fx = false;                     // --fx
   bool ao = true, bloom = true;        // --no-ao / --no-bloom
   int aa = 0;                          // --aa: multisample anti-aliasing of the OpenGL renderer
   bool drive = false;

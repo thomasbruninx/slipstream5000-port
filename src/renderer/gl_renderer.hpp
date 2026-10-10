@@ -21,6 +21,7 @@ namespace slip {
 struct GlOptions {
   int msaa = 0;             // multisample anti-aliasing: 0 / 2 / 4 / 8 samples (clamped to what the driver offers)
   std::string filter = "nearest";  // texture filtering: nearest (the original's look) | bilinear | smooth (bilinear + distance filter)
+  bool fx = false;                // effects shaders: water, soft particles, spark streaks
   bool ao = true, bloom = true;   // with lighting on: ambient occlusion and bloom
   std::string lighting = "off";  // real-time lighting: off (the original's flat look) | lights (ambient, sun, tunnel lamps, dynamic lights) | shadows (also sun shadows)
   std::string postShader;  // "" / "none" or the name of a post-processing shader (built in: crt, smooth, sharpen; or post_<name>.frag in the shader folder)
@@ -40,6 +41,8 @@ class GlRenderer : public Renderer {
   void drawLineWorld(const double a[3], const double b[3], uint32_t color) override;
   void drawStarWorld(const double w[3], double radius, double angle, uint32_t color) override;
   void drawRectScreen(int x0, int y0, int x1, int y1, uint32_t color) override;
+  void drawFxSprite(FxKind kind, const Sprite& spr, const Palette& pal, const double world[3], double worldWidth, int transparent, float life01, float seed) override;
+  void drawSparkWorld(const double w[3], const double vel[3], double radius, double angle, uint32_t color, float life01) override;
   const std::string& glInfo() const { return info_; }
 
  protected:
@@ -90,8 +93,10 @@ class GlRenderer : public Renderer {
   std::string info_;
   GlOptions opt_;
   // programs
-  Program scene_, sky_, overlay_, post_, restore_, shadowProg_, ssao_, bloomX_, blur_, comp_;
+  Program fxProg_, scene_, sky_, overlay_, post_, restore_, shadowProg_, ssao_, bloomX_, blur_, comp_;
   gl::GLuint resultFbo_ = 0;
+  bool fxOn_ = false;
+  void drawFx(int mode, gl::GLuint tex, const std::vector<OverlayVertex>& v, bool additive, float life, float seed, float soft);
   bool hdr_ = false, aoOn_ = false, bloomOn_ = false;
   gl::GLuint bloomFbo_[2] = {0, 0}, bloomTex_[2] = {0, 0};
   void runPost(int x0, int y0, int x1, int y1);

@@ -37,6 +37,10 @@ uniform float uNear;
 uniform int uFilter;        // 0 nearest (the original's look), 1 bilinear, 2 smooth (bilinear + a footprint filter that tames shimmering in the distance)
 uniform vec2 uAtlasSize;
 uniform int uLighting;
+uniform int uFx;            // effects on (water shader)
+uniform float uTime;
+uniform vec3 uSkyHorizon;
+uniform vec3 uSkyZenith;
 uniform vec3 uSkyAmbient;
 uniform vec3 uGroundAmbient;
 uniform float uExposure;
@@ -108,14 +112,49 @@ float sunShadow(vec3 P, vec3 N, float ndl) {
   return s >= 0.0 ? s : 1.0;
 }
 
+// ---- water: animated wave normals, fresnel reflection of the sky, sun glitter ----
+vec2 waveGrad(vec2 p, float t) {
+  vec2 g = vec2(0.0);
+  g += vec2(0.9, 0.4) * cos(dot(p, vec2(0.9, 0.4)) * 2.1 + t * 0.9) * 0.55;
+  g += vec2(-0.5, 0.85) * cos(dot(p, vec2(-0.5, 0.85)) * 3.3 - t * 1.3) * 0.40;
+  g += vec2(0.2, -0.95) * cos(dot(p, vec2(0.2, -0.95)) * 5.7 + t * 1.9) * 0.28;
+  g += vec2(-0.85, -0.3) * cos(dot(p, vec2(-0.85, -0.3)) * 9.1 - t * 2.6) * 0.16;
+  return g;
+}
+vec3 skyColor(vec3 R) {
+  float t = clamp(dot(R, uUpCam), 0.0, 1.0);
+  return mix(uSkyHorizon, uSkyZenith, sqrt(t));
+}
+vec3 waterShade(vec3 base, vec3 N, vec3 P, vec2 g) {
+  vec3 V = -normalize(P);
+  vec3 dp1 = dFdx(P), dp2 = dFdy(P);
+  vec2 du1 = dFdx(vUv), du2 = dFdy(vUv);
+  vec3 T = dp1 * du2.y - dp2 * du1.y;
+  T = normalize(T - N * dot(N, T));
+  vec3 B = cross(N, T);
+  float dist = length(P);
+  float amp = 0.10 / (1.0 + dist * 2.0e-6);              // waves flatten with distance (no shimmering)
+  vec3 Nw = normalize(N - (T * g.x + B * g.y) * amp);
+  float ndv = clamp(dot(Nw, V), 0.0, 1.0);
+  float fres = 0.03 + 0.97 * pow(1.0 - ndv, 5.0);
+  vec3 R = reflect(-V, Nw);
+  vec3 refl = skyColor(R);
+  vec3 body = base * (0.92 + 0.16 * g.x * g.y + 0.06 * g.x);
+  vec3 c = mix(body, refl, clamp(fres * 0.9, 0.0, 0.85));
+  float glint = pow(max(dot(R, uSunDir), 0.0), 220.0) * 3.0 + pow(max(dot(R, uSunDir), 0.0), 24.0) * 0.15;
+  c += uSunColor * glint * (uSunColor.g > 0.05 ? 1.0 : 0.0);
+  return c;
+}
+
 vec3 lighting(vec3 albedo) {
   vec3 N = vNormal;
   if (dot(N, N) < 0.25) return albedo;                  // no normal (lines, shadows): unlit
   N = normalize(N);
   vec3 P = vPos;
   if (dot(N, P) > 0.0) N = -N;                          // light the side that faces the viewer
-  bool indoor = mod(vFx.x, 2.0) >= 1.0;
-  bool emissive = vFx.x >= 2.0;
+  int fl = int(vFx.x + 0.5);
+  bool indoor = (fl & 1) != 0;
+  bool emissive = (fl & 2) != 0;
   if (emissive) return albedo * 1.8;                    // lamps shine (and bloom)
   vec3 V = -normalize(P);
   float ks = vFx.y;
@@ -150,10 +189,14 @@ vec3 lighting(vec3 albedo) {
 
 void main() {
   vec4 c;
+  bool water = uFx != 0 && ((int(vFx.x + 0.5) & 4) != 0) && dot(vNormal, vNormal) > 0.25;
+  vec2 wg = vec2(0.0);
+  vec2 uvw = vUv;
+  if (water) { wg = waveGrad(vUv * 6.2831853 * 0.35, uTime); uvw = vUv + wg * 0.004 + vec2(uTime * 0.004, uTime * 0.0025); }
   if (vRect.z > 0.0) {
     vec4 r = round(vRect * vec4(uAtlasSize, uAtlasSize));
-    if (uFilter == 0) c = nearest(vUv, r);
-    else if (uFilter == 1) c = bilinear(vUv, r);
+    if (uFilter == 0) c = nearest(uvw, r);
+    else if (uFilter == 1) c = bilinear(uvw, r);
     else {
       vec2 dx = dFdx(vUv * r.zw), dy = dFdy(vUv * r.zw);
       float foot = max(length(dx), length(dy));
@@ -167,6 +210,11 @@ void main() {
     c.a = 1.0;
   } else {
     c = vec4(vCol.rgb, 1.0);
+  }
+  if (water) {
+    vec3 Nn = normalize(vNormal);
+    if (dot(Nn, vPos) > 0.0) Nn = -Nn;
+    c.rgb = waterShade(c.rgb, Nn, vPos, wg);
   }
   if (uLighting != 0) c.rgb = lighting(c.rgb);
   float d = uNear * gl_FragCoord.w;
@@ -196,13 +244,37 @@ uniform vec3 uGround;
 uniform float uBand;
 uniform int uRampN;
 uniform vec3 uRamp[40];
+uniform int uWaterGround;   // the ground is a sea (Hawaii, New York): animated water instead of the flat colour
+uniform float uTime;
+uniform vec3 uCamXZ;        // camera world position (x, y, z) in scene units
+uniform vec3 uSunDirW;
+uniform vec3 uSunCol;
 layout(location = 0) out vec4 oColor;
 void main() {
   float dx = gl_FragCoord.x - uCenter.x;
   float dy = uCenter.y - (uFrame.y - gl_FragCoord.y);
   float ry = uFwd.y * uFocal + uUp.y * dy + uRight.y * dx;
   vec3 c;
-  if (ry <= 0.0) c = uGround;
+  if (ry <= 0.0) {
+    c = uGround;
+    if (uWaterGround != 0) {
+      vec3 d = normalize(uRight * dx + uUp * dy + uFwd * uFocal);
+      float t = 70000.0 / max(-d.y, 0.002);
+      vec2 w = (uCamXZ.xz + d.xz * t) * 0.00006;
+      vec2 g = vec2(0.0);
+      g += vec2(0.9, 0.4) * cos(dot(w, vec2(0.9, 0.4)) * 6.0 + uTime * 0.9) * 0.55;
+      g += vec2(-0.5, 0.85) * cos(dot(w, vec2(-0.5, 0.85)) * 9.5 - uTime * 1.3) * 0.40;
+      g += vec2(0.2, -0.95) * cos(dot(w, vec2(0.2, -0.95)) * 16.0 + uTime * 1.9) * 0.28;
+      float flat_ = clamp(1.0 - t * 1.5e-6, 0.15, 1.0);
+      vec3 n = normalize(vec3(-g.x * 0.12 * flat_, 1.0, -g.y * 0.12 * flat_));
+      vec3 V = -d;
+      float fres = 0.03 + 0.97 * pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 5.0);
+      vec3 R = reflect(d, n);
+      vec3 sky = mix(uRampN > 0 ? uRamp[uRampN - 1] : uSky, uRampN > 0 ? uRamp[0] : uSky, sqrt(clamp(R.y, 0.0, 1.0)));
+      c = mix(uGround * (0.85 + 0.2 * g.x * g.y), sky, clamp(fres * 0.9, 0.0, 0.8));
+      c += uSunCol * pow(max(dot(R, uSunDirW), 0.0), 180.0) * 2.5 * (uSunCol.g > 0.05 ? 1.0 : 0.0);
+    }
+  }
   else if (uRampN > 0) {
     float s = ry / sqrt(uFocal * uFocal + dx * dx + dy * dy);
     int i = int(floor(float(uRampN - 1) * (1.0 - min(s / uBand, 1.0)) + 0.5));
@@ -409,6 +481,73 @@ void main() {
     c += b * uBloomAmount;
   }
   oColor = vec4(shoulder(c), 1.0);
+}
+)";
+
+// fx.frag: particles. Mode 0 smoke (soft, lit, dissolving), 1 fire / explosion (additive, HDR), 2 spark streak (additive), 3 glow (additive). Soft particles: they fade out where the scene is
+// close behind their plane and are hidden by anything nearer (the depth copy), instead of the hard cut of the plain sprites.
+inline constexpr const char* kFxFrag = R"(#version 330 core
+uniform sampler2D uTex;
+uniform sampler2D uDepth;
+uniform int uMode;
+uniform float uLife;      // 0 young .. 1 gone
+uniform float uSeed;
+uniform float uNear;
+uniform float uSoft;      // soft range in world units
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform vec3 uAmb;
+in vec2 vUv;
+in vec4 vCol;
+in float vD;
+layout(location = 0) out vec4 oColor;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
+void main() {
+  float soft = 1.0;
+  float s = texelFetch(uDepth, ivec2(gl_FragCoord.xy), 0).r;
+  if (s > 1e-9) soft = clamp((min(uNear / s, 1.0e9) - uNear / max(vD, 1e-9)) / uSoft * 0.5 + 0.5, 0.0, 1.0);
+  if (soft <= 0.0) discard;
+  if (uMode <= 1) {
+    vec4 t = texture(uTex, vUv);
+    if (t.a < 0.5) discard;
+    float lum = dot(t.rgb, vec3(0.3, 0.59, 0.11));
+    vec2 p = vUv * 2.0 - 1.0;
+    float r = length(p);
+    float n = noise(vUv * 5.0 + uSeed * 17.0) * 0.6 + noise(vUv * 11.0 + uSeed * 5.0) * 0.4;
+    if (uMode == 0) {
+      float body = clamp(lum * 1.35 + 0.1, 0.0, 1.0) * (1.0 - smoothstep(0.6, 1.0, r));
+      float erode = smoothstep(uLife - 0.3, uLife + 0.05, n);
+      float alpha = body * erode * 0.85 * (1.0 - 0.45 * uLife) * soft;
+      vec3 nn = vec3(p, sqrt(max(1.0 - r * r, 0.0)));
+      float diff = max(dot(nn, uSunDir), 0.0);
+      vec3 col = t.rgb * (max(uAmb, vec3(0.8)) + uSunColor * diff * 0.5) * (0.8 + 0.3 * n);
+      oColor = vec4(col, min(alpha * 1.6, 0.95));
+    } else {
+      float heat = clamp(lum * 1.2, 0.0, 1.0);
+      float fade = (1.0 - uLife) * (1.0 - uLife);
+      float edge = 1.0 - smoothstep(0.7, 1.0, r);
+      vec3 hot = mix(vec3(1.0, 0.32, 0.05), vec3(1.0, 0.92, 0.55), heat);
+      vec3 col = (t.rgb * 0.85 + hot * heat * 0.45) * (0.8 + 0.4 * n) * (0.25 + 1.15 * fade);
+      oColor = vec4(col * edge * soft, 1.0);
+    }
+  } else if (uMode == 2) {
+    float across = 1.0 - abs(vUv.y * 2.0 - 1.0);
+    float along = (1.0 - vUv.x);
+    float k = across * across * pow(along, 1.4) * (1.0 - uLife);
+    oColor = vec4(vCol.rgb * 2.2 * k * soft, 1.0);
+  } else {
+    float r = length(vUv * 2.0 - 1.0);
+    float k = pow(max(1.0 - r, 0.0), 2.0) * (1.0 - uLife);
+    oColor = vec4(vCol.rgb * 1.6 * k * soft, 1.0);
+  }
+  // a NaN / infinity in an HDR target would spread through the blur of the bloom as a white square
+  if (any(isnan(oColor)) || any(isinf(oColor))) discard;
+  oColor.rgb = min(oColor.rgb, vec3(6.0));
 }
 )";
 

@@ -55,6 +55,17 @@ class Renderer {
   // A spark (0x28253): two crossing lines of half length `radius` turned by `angle` (turns), facing the camera; one pixel when it projects to 2 pixels or less.
   virtual void drawStarWorld(const double w[3], double radius, double angle, uint32_t color) = 0;
   virtual void drawRectScreen(int x0, int y0, int x1, int y1, uint32_t color) = 0;
+  // Particles. A back end with an effects shader draws them softer and lit; the default is the plain sprite / star. life01: 0 young .. 1 gone; seed: a per-particle random number 0..1.
+  enum class FxKind { Smoke, Fire, Explosion };
+  virtual void drawFxSprite(FxKind, const Sprite& spr, const Palette& pal, const double world[3], double worldWidth, int transparent, float life01, float seed) {
+    (void)life01; (void)seed;
+    drawSpriteWorld(spr, pal, world, worldWidth, transparent);
+  }
+  // A wall spark / water droplet: `vel` is its velocity in world units per second (the streak points along it).
+  virtual void drawSparkWorld(const double w[3], const double vel[3], double radius, double angle, uint32_t color, float life01) {
+    (void)vel; (void)life01;
+    drawStarWorld(w, radius, angle, color);
+  }
   // ---- front end ----------------------------------------------------------------------------------------------------------------------------------------------------
   int width() const { return w_; }
   int height() const { return h_; }
@@ -169,6 +180,7 @@ class Renderer {
   // properties of the polygon being drawn for back ends with real-time lighting: camera-space unit normal (stored normal, may be 0), inside a tunnel, emits light (lamps)
   float curN_[3] = {0, 1, 0};
   bool curIndoor_ = false, curEmissive_ = false;
+  bool curWater_ = false;  // the polygon is a water surface
   float curSpec_ = 0.1f;   // specular strength of the polygon (ships and doors are metal, water shines, walls hardly)
   Camera cam_;
   float right_[3], up_[3], fwd_[3];

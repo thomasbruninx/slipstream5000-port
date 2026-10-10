@@ -35,7 +35,7 @@ GlRenderer::~GlRenderer() {
       if (shadowDynVbo_) gl_.DeleteBuffers(1, &shadowDynVbo_);
       if (shadowVao_) gl_.DeleteVertexArrays(1, &shadowVao_);
       if (shadowDynVao_) gl_.DeleteVertexArrays(1, &shadowDynVao_);
-      for (Program* p : {&scene_, &sky_, &overlay_, &post_, &restore_, &shadowProg_, &ssao_, &bloomX_, &blur_, &comp_}) if (p->id) gl_.DeleteProgram(p->id);
+      for (Program* p : {&scene_, &sky_, &overlay_, &post_, &restore_, &shadowProg_, &fxProg_, &ssao_, &bloomX_, &blur_, &comp_}) if (p->id) gl_.DeleteProgram(p->id);
     }
   }
   if (ctx_) SDL_GL_DestroyContext(ctx_);
@@ -101,6 +101,7 @@ bool GlRenderer::buildProgram(Program* p, const std::string& vs, const std::stri
 
 bool GlRenderer::init(const GlOptions& opt, std::string* error) {
   opt_ = opt;
+  fxOn_ = opt.fx;
   hdr_ = opt.lighting == "lights" || opt.lighting == "on" || opt.lighting == "shadows";
   aoOn_ = hdr_ && opt.ao; bloomOn_ = hdr_ && opt.bloom;
   lightingMode = opt.lighting == "lights" || opt.lighting == "on" ? 1 : opt.lighting == "shadows" ? 2 : 0;
@@ -128,7 +129,7 @@ bool GlRenderer::init(const GlOptions& opt, std::string* error) {
   if (!buildProgram(&overlay_, glsl::kOverlayVert, shaderSource("overlay.frag", glsl::kOverlayFrag), "overlay", &err)) return fail(err);
   auto loc = [&](Program& p, std::initializer_list<const char*> names) { int i = 0; for (const char* n : names) p.loc[i++] = gl_.GetUniformLocation(p.id, n); };
   loc(scene_, {"uProj", "uNear", "uAtlas", "uFilter", "uAtlasSize", "uLighting", "uSkyAmbient", "uGroundAmbient", "uExposure", "uIndoor", "uSunDir", "uSunColor", "uUpCam", "uLightN", "uLightPos[0]",
-               "uLightCol[0]", "uLightRad[0]", "uShadowOn", "uShadow0", "uShadow1", "uShadowX[0]", "uShadowY[0]", "uShadowZ[0]", "uShadowOff[0]", "uShadowParams[0]"});
+               "uLightCol[0]", "uLightRad[0]", "uShadowOn", "uShadow0", "uShadow1", "uShadowX[0]", "uShadowY[0]", "uShadowZ[0]", "uShadowOff[0]", "uShadowParams[0]", "uFx", "uTime", "uSkyHorizon", "uSkyZenith"});
   if (hdr_) {
     if (!buildProgram(&ssao_, glsl::kFullscreenVert, glsl::kSsaoFrag, "ssao", &err) || !buildProgram(&bloomX_, glsl::kFullscreenVert, glsl::kBloomExtractFrag, "bloom", &err) ||
         !buildProgram(&blur_, glsl::kFullscreenVert, glsl::kBlurFrag, "blur", &err) || !buildProgram(&comp_, glsl::kFullscreenVert, glsl::kCompositeFrag, "composite", &err))
@@ -142,8 +143,12 @@ bool GlRenderer::init(const GlOptions& opt, std::string* error) {
     if (!buildProgram(&shadowProg_, glsl::kShadowVert, glsl::kShadowFrag, "shadow map", &err)) { std::fprintf(stderr, "opengl: %s (shadows off)\n", err.c_str()); lightingMode = 1; }
     else loc(shadowProg_, {"uOrigin", "uAxX", "uAxY", "uAxZ", "uParams"});
   }
-  loc(sky_, {"uFrame", "uCenter", "uFocal", "uRight", "uUp", "uFwd", "uSky", "uGround", "uBand", "uRampN", "uRamp"});
+  loc(sky_, {"uFrame", "uCenter", "uFocal", "uRight", "uUp", "uFwd", "uSky", "uGround", "uBand", "uRampN", "uRamp[0]", "uWaterGround", "uTime", "uCamXZ", "uSunDirW", "uSunCol"});
   loc(overlay_, {"uSize", "uTex", "uDepth", "uUseTex", "uUseDepth"});
+  if (fxOn_) {
+    if (!buildProgram(&fxProg_, glsl::kOverlayVert, glsl::kFxFrag, "fx", &err)) { std::fprintf(stderr, "opengl: %s (effects off)\n", err.c_str()); fxOn_ = false; }
+    else loc(fxProg_, {"uSize", "uTex", "uDepth", "uMode", "uLife", "uSeed", "uNear", "uSoft", "uSunDir", "uSunColor", "uAmb"});
+  }
   if (!buildProgram(&restore_, glsl::kFullscreenVert, glsl::kDepthRestoreFrag, "depth restore", &err)) return fail(err);
   loc(restore_, {"uDepth"});
   // post-processing shader (optional)
@@ -301,7 +306,7 @@ void GlRenderer::resize(int w, int h) {
 }
 
 void GlRenderer::setScene(const Scene* scene) {
-  if (scene && ok_) { SDL_GL_MakeCurrent(window_, ctx_); uploadAtlas(*scene); }
+  if (scene && ok_ && scene != atlasScene_) { SDL_GL_MakeCurrent(window_, ctx_); uploadAtlas(*scene); }
 }
 
 void GlRenderer::uploadAtlas(const Scene& scene) {
@@ -447,7 +452,7 @@ void GlRenderer::flush() {
   gl_.DepthFunc(gl::GEQUAL);
   gl_.DepthMask(gl::TRUE_);
   gl_.Disable(gl::BLEND);
-  if (lightingMode > 0 && !lightsReady_ && atlasScene_) {
+  if ((lightingMode > 0 || fxOn_) && !lightsReady_ && atlasScene_) {
     prepareLighting(*atlasScene_);  // may render the shadow map (changes the framebuffer): everything is re-bound below
     gl_.BindFramebuffer(gl::FRAMEBUFFER, renderFbo());
     gl_.DrawBuffers(2, bufs);
@@ -462,6 +467,17 @@ void GlRenderer::flush() {
   gl_.Uniform4fv(scene_.loc[0], 1, uProj_);
   gl_.Uniform1f(scene_.loc[1], nearD_);
   gl_.Uniform1i(scene_.loc[5], lightingMode > 0 && atlasScene_ ? 1 : 0);
+  gl_.Uniform1i(scene_.loc[25], fxOn_ ? 1 : 0);
+  if (fxOn_ && atlasScene_) {
+    gl_.Uniform1f(scene_.loc[26], float(animTimer) / 16384.0f);
+    const float ho[3] = {skyRamp.empty() ? atlasScene_->env.skyAmbient[0] : float((skyRamp.back() >> 16) & 255) / 255.0f, skyRamp.empty() ? atlasScene_->env.skyAmbient[1] : float((skyRamp.back() >> 8) & 255) / 255.0f, skyRamp.empty() ? atlasScene_->env.skyAmbient[2] : float(skyRamp.back() & 255) / 255.0f};
+    const float ze[3] = {skyRamp.empty() ? ho[0] : float((skyRamp.front() >> 16) & 255) / 255.0f, skyRamp.empty() ? ho[1] : float((skyRamp.front() >> 8) & 255) / 255.0f, skyRamp.empty() ? ho[2] : float(skyRamp.front() & 255) / 255.0f};
+    gl_.Uniform3fv(scene_.loc[27], 1, ho);
+    gl_.Uniform3fv(scene_.loc[28], 1, ze);
+    gl_.Uniform3fv(scene_.loc[10], 1, sunCam_);
+    gl_.Uniform3fv(scene_.loc[11], 1, atlasScene_->env.sunColor);
+    gl_.Uniform3fv(scene_.loc[12], 1, upCam_);
+  }
   if (lightingMode > 0 && atlasScene_) {
     const LightingEnv& e = atlasScene_->env;
     gl_.Uniform3fv(scene_.loc[6], 1, e.skyAmbient);
@@ -736,6 +752,17 @@ void GlRenderer::onBeginFrame(uint32_t sky, uint32_t ground) {
     for (int i = 0; i < n; ++i) rgb(skyRamp[size_t(i)], &ramp[size_t(i) * 3]);
     gl_.Uniform3fv(sky_.loc[10], n, ramp.data());
   }
+  {
+    const bool wg = fxOn_ && atlasScene_ && atlasScene_->env.waterGround;
+    gl_.Uniform1i(sky_.loc[11], wg ? 1 : 0);
+    if (wg) {
+      const float cam3[3] = {float(cam_.pos[0]), float(cam_.pos[1]), float(cam_.pos[2])};
+      gl_.Uniform1f(sky_.loc[12], float(animTimer) / 16384.0f);
+      gl_.Uniform3fv(sky_.loc[13], 1, cam3);
+      gl_.Uniform3fv(sky_.loc[14], 1, atlasScene_->env.sunDir);
+      gl_.Uniform3fv(sky_.loc[15], 1, atlasScene_->env.sunColor);
+    }
+  }
   gl_.BindVertexArray(emptyVao_);
   gl_.DrawArrays(gl::TRIANGLES, 0, 3);
   gl_.DrawBuffers(2, bufs);
@@ -795,7 +822,7 @@ void GlRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, const V
   const float ds = depthScale(layer, forceIdx);
   const std::array<float, 4> rc = textured ? rects_[size_t(mat->texture)] : std::array<float, 4>{0, 0, 0, 0};
   float n[3] = {curN_[0], curN_[1], curN_[2]};
-  if (lightingMode > 0) {
+  if (lightingMode > 0 || (fxOn_ && curWater_)) {
     float nl = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
     if (nl < 0.5f) {  // polygons without a stored normal: the triangle's own
       const float e1[3] = {b.x - a.x, b.y - a.y, b.z - a.z}, e2[3] = {c.x - a.x, c.y - a.y, c.z - a.z};
@@ -804,7 +831,7 @@ void GlRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, const V
     }
     if (nl > 1e-6f) { n[0] /= nl; n[1] /= nl; n[2] /= nl; } else { n[0] = n[1] = n[2] = 0; }
   } else { n[0] = n[1] = n[2] = 0; }
-  const float flags = (curIndoor_ ? 1.0f : 0.0f) + ((curEmissive_ || (mat && mat->fixedLight != 0)) && lightingMode > 0 ? 2.0f : 0.0f);
+  const float flags = (curIndoor_ ? 1.0f : 0.0f) + ((curEmissive_ || (mat && mat->fixedLight != 0)) && lightingMode > 0 ? 2.0f : 0.0f) + (curWater_ && fxOn_ ? 4.0f : 0.0f);
   for (int i = 0; i < 3; ++i) v[i] = {src[i]->x, src[i]->y, src[i]->z, src[i]->u, src[i]->v, r, g, bl, 255, rc[0], rc[1], rc[2], rc[3], ds, n[0], n[1], n[2], flags, curSpec_};
   emitTriangle(v[0], v[1], v[2]);
 }
@@ -1066,6 +1093,88 @@ void GlRenderer::runPost(int x0, int y0, int x1, int y1) {
   }
   gl_.ActiveTexture(gl::TEXTURE0);
   resultFbo_ = srcFbo;
+}
+
+void GlRenderer::drawFx(int mode, gl::GLuint tex, const std::vector<OverlayVertex>& v, bool additive, float life, float seed, float soft) {
+  if (!ok_ || v.empty()) return;
+  flush();
+  if (!lightsReady_ && atlasScene_) prepareLighting(*atlasScene_);
+  ensureDepthCopy();
+  const gl::GLenum b0 = gl::COLOR_ATTACHMENT0;
+  gl_.BindFramebuffer(gl::FRAMEBUFFER, renderFbo());
+  gl_.DrawBuffers(1, &b0);
+  gl_.Viewport(0, 0, tw_, th_);
+  setScissor(vp_.x0, vp_.y0, vp_.x1, vp_.y1);
+  gl_.Disable(gl::DEPTH_TEST);
+  gl_.DepthMask(gl::FALSE_);
+  gl_.Enable(gl::BLEND);
+  if (additive) gl_.BlendFunc(gl::ONE, gl::ONE); else gl_.BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+  gl_.UseProgram(fxProg_.id);
+  gl_.Uniform2f(fxProg_.loc[0], float(tw_), float(th_));
+  gl_.ActiveTexture(gl::TEXTURE0);
+  gl_.BindTexture(gl::TEXTURE_2D, tex ? tex : copyTex_);
+  gl_.Uniform1i(fxProg_.loc[1], 0);
+  gl_.ActiveTexture(gl::TEXTURE1);
+  gl_.BindTexture(gl::TEXTURE_2D, copyTex_);
+  gl_.Uniform1i(fxProg_.loc[2], 1);
+  gl_.Uniform1i(fxProg_.loc[3], mode);
+  gl_.Uniform1f(fxProg_.loc[4], life);
+  gl_.Uniform1f(fxProg_.loc[5], seed);
+  gl_.Uniform1f(fxProg_.loc[6], nearD_);
+  gl_.Uniform1f(fxProg_.loc[7], soft);
+  const LightingEnv* e = atlasScene_ ? &atlasScene_->env : nullptr;
+  const float amb[3] = {e ? 0.5f * (e->skyAmbient[0] + e->groundAmbient[0]) * e->exposure : 0.7f, e ? 0.5f * (e->skyAmbient[1] + e->groundAmbient[1]) * e->exposure : 0.7f, e ? 0.5f * (e->skyAmbient[2] + e->groundAmbient[2]) * e->exposure : 0.7f};
+  const float sunc[3] = {e ? e->sunColor[0] * e->exposure : 0.3f, e ? e->sunColor[1] * e->exposure : 0.3f, e ? e->sunColor[2] * e->exposure : 0.3f};
+  gl_.Uniform3fv(fxProg_.loc[8], 1, sunCam_);
+  gl_.Uniform3fv(fxProg_.loc[9], 1, sunc);
+  gl_.Uniform3fv(fxProg_.loc[10], 1, amb);
+  gl_.BindVertexArray(ovao_);
+  gl_.BindBuffer(gl::ARRAY_BUFFER, ovbo_);
+  gl_.BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(v.size() * sizeof(OverlayVertex)), v.data(), gl::STREAM_DRAW);
+  gl_.DrawArrays(gl::TRIANGLES, 0, gl::GLsizei(v.size()));
+  gl_.Disable(gl::BLEND);
+  gl_.ActiveTexture(gl::TEXTURE0);
+}
+
+void GlRenderer::drawFxSprite(FxKind kind, const Sprite& spr, const Palette& pal, const double world[3], double worldWidth, int transparent, float life01, float seed) {
+  if (!fxOn_) { drawSpriteWorld(spr, pal, world, worldWidth, transparent); return; }
+  float sx, sy, z;
+  if (spr.w <= 0 || spr.h <= 0 || !projectToScreen(world, &sx, &sy, &z)) return;
+  const float pw = float(worldWidth) / z * focal_;
+  if (pw < 1.0f) return;
+  const float ph = pw * float(spr.h) / float(spr.w);
+  const float d = nearD_ / z;
+  const gl::GLuint tex = spriteTexture(spr, pal, transparent);
+  const float x0 = sx - pw * 0.5f, x1 = sx + pw * 0.5f, y0 = sy - ph * 0.5f, y1 = sy + ph * 0.5f;
+  auto V = [&](float x, float y, float u, float v) { return OverlayVertex{x, y, d, u, v, 255, 255, 255, 255}; };
+  const OverlayVertex a = V(x0, y0, 0, 0), b = V(x1, y0, 1, 0), c = V(x1, y1, 1, 1), e = V(x0, y1, 0, 1);
+  drawFx(kind == FxKind::Smoke ? 0 : 1, tex, {a, b, c, a, c, e}, kind != FxKind::Smoke, life01, seed, 0.5f * float(worldWidth));
+}
+
+void GlRenderer::drawSparkWorld(const double w[3], const double vel[3], double radius, double angle, uint32_t color, float life01) {
+  if (!fxOn_) { drawStarWorld(w, radius, angle, color); return; }
+  float sx, sy, z;
+  if (!projectToScreen(w, &sx, &sy, &z)) return;
+  const double tail[3] = {w[0] - vel[0] * 0.045, w[1] - vel[1] * 0.045, w[2] - vel[2] * 0.045};
+  float tx, ty, tz;
+  const bool haveTail = projectToScreen(tail, &tx, &ty, &tz);
+  const float scale = float(w_) / 320.0f;
+  uint8_t r, g, b;
+  unpack(color, &r, &g, &b);
+  const float d = nearD_ / z;
+  auto V = [&](float x, float y, float u, float v) { return OverlayVertex{x, y, d, u, v, r, g, b, 255}; };
+  float dx = haveTail ? tx - sx : 0.0f, dy = haveTail ? ty - sy : 0.0f;
+  float len = std::sqrt(dx * dx + dy * dy);
+  const float minLen = 1.5f * scale;
+  if (len < minLen) { dx = 1.0f; dy = 0.0f; len = minLen; } else { dx /= len; dy /= len; }
+  const float hw = std::max(0.9f * scale, float(radius) / z * focal_ * 0.35f);
+  const float nx = -dy, ny = dx;
+  // streak: head (u = 0) to tail (u = 1), v across
+  const OverlayVertex a = V(sx + nx * hw, sy + ny * hw, 0, 1), bq = V(sx - nx * hw, sy - ny * hw, 0, 0), c = V(sx + dx * len - nx * hw, sy + dy * len - ny * hw, 1, 0), e = V(sx + dx * len + nx * hw, sy + dy * len + ny * hw, 1, 1);
+  drawFx(2, 0, {a, bq, c, a, c, e}, true, life01, 0, 4000.0f);
+  const float gr = 3.2f * scale;  // small glow at the head
+  const OverlayVertex g0 = V(sx - gr, sy - gr, 0, 0), g1 = V(sx + gr, sy - gr, 1, 0), g2 = V(sx + gr, sy + gr, 1, 1), g3 = V(sx - gr, sy + gr, 0, 1);
+  drawFx(3, 0, {g0, g1, g2, g0, g2, g3}, true, life01, 0, 4000.0f);
 }
 
 void GlRenderer::finishScene() {
