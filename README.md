@@ -30,9 +30,7 @@ The original files are never modified.
 | Windows x64, cross compiled from macOS / Linux | `./scripts/build_windows_cross.sh` → `dist/slipstream-windows-x64.zip` (MinGW-w64; fetches MSYS2's FluidSynth / SDL3 packages, so it has MIDI music) |
 | Windows x64, native | MSYS2 MINGW64 shell: `./scripts/build_windows_msys2.sh` |
 
-Dependencies, package names, options and the status of each port are in **`docs/building.md`**. Build status honestly: macOS is played every session; the Linux build compiles and passes the
-unit tests in a container but has not been run with a window and sound device; the Windows build compiles and links but has **never been run** (no Windows machine here), so
-expect rough edges, especially in the network code and the controller code. Bug reports are welcome.
+Dependencies, package names, options and the status of each port are in **`docs/building.md`**. Build status honestly: macOS is tested thoroughly; the Linux build compiles and passes the unit tests in a container but has not been run with a window and sound device; the Windows build compiles and links and is playtested occasionaly. Bug reports are welcome.
 
 Run it with `slipstream` (a plain launch plays the original logo and intro movie and shows the main menu), `--skip-intro` skips the movies, `--viewer` opens the old track viewer.
 Per-user files (options, key bindings, records, saved championships) live in `~/Library/Application Support/Slipstream` (macOS), `%APPDATA%\Slipstream` (Windows) or `~/.config/slipstream` (Linux).
