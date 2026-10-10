@@ -24,7 +24,8 @@
 #include "net/discovery.hpp"
 #include "net/session.hpp"
 #include "original_formats/game_data.hpp"
-#include "renderer/software_renderer.hpp"
+#include "renderer/renderer.hpp"
+#include "renderer/renderer_factory.hpp"
 
 namespace slip {
 
@@ -37,6 +38,12 @@ struct AppOptions {
   std::string shape;
   std::string sprite;
   int width = 960, height = 540;
+  std::string renderer = "software";   // --renderer: software | opengl
+  std::string shader;                  // --shader: post-processing shader of the OpenGL renderer
+  std::string filter = "nearest";      // --filter: texture filtering of the OpenGL renderer
+  std::string lighting = "off";        // --lighting: real-time lighting of the OpenGL renderer (off | lights | shadows)
+  bool ao = true, bloom = true;        // --no-ao / --no-bloom
+  int aa = 0;                          // --aa: multisample anti-aliasing of the OpenGL renderer
   bool drive = false;
   int ship = 0;
   bool haveCam = false;
@@ -72,7 +79,7 @@ class ViewerApp {
   bool init(const AppOptions& opt, std::string* error);
   void update(double dt, const InputState& in);
   void render();  // 3D view, HUD, and the multiplayer menu on top
-  const SoftwareRenderer& renderer() const { return renderer_; }
+  const Renderer& renderer() const { return *renderer_; }
   std::vector<std::string> hudLines() const;
 
   // commands from the platform layer
@@ -137,7 +144,7 @@ class ViewerApp {
   void toggleAssist() { simCfg_.assist = !simCfg_.assist; }
   void togglePainter() { painter_ = !painter_; }
   void toggleVisibility() { useVisMask_ = !useVisMask_; }
-  void toggleCulling() { cullOverride_ = renderer_.cullBackfaces ? 0 : 1; }
+  void toggleCulling() { cullOverride_ = renderer_->cullBackfaces ? 0 : 1; }
   AppMode mode() const { return mode_; }
   bool driving() const { return driving_; }
 
@@ -152,7 +159,7 @@ class ViewerApp {
   std::unique_ptr<GameData> data_;
   std::unique_ptr<Scene> scene_;
   std::array<ShipParams, 10> params_{};
-  SoftwareRenderer renderer_;
+  std::unique_ptr<Renderer> renderer_;
   Camera cam_;
   AppMode mode_ = AppMode::Track;
   int track_ = 1;

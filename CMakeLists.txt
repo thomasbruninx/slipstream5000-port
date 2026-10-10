@@ -61,7 +61,7 @@ add_library(slipstream_netplay STATIC src/game/netplay.cpp)
 target_link_libraries(slipstream_netplay PUBLIC slipstream_core slipstream_net)
 
 # --- renderer: software "compatibility" renderer ------------------------------------------
-add_library(slipstream_renderer STATIC src/renderer/software_renderer.cpp)
+add_library(slipstream_renderer STATIC src/renderer/renderer.cpp src/renderer/software_renderer.cpp)
 target_link_libraries(slipstream_renderer PUBLIC slipstream_core)
 
 # --- audio: sample mixer + FluidSynth music + SDL3 playback ---------------------------------------
@@ -110,9 +110,13 @@ else()
   message(WARNING "FluidSynth not found: the game is built without MIDI music (brew install fluid-synth / apt install libfluidsynth-dev / MSYS2 mingw-w64-x86_64-fluidsynth)")
 endif()
 
+# --- renderer back ends that need SDL3 (OpenGL) and the selection by name ------------------
+add_library(slipstream_renderers STATIC src/renderer/renderer_factory.cpp src/renderer/gl_renderer.cpp src/renderer/gl_loader.cpp)
+target_link_libraries(slipstream_renderers PUBLIC slipstream_renderer SDL3::SDL3)
+
 # --- application (SDL3) -------------------------------------------------------------------
 add_executable(slipstream src/platform/main.cpp src/platform/viewer_app.cpp src/platform/viewer_intro.cpp)
-target_link_libraries(slipstream PRIVATE slipstream_netplay slipstream_renderer slipstream_audio slipstream_core SDL3::SDL3)
+target_link_libraries(slipstream PRIVATE slipstream_netplay slipstream_renderers slipstream_renderer slipstream_audio slipstream_core SDL3::SDL3)
 
 # --- tools / tests (need the user's original game files; skipped when SLIPSTREAM_DATA unset) -
 add_executable(slipstream_inspect tools/inspect/inspect.cpp)
@@ -122,6 +126,9 @@ enable_testing()
 add_executable(slipstream_tests tests/format_tests.cpp)
 target_link_libraries(slipstream_tests PRIVATE slipstream_core)
 add_test(NAME format_tests COMMAND slipstream_tests)
+add_executable(slipstream_renderer_tests tests/renderer_tests.cpp)
+target_link_libraries(slipstream_renderer_tests PRIVATE slipstream_renderers)
+add_test(NAME renderer_tests COMMAND slipstream_renderer_tests)
 
 add_executable(slipstream_physics_tests tests/physics_tests.cpp)
 target_link_libraries(slipstream_physics_tests PRIVATE slipstream_core)

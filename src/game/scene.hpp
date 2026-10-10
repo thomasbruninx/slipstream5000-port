@@ -82,6 +82,26 @@ struct SkySprite {
   float scale = 1.0f;     // on-screen size factor
 };
 
+// A fixed light of the track (used by renderers with real-time lighting; the original has none): tunnel ceiling lamps, the lamp strips, floor lights and refuel pads.
+struct StaticLight {
+  float pos[3];    // relative to Scene::origin
+  float color[3];  // 0..1
+  float radius;    // reach in world units
+  int kind;        // 0 tunnel (one per roofed piece), 1 ceiling lamp panel, 2 floor light, 3 refuel pad
+};
+
+// Lighting environment of a track (INFERRED from the sky colours and the look of the original; the original only has the fixed lighting law "light from above").
+struct LightingEnv {
+  float sunDir[3] = {0.35f, 0.85f, 0.40f};     // unit vector from the surface towards the sun (world, y up)
+  float sunColor[3] = {1.0f, 0.95f, 0.85f};
+  float skyAmbient[3] = {0.45f, 0.5f, 0.6f};    // light from above in the shade
+  float groundAmbient[3] = {0.25f, 0.22f, 0.2f};  // bounce from below
+  float indoorAmbient = 0.18f;                  // level inside tunnels (roofed pieces): they are lit by their lamps
+  float exposure = 1.0f;                        // scales sun + sky so that an average open-air surface keeps the brightness of the original
+  float indoorLevel = 0.78f;                    // brightness of a tunnel surface away from lamps, in units of the original's look
+  bool night = false;
+};
+
 struct Billboard {  // scenery shape that always faces the camera (TRD entry +0x38 != 0); mesh in model space
   Mesh mesh;
   Vec3 pos;         // relative to Scene::origin
@@ -100,6 +120,8 @@ struct Scene {
   std::vector<SurfaceMaterial> materials;
   std::array<PanelDetail, 32> panelDetails;
   int sdOrangeMaterial = -1, sdFloorLightMaterial = -1, sdBlueMaterial = -1, sdRoadLineMaterial = -1;
+  std::vector<StaticLight> lights;
+  LightingEnv env;
   std::vector<SkySprite> skySprites;
   double skySpeed = 0;                  // drift of the high layer in 1/65536 turns per second ([0x1295E]); the low layer drifts at 1/8 of it (0x12BAB)
   float skyBand = 0.375f;               // thickness of the horizon gradient in sin(elevation): the draw hook's ebp / 0x4000 (0x600 .. 0x1800)

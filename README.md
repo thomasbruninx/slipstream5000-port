@@ -45,6 +45,7 @@ all remappable in *Configuration > Controls > Controller*.
 
 ## Features implemented
 **Game data and rendering**
+* **Renderers**: a software renderer (the default, follows the original's structure) and an **OpenGL renderer with shader support** (`--renderer opengl`, optional texture filtering `--filter bilinear|smooth`, MSAA `--aa 4`, post-processing `--shader crt|smooth|sharpen|fxaa|<your own>`, real-time lighting with specular, sun shadows, ambient occlusion and bloom `--lighting lights|shadows`, see `docs/lighting.md`), both behind one renderer interface; see `docs/renderers.md`.
 * Parsers for the original formats (resource archives, tracks, shapes, sprites, fonts, string tables, samples, MIDI, movies, animation scripts, config / save files); software renderer that follows the original's structure (portal visibility, BSP painter order, shade ramps, billboards, shadows, translucent decals).
 * All 10 tracks, all 10 craft with their reference points, doors, pit lane, crowds, ambient effects.
 
@@ -79,7 +80,7 @@ Things that are not (or not exactly) in the original, mostly on request:
 * Joystick calibration pages replaced by SDL3 controller mapping (optional extra mappings in `gamecontrollerdb.txt`).
 
 ## Planned features
-* Hardware acceleration for the renderer. Shader support and GPU optimizations are planned. (Perhaps even ray tracing in the future)
+* GPU drawing of the HUD / menus and further modern effects for the OpenGL renderer (the shader hooks are in place); other back ends (Vulkan, Metal, ray tracing) would be additional `Renderer` subclasses.
 * Improved AI behavior and additional difficulty settings. Offering more control over opponent behavior and challenge levels.
 * Internet play (NAT traversal, matchmaking, host migration, authentication); the network code is LAN only. Dedicated matchmaking services could be added in the future.
 * An app icon / installer for Windows and Linux, Linux and Windows builds that have been tested on real machines.
@@ -92,10 +93,10 @@ Things that are not (or not exactly) in the original, mostly on request:
 * Direct modem connection (the original's peer-to-peer feature, not relevant in this reimplementation).
 
 ## Layout
-`src/original_formats` parsers · `src/game` game logic (physics, AI, weapons, championship, front end) · `src/renderer` software renderer · `src/audio` mixer + music · `src/net` network code ·
+`src/original_formats` parsers · `src/game` game logic (physics, AI, weapons, championship, front end) · `src/renderer` renderer interface + software / OpenGL back ends · `src/audio` mixer + music · `src/net` network code ·
 `src/platform` SDL3 application · `tools/re` reverse-engineering workbench (research only, reads your files, never modifies them) · `tools/inspect` · `tests` · `scripts` build scripts · `docs` findings and notes.
 
-Useful options: `--data DIR`, `--track N`, `--difficulty 0..2`, `--weapons seeker:9,scrambler:9,booster:2`, `--no-ai-weapons`, `--no-pickups`, `--no-voices`, `--soundfont FILE`, `--no-music`, `--no-sfx`, `--no-audio`,
+Useful options: `--data DIR`, `--track N`, `--renderer software|opengl`, `--shader NAME`, `--filter MODE`, `--aa N`, `--lighting MODE`, `--no-ao`, `--no-bloom`, `--difficulty 0..2`, `--weapons seeker:9,scrambler:9,booster:2`, `--no-ai-weapons`, `--no-pickups`, `--no-voices`, `--soundfont FILE`, `--no-music`, `--no-sfx`, `--no-audio`,
 `--host` / `--join ADDRESS` / `--name NAME`, headless `--screenshot out.ppm`, `--bench 120`, `--models RACER0`, `--sprites MAINMENU`. `slipstream --help` lists everything.
 
 ## Legal notice and takedown policy

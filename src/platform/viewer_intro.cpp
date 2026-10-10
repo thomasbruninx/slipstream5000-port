@@ -163,7 +163,7 @@ void ViewerApp::updateTvCamera() {
 void ViewerApp::drawIntroOverlay() {
   if (!hudAssets_.loaded) return;
   HudCanvas c;
-  c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
+  c.fb = renderer_->framebuffer(); c.w = renderer_->width(); c.h = renderer_->height(); c.pal = &hudAssets_.palette;
   c.fill(0, 0, 319, 7, 0xff000000u);
   c.fill(0, 193, 319, 199, 0xff000000u);
   c.fill(0, 8, 3, 192, 0xff000000u);

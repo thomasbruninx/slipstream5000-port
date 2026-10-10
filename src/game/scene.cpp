@@ -165,6 +165,82 @@ constexpr SkyDef kSkyDefs[] = {
     {10, {"NYcl**.spr", nullptr, nullptr}, {14, 0, 0}, true, 0x43A4A, 0x43AA8, 0},
 };
 
+namespace {
+struct Box { Vec3 lo, hi; };
+}  // namespace
+
+// Lighting of a track for renderers with real-time lighting. WHERE lights and sun belong (INFERRED, documented in docs/lighting.md): roofed pieces are tunnels and get a lamp at the ceiling of the
+// path node plus the lamp panels / floor lights / pads that the track data defines; every other piece is open air and lit by the sun and the sky. Night tracks (Tokyo, New York: dark sky
+// ramp) have no sun and a low ambient level, so the lamps and signs do the work.
+void buildLighting(const Track& t, Scene& s, const std::vector<Box>& roadBoxes) {
+  auto rgbf = [&](int palIdx, float* o) {
+    const uint32_t c = s.palette.rgba[size_t(std::clamp(palIdx, 0, 255))];
+    o[0] = float((c >> 16) & 255) / 255.0f; o[1] = float((c >> 8) & 255) / 255.0f; o[2] = float(c & 255) / 255.0f;
+  };
+  LightingEnv& e = s.env;
+  struct Env { float elev, azim, sun, amb; };  // sun elevation / azimuth in degrees, sun strength, sky ambient strength
+  static const Env kEnv[11] = {{}, {58, 40, 0.95f, 0.50f}, {70, 120, 1.05f, 0.55f}, {40, 200, 0.80f, 0.22f}, {30, 250, 0.45f, 0.75f}, {0, 0, 0.0f, 0.30f}, {50, 300, 1.00f, 0.42f},
+                               {65, 80, 0.70f, 0.45f}, {35, 160, 0.40f, 0.65f}, {75, 20, 1.10f, 0.50f}, {0, 0, 0.0f, 0.18f}};
+  const int ti = std::clamp(s.trackIndex, 1, 10);
+  const Env& v = kEnv[ti];
+  const float er = v.elev * 3.14159265f / 180.0f, ar = v.azim * 3.14159265f / 180.0f;
+  e.sunDir[0] = std::cos(er) * std::sin(ar); e.sunDir[1] = std::sin(er); e.sunDir[2] = std::cos(er) * std::cos(ar);
+  e.night = ti == 3 || ti == 10;
+  for (int k = 0; k < 3; ++k) {
+    e.sunColor[k] = v.sun * (k == 2 ? 0.88f : k == 1 ? 0.97f : 1.0f);
+    e.skyAmbient[k] = v.amb * (k == 2 ? 1.12f : k == 1 ? 1.0f : 0.92f);
+    e.groundAmbient[k] = 0.45f * v.amb * (k == 2 ? 0.8f : 1.0f);
+  }
+  if (e.night) { for (int k = 0; k < 3; ++k) { e.skyAmbient[k] = k == 2 ? 0.30f : 0.20f; e.groundAmbient[k] = 0.10f; } }
+  e.indoorAmbient = ti == 5 ? 0.34f : 0.26f;
+  {  // exposure: an average surface (half of the sun, mean of sky and ground ambient) is shown with the brightness the original gives it
+    const float amb = 0.5f * (e.skyAmbient[1] + e.groundAmbient[1]);
+    const float lref = amb + e.sunColor[1] * 0.5f * std::max(e.sunDir[1], 0.2f);
+    e.exposure = (e.night ? 0.85f : 1.0f) / std::max(lref, 0.15f);
+    e.indoorLevel = e.night ? 0.7f : ti == 5 ? 0.8f : 0.92f;
+  }
+  // one lamp per tunnel piece, on the ceiling of the path node
+  for (size_t pi = 0; pi < t.pieces.size() && pi < s.pieceBoxes.size() && pi < roadBoxes.size(); ++pi) {
+    const auto& pb = s.pieceBoxes[pi];
+    const TrackPiece& pc = t.pieces[pi];
+    if (!pb.roofed || pb.empty || pc.node < 0 || size_t(pc.node) >= t.nodes.size()) continue;
+    const Box& bx = roadBoxes[pi];
+    const Vec3i& np = t.nodes[size_t(pc.node)].pos;
+    StaticLight l{};
+    l.pos[0] = float(double(np.x) - s.origin[0]); l.pos[2] = float(double(np.z) - s.origin[2]);
+    l.pos[1] = bx.hi.y - 0.18f * (bx.hi.y - bx.lo.y);
+    l.color[0] = 0.5f; l.color[1] = 0.43f; l.color[2] = 0.33f;
+    l.radius = 1.0f * std::max({bx.hi.x - bx.lo.x, bx.hi.z - bx.lo.z, 0.8f * (bx.hi.y - bx.lo.y)}) + 90000.0f;
+    l.kind = 0;
+    s.lights.push_back(l);
+  }
+  // lamp panels, floor lights and pads of the track data
+  for (const MeshPoly& p : s.track.polys) {
+    if (p.scenery || !p.detail || p.hidden || p.count < 3) continue;
+    const PanelDetail& d = s.panelDetails[p.detail];
+    int kind = 0, mat = -1;
+    if (d.kind == PanelKind::ChaseOrange) { kind = 1; mat = s.sdOrangeMaterial; }
+    else if (d.kind == PanelKind::ChaseFloor) { kind = 2; mat = s.sdFloorLightMaterial; }
+    else if (d.kind == PanelKind::Refuel) { kind = 3; mat = s.sdBlueMaterial; }
+    if (!kind || mat < 0) continue;
+    StaticLight l{};
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    for (uint16_t k = 0; k < p.count; ++k) {
+      const Vec3& q = s.track.verts[p.first + k];
+      l.pos[0] += q.x / float(p.count); l.pos[1] += q.y / float(p.count); l.pos[2] += q.z / float(p.count);
+      lo[0] = std::min(lo[0], q.x); hi[0] = std::max(hi[0], q.x); lo[1] = std::min(lo[1], q.y); hi[1] = std::max(hi[1], q.y); lo[2] = std::min(lo[2], q.z); hi[2] = std::max(hi[2], q.z);
+    }
+    // a little in front of the panel
+    l.pos[0] += p.normal.x * 6000.0f; l.pos[1] += p.normal.y * 6000.0f; l.pos[2] += p.normal.z * 6000.0f;
+    rgbf(s.materials[size_t(mat)].palEnd, l.color);
+    const float ext = std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+    l.radius = kind == 1 ? 1.3f * ext + 40000.0f : kind == 2 ? 0.9f * ext + 24000.0f : 1.2f * ext + 30000.0f;
+    l.kind = kind;
+    for (float& c : l.color) c *= kind == 1 ? 0.35f : kind == 2 ? 0.25f : 0.5f;
+    s.lights.push_back(l);
+  }
+}
+
 void loadSky(const GameData& data, int trackIndex, Scene& s) {
   if (s.skyMaterial >= 0) {
     const SurfaceMaterial& m = s.materials[size_t(s.skyMaterial)];
@@ -321,7 +397,6 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
   // --- scenery shape instances (orientation convention SPECULATIVE: v' = v * M, 2.14) ---
   // World-space boxes of the road pieces (walls/roof included). Tall scenery (towers) that the road passes
   // through has the part inside these boxes cut away: buildings cannot occupy the drivable corridor.
-  struct Box { Vec3 lo, hi; };
   std::vector<Box> roadBoxes;
   std::vector<char> roadRoofed;  // parallel to roadBoxes
   std::map<uint32_t, int> pieceByTrd;
@@ -347,8 +422,36 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     bx.hi = bx.hi + Vec3{e, e, e};
     roadBoxes.push_back(bx);
     {
-      bool roofed = false;  // a ceiling polygon: the piece is a tunnel
-      for (const auto& poly : rec.polys) if (Builder::unitNormal(poly.nx, poly.ny, poly.nz).y < -0.9f && (poly.flags & 0x1) == 0) roofed = true;
+      bool roofed = false;  // the path node lies under a visible ceiling polygon of the piece: the piece is a tunnel (hidden roofs only hide the sky; undersides of bridges next to the road do not count)
+      double roofArea = 0, minx = 1e30, maxx = -1e30, minz = 1e30, maxz = -1e30;
+      for (const Vec3i& v : rec.verts) { minx = std::min<double>(minx, v.x); maxx = std::max<double>(maxx, v.x); minz = std::min<double>(minz, v.z); maxz = std::max<double>(maxz, v.z); }
+      for (const auto& poly : rec.polys) {  // visible ceiling polygons: their area seen from above against the piece footprint
+        if (Builder::unitNormal(poly.nx, poly.ny, poly.nz).y > -0.5f || (poly.flags & 0x5) != 0 || (poly.list == 1 && (poly.flags & 0x10))) continue;
+        double a2 = 0;
+        const size_t n = poly.index.size();
+        for (size_t a = 0, b = n - 1; a < n; b = a++) {
+          if (poly.index[a] >= rec.verts.size() || poly.index[b] >= rec.verts.size()) { a2 = 0; break; }
+          const Vec3i &va = rec.verts[poly.index[a]], &vb = rec.verts[poly.index[b]];
+          a2 += double(vb.x) * double(va.z) - double(va.x) * double(vb.z);
+        }
+        roofArea += std::fabs(a2) * 0.5;
+      }
+      if (maxx > minx && maxz > minz && roofArea > 0.3 * (maxx - minx) * (maxz - minz)) roofed = true;
+      if (!roofed && pc.node >= 0 && size_t(pc.node) < t.nodes.size()) {
+        const Vec3i& np = t.nodes[size_t(pc.node)].pos;
+        const double px = double(np.x) - double(pc.pos.x), pz = double(np.z) - double(pc.pos.z);
+        for (const auto& poly : rec.polys) {
+          if (Builder::unitNormal(poly.nx, poly.ny, poly.nz).y > -0.5f || (poly.flags & 0x5) != 0 || (poly.list == 1 && (poly.flags & 0x10))) continue;
+          bool inside = false;
+          const size_t n = poly.index.size();
+          for (size_t a = 0, b = n - 1; a < n; b = a++) {
+            if (poly.index[a] >= rec.verts.size() || poly.index[b] >= rec.verts.size()) { inside = false; break; }
+            const Vec3i &va = rec.verts[poly.index[a]], &vb = rec.verts[poly.index[b]];
+            if (((double(va.z) > pz) != (double(vb.z) > pz)) && px < (double(vb.x) - double(va.x)) * (pz - double(va.z)) / (double(vb.z) - double(va.z)) + double(va.x)) inside = !inside;
+          }
+          if (inside) { roofed = true; break; }
+        }
+      }
       roadRoofed.push_back(roofed ? 1 : 0);
     }
     {
@@ -549,6 +652,7 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     if (trackIndex >= 1 && trackIndex <= 10) s->skyBand = float(kBand[trackIndex - 1]) / 16384.0f;
   }
   loadSky(data, trackIndex, *s);
+  buildLighting(t, *s, roadBoxes);
   if (getenv("SLIP_SKYLOG")) fprintf(stderr, "sky sprites %zu speed %g\n", s->skySprites.size(), s->skySpeed);
   if (getenv("SLIP_SKYLOG")) for (int k : {s->skyMaterial, s->groundMaterial}) if (k >= 0) { const auto& m = s->materials[size_t(k)]; fprintf(stderr, "mat %s ramp %d..%d fallback %d:", m.name.c_str(), m.palStart, m.palEnd, m.fallbackColor); for (int i = m.palStart; i <= m.palEnd; ++i) fprintf(stderr, " %06x", s->palette.rgba[size_t(i)] & 0xffffff); fprintf(stderr, "\n"); }
   s->groupTrees = t.groupTrees;  // planes come straight from the group points (see track.cpp)

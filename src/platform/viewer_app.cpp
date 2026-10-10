@@ -16,6 +16,19 @@ constexpr double kPi = 3.14159265358979323846;
 
 bool ViewerApp::init(const AppOptions& opt, std::string* error) {
   opt_ = opt;
+  {
+    std::string warn;
+    RendererOptions ro;
+    ro.shader = opt.shader;
+    ro.filter = opt.filter;
+    ro.aa = opt.aa;
+    ro.lighting = opt.lighting;
+    ro.ao = opt.ao;
+    ro.bloom = opt.bloom;
+    renderer_ = createRenderer(opt.renderer, ro, &warn);
+    if (!warn.empty()) std::fprintf(stderr, "%s\n", warn.c_str());
+  }
+  renderer_->resize(opt.width, opt.height);
   std::filesystem::path dir = findGameDirectory(opt.dataDir);
   if (dir.empty()) {
     if (error) *error = "Original game files not found. Pass --data <folder with SLIPSTRM.RES> or set SLIPSTREAM_DATA.";
@@ -49,7 +62,7 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
     }
     settings_.difficulty = aiTables_.difficulty;
     applySettings();
-    renderer_.shadows = settings_.shadows;
+    renderer_->shadows = settings_.shadows;
   }
   refPoints_ = loadShipRefPoints(*data_);
   {
@@ -74,7 +87,6 @@ bool ViewerApp::init(const AppOptions& opt, std::string* error) {
         }
     }
   }
-  renderer_.resize(opt.width, opt.height);
   cam_.fovY = 1.15f;
   shapes_ = data_->list("SHP");
   sprites_ = data_->list("SPR");
@@ -751,8 +763,8 @@ void ViewerApp::update(double dt, const InputState& in0) {
 }
 
 void ViewerApp::drawSprite() {
-  uint32_t* fb = renderer_.framebuffer();
-  int W = renderer_.width(), H = renderer_.height();
+  uint32_t* fb = renderer_->framebuffer();
+  int W = renderer_->width(), H = renderer_->height();
   for (int y = 0; y < H; ++y)
     for (int x = 0; x < W; ++x) fb[size_t(y) * size_t(W) + size_t(x)] = ((x / 16 + y / 16) & 1) ? 0xff303030u : 0xff383838u;
   if (sprite_.w <= 0) return;
@@ -867,7 +879,7 @@ void ViewerApp::frontKey(PauseMenu::Key k) {
 // Window position (0..1) to the front end's 320x200 screen, shown at 4:3 in the middle of the frame buffer.
 void ViewerApp::frontMouse(double nx, double ny, bool click) {
   if (!frontActive_) return;
-  const double fw = renderer_.width(), fh = renderer_.height();
+  const double fw = renderer_->width(), fh = renderer_->height();
   const double rw = std::min(fw, fh * 4.0 / 3.0), rh = rw * 3.0 / 4.0, dx = (fw - rw) / 2, dy = (fh - rh) / 2;
   const double vx = (nx * fw - dx) * 320.0 / rw, vy = (ny * fh - dy) * 200.0 / rh;
   const bool inside = vx >= 0 && vx < 320 && vy >= 0 && vy < 200;
@@ -877,8 +889,8 @@ void ViewerApp::frontMouse(double nx, double ny, bool click) {
 
 void ViewerApp::renderFront() {
   front_->draw();
-  uint32_t* fb = renderer_.framebuffer();
-  const int fw = renderer_.width(), fh = renderer_.height();
+  uint32_t* fb = renderer_->framebuffer();
+  const int fw = renderer_->width(), fh = renderer_->height();
   std::fill(fb, fb + size_t(fw) * size_t(fh), 0xff000000u);
   const int rw = std::min(fw, fh * 4 / 3), rh = rw * 3 / 4, dx = (fw - rw) / 2, dy = (fh - rh) / 2;
   const uint32_t* src = front_->pixels();
@@ -905,11 +917,11 @@ void ViewerApp::drawRearMonitor() {
   if (settings_.weaponsMonitor && combat_.monitorProj)
     for (const Projectile& p : combat_.projectiles) if (p.id == combat_.monitorProj && p.alive) mp = &p;
   if (!mp && (!settings_.rearMonitor || view_ == 4 || view_ == 3 || player_.wrecked)) return;
-  const int fw = renderer_.width(), fh = renderer_.height();
+  const int fw = renderer_->width(), fh = renderer_->height();
   const double sx = fw / 320.0, sy = fh / 200.0;
   const int rx0 = 210, ry0 = 99, rx1 = 301, ry1 = 147;
   const int x0 = int(std::floor((rx0 + 1) * sx)), y0 = int(std::floor((ry0 + 1) * sy)), x1 = int(std::floor((rx1) * sx)) - 1, y1 = int(std::floor((ry1) * sy)) - 1;
-  uint32_t* fb = renderer_.framebuffer();
+  uint32_t* fb = renderer_->framebuffer();
   const std::vector<uint32_t> keep(fb, fb + size_t(fw) * size_t(fh));
   const Camera mainCam = cam_;
   const double* m = mp ? mp->m : player_.m;
@@ -937,13 +949,13 @@ void ViewerApp::drawRearMonitor() {
   rearPass_ = true;
   const uint32_t sky = 0xff5a7fa8u;
   uint32_t ground = 0xff2a2a2eu;
-  renderer_.setViewport(x0, y0, x1, y1, float(x0 + x1 + 1) * 0.5f, float(y0 + y1 + 1) * 0.5f);
-  renderer_.skyRamp = scene_ ? scene_->skyRamp : std::vector<uint32_t>{};
-  if (scene_) renderer_.skyBand = scene_->skyBand;
+  renderer_->setViewport(x0, y0, x1, y1, float(x0 + x1 + 1) * 0.5f, float(y0 + y1 + 1) * 0.5f);
+  renderer_->skyRamp = scene_ ? scene_->skyRamp : std::vector<uint32_t>{};
+  if (scene_) renderer_->skyBand = scene_->skyBand;
   if (scene_ && scene_->groundColor) ground = scene_->groundColor;
-  renderer_.beginFrame(cam_, sky, ground);
+  renderer_->beginFrame(cam_, sky, ground);
   drawWorld();
-  renderer_.resetViewport();
+  renderer_->resetViewport();
   rearPass_ = false;
   cam_ = mainCam;
   for (int y = 0; y < fh; ++y)  // everything outside the monitor is the finished main frame again
@@ -968,8 +980,8 @@ void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int
   }
   Scene& sc = *previewCache_[size_t(ship)];
   sc.palette = pal ? *pal : front_->palette();  // the craft's card palette (the Info screen's own palette is the screen's)
-  uint32_t* fb = renderer_.framebuffer();
-  const int fw = renderer_.width(), fh = renderer_.height();
+  uint32_t* fb = renderer_->framebuffer();
+  const int fw = renderer_->width(), fh = renderer_->height();
   const std::vector<uint32_t> keep(fb, fb + size_t(fw) * size_t(fh));
   const int x0 = dx + rect[0] * rw / 320, y0 = dy + rect[1] * rh / 200, x1 = dx + rect[2] * rw / 320, y1 = dy + rect[3] * rh / 200;
   const Mesh& mesh = sc.shipMeshes[0];
@@ -983,17 +995,21 @@ void ViewerApp::renderShipPreview(int ship, double angle, const int rect[4], int
   cam.fovY = float(fov);
   cam.nearPlane = float(radius * 0.2);
   const uint32_t key = 0xff010203u;
-  const bool cull = renderer_.cullBackfaces, shadows = renderer_.shadows, portals = renderer_.portalCulling;
-  const std::vector<ShadowCaster> casters = std::move(renderer_.shadowCasters);
-  renderer_.shadowCasters.clear();
-  renderer_.cullBackfaces = true; renderer_.shadows = false; renderer_.portalCulling = false; renderer_.visMask = 0xFFFF;
-  renderer_.setViewport(x0, y0, x1, y1, float(x0 + x1 + 1) * 0.5f, float(y0 + y1 + 1) * 0.5f);
-  renderer_.beginFrame(cam, key, key);
+  const bool cull = renderer_->cullBackfaces, shadows = renderer_->shadows, portals = renderer_->portalCulling;
+  const std::vector<ShadowCaster> casters = std::move(renderer_->shadowCasters);
+  renderer_->shadowCasters.clear();
+  renderer_->cullBackfaces = true; renderer_->shadows = false; renderer_->portalCulling = false; renderer_->visMask = 0xFFFF;
+  renderer_->setViewport(x0, y0, x1, y1, float(x0 + x1 + 1) * 0.5f, float(y0 + y1 + 1) * 0.5f);
+  renderer_->beginFrame(cam, key, key);
   MeshTransform xf;
-  renderer_.drawMesh(sc, mesh, xf);
-  renderer_.resetViewport();
-  renderer_.cullBackfaces = cull; renderer_.shadows = shadows; renderer_.portalCulling = portals;
-  renderer_.shadowCasters = casters;
+  const int savedLighting = renderer_->lightingMode;
+  renderer_->lightingMode = 0;  // ship cards show the craft with the original colours
+  renderer_->drawMesh(sc, mesh, xf);
+  renderer_->finishScene();
+  renderer_->lightingMode = savedLighting;
+  renderer_->resetViewport();
+  renderer_->cullBackfaces = cull; renderer_->shadows = shadows; renderer_->portalCulling = portals;
+  renderer_->shadowCasters = casters;
   for (int y = 0; y < fh; ++y)
     for (int x = 0; x < fw; ++x) {
       const size_t i = size_t(y) * size_t(fw) + size_t(x);
@@ -1009,7 +1025,7 @@ void ViewerApp::render() {
 
 void ViewerApp::renderFrame() {
   if (mode_ == AppMode::Sprite) {
-    renderer_.beginFrame(cam_, 0, 0);
+    renderer_->beginFrame(cam_, 0, 0);
     drawSprite();
     return;
   }
@@ -1024,15 +1040,15 @@ void ViewerApp::renderFrame() {
   updatePieceLights();
   if (hudActive()) {
     int x0, y0, x1, y1; float pcx, pcy;
-    Hud::viewport(renderer_.width(), renderer_.height(), HudLayout::cx + shakeX, HudLayout::cy + shakeY, &x0, &y0, &x1, &y1, &pcx, &pcy);
-    renderer_.setViewport(x0, y0, x1, y1, pcx, pcy);
+    Hud::viewport(renderer_->width(), renderer_->height(), HudLayout::cx + shakeX, HudLayout::cy + shakeY, &x0, &y0, &x1, &y1, &pcx, &pcy);
+    renderer_->setViewport(x0, y0, x1, y1, pcx, pcy);
   } else {
-    renderer_.resetViewport();
+    renderer_->resetViewport();
   }
-  renderer_.skyRamp = mode_ != AppMode::Model && scene_ ? scene_->skyRamp : std::vector<uint32_t>{};
-  if (scene_) renderer_.skyBand = scene_->skyBand;
+  renderer_->skyRamp = mode_ != AppMode::Model && scene_ ? scene_->skyRamp : std::vector<uint32_t>{};
+  if (scene_) renderer_->skyBand = scene_->skyBand;
   if (mode_ != AppMode::Model && scene_ && scene_->groundColor) ground = scene_->groundColor;
-  renderer_.beginFrame(cam_, sky, ground);
+  renderer_->beginFrame(cam_, sky, ground);
   if (!scene_) return;
   drawWorld();
 }
@@ -1041,39 +1057,56 @@ void ViewerApp::renderFrame() {
 void ViewerApp::drawWorld() {
   // The original always culls back-facing track polygons (0x3948C, 0x193FF); legacy mode only culls while driving.
   if (std::getenv("SLIP_NOCULL")) cullOverride_ = 0;
-  renderer_.cullBackfaces = cullOverride_ >= 0 ? cullOverride_ != 0 : (mode_ == AppMode::Track && (painter_ || driving_));
-  renderer_.shadows = !std::getenv("SLIP_NOSHADOW");
-  renderer_.drawSky(*scene_, animSeconds_);
-  renderer_.animTimer = uint32_t(animSeconds_ * 16384.0);
-  renderer_.portalCulling = useVisMask_ && !std::getenv("SLIP_NOPORTAL");
-  {
-    renderer_.hideTunnelFaces = false;
-    const float cp[3] = {float(cam_.pos[0] - scene_->origin[0]), float(cam_.pos[1] - scene_->origin[1]), float(cam_.pos[2] - scene_->origin[2])};
-    for (size_t i = 0; i < scene_->pieceBoxes.size() && !renderer_.hideTunnelFaces; ++i)
-      if (scene_->pieceBoxes[i].roofed && scene_->pieceBoxes[i].graph && !scene_->pieceBoxes[i].empty && scene_->pieceContains(i, cp)) renderer_.hideTunnelFaces = true;
+  renderer_->cullBackfaces = cullOverride_ >= 0 ? cullOverride_ != 0 : (mode_ == AppMode::Track && (painter_ || driving_));
+  renderer_->shadows = !std::getenv("SLIP_NOSHADOW");
+  renderer_->drawSky(*scene_, animSeconds_);
+  if (driving_ && renderer_->lightingMode > 0) {  // dynamic lights (renderers with real-time lighting): projectiles, explosions, burning boosters
+    for (const Projectile& p : combat_.projectiles) {
+      if (!p.alive) continue;
+      if (p.kind == kBlaster) renderer_->addLight(p.pos, 1.0f, 0.25f, 0.2f, 180000);
+      else if (p.kind == kDisrupter) renderer_->addLight(p.pos, 0.5f, 0.7f, 1.0f, 180000);
+      else renderer_->addLight(p.pos, 1.0f, 0.65f, 0.25f, 260000);
+    }
+    for (const Fireball& f : combat_.particles.fireballs) {
+      if (!f.alive) continue;
+      const float k = float(std::clamp(1.0 - f.age / f.total, 0.0, 1.0));
+      renderer_->addLight(f.pos, 1.0f * k, 0.6f * k, 0.2f * k, 420000);
+    }
+    for (int i = 0; i < 10; ++i) {
+      const ShipState& sh = i == player_.ship ? player_ : grid_[size_t(i)];
+      if (sh.boosterOn && !sh.wrecked) renderer_->addLight(&sh.x, 0.3f, 0.5f, 1.0f, 150000);
+    }
   }
-  renderer_.pieceHint = driving_ && !rearPass_ && (view_ == 0 || view_ == 1 || view_ == 2 || view_ == 4) ? ai_[size_t(player_.ship)].piece : -1;
-  if (mode_ == AppMode::Track) renderer_.computePortalVisibility(*scene_); else renderer_.portalCulling = false;
-  renderer_.visMask = (mode_ == AppMode::Track && useVisMask_) ? scene_->visMaskAt(cam_.pos[0], cam_.pos[1], cam_.pos[2]) : 0xFFFF;
+  renderer_->animTimer = uint32_t(animSeconds_ * 16384.0);
+  renderer_->portalCulling = useVisMask_ && !std::getenv("SLIP_NOPORTAL");
+  {
+    renderer_->hideTunnelFaces = false;
+    const float cp[3] = {float(cam_.pos[0] - scene_->origin[0]), float(cam_.pos[1] - scene_->origin[1]), float(cam_.pos[2] - scene_->origin[2])};
+    for (size_t i = 0; i < scene_->pieceBoxes.size() && !renderer_->hideTunnelFaces; ++i)
+      if (scene_->pieceBoxes[i].roofed && scene_->pieceBoxes[i].graph && !scene_->pieceBoxes[i].empty && scene_->pieceContains(i, cp)) renderer_->hideTunnelFaces = true;
+  }
+  renderer_->pieceHint = driving_ && !rearPass_ && (view_ == 0 || view_ == 1 || view_ == 2 || view_ == 4) ? ai_[size_t(player_.ship)].piece : -1;
+  if (mode_ == AppMode::Track) renderer_->computePortalVisibility(*scene_); else renderer_->portalCulling = false;
+  renderer_->visMask = (mode_ == AppMode::Track && useVisMask_) ? scene_->visMaskAt(cam_.pos[0], cam_.pos[1], cam_.pos[2]) : 0xFFFF;
   MeshTransform xf;
-  if (mode_ == AppMode::Track) buildShadowCasters(); else renderer_.shadowCasters.clear();
+  if (mode_ == AppMode::Track) buildShadowCasters(); else renderer_->shadowCasters.clear();
   if (mode_ == AppMode::Track) {
     xf.pos[0] = scene_->origin[0]; xf.pos[1] = scene_->origin[1]; xf.pos[2] = scene_->origin[2];
     if (painter_ && !scene_->bsp.empty() && !rearPass_) { renderTrackPainter(xf); drawCombatOverlay(); return; }
-    renderer_.drawMesh(*scene_, scene_->track, xf);
+    renderer_->drawMesh(*scene_, scene_->track, xf);
     // Camera-facing scenery: orientation is a yaw towards the camera (CONFIRMED 0x379C9: rows (b,0,-a),(0,1,0),(a,0,b)
     // applied as v*M, with (a,b) = normalised (object - camera) in x/z). Stored here as R = M^T.
     for (const Billboard& bb : scene_->billboards) {
-      if (!renderer_.visAllows(bb.vis)) continue;
+      if (!renderer_->visAllows(bb.vis)) continue;
       MeshTransform bx;
       for (int k = 0; k < 3; ++k) bx.pos[k] = scene_->origin[size_t(k)] + double(k == 0 ? bb.pos.x : k == 1 ? bb.pos.y : bb.pos.z);
-      if (!renderer_.sceneryBigEnough(bx.pos, bb.radius)) continue;
+      if (!renderer_->sceneryBigEnough(bx.pos, bb.radius)) continue;
       double dx = bx.pos[0] - cam_.pos[0], dz = bx.pos[2] - cam_.pos[2];
       double len = std::sqrt(dx * dx + dz * dz);
       float a = len > 1e-3 ? float(dx / len) : 0.0f, b = len > 1e-3 ? float(dz / len) : 1.0f;
       const float R[9] = {b, 0, a, 0, 1, 0, -a, 0, b};
       for (int k = 0; k < 9; ++k) bx.R[k] = R[k];
-      renderer_.drawMesh(*scene_, bb.mesh, bx);
+      renderer_->drawMesh(*scene_, bb.mesh, bx);
     }
     for (int i = 0; i < 10; ++i) {
       const ShipState& s = (driving_ && i == player_.ship) ? player_ : grid_[size_t(i)];
@@ -1081,16 +1114,17 @@ void ViewerApp::drawWorld() {
       MeshTransform sx;
       sx.pos[0] = s.x; sx.pos[1] = s.y; sx.pos[2] = s.z;
       shipRenderMatrix(s, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
-      renderer_.drawMesh(*scene_, scene_->shipMeshes[size_t(i)], sx);
+      renderer_->drawMesh(*scene_, scene_->shipMeshes[size_t(i)], sx);
     }
     for (const Door& d : doors_.list) {
       MeshTransform dx;
       for (int k = 0; k < 3; ++k) dx.pos[k] = d.pos[k];
-      renderer_.drawMesh(*scene_, d.mesh, dx);
+      renderer_->drawMesh(*scene_, d.mesh, dx);
     }
-    if (rearPass_) drawWorldObjects(); else drawCombatOverlay();
+    if (rearPass_) { drawWorldObjects(); renderer_->finishScene(); } else drawCombatOverlay();
   } else {
-    renderer_.drawMesh(*scene_, scene_->track, xf);
+    renderer_->drawMesh(*scene_, scene_->track, xf);
+    renderer_->finishScene();
   }
 }
 
@@ -1104,7 +1138,7 @@ void ViewerApp::drawParticles(const Scene& sc) {
     if (v.empty()) return;
     const Sprite& sp = v[size_t(std::clamp(frame, 0, int(v.size()) - 1))];
     if (sp.w == 0) return;
-    renderer_.drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, pos, 2.0 * size, transparent(sp));
+    renderer_->drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, pos, 2.0 * size, transparent(sp));
   };
   for (const Puff& p : ps.puffs) draw(p.fam, p.fading() ? 1 : 0, p.frame, p.pos, p.size());
   for (const Emitter& e : ps.emitters)  // the flame at the tail of a missile (the head puff shows the Fire list, 0x277D8)
@@ -1114,7 +1148,7 @@ void ViewerApp::drawParticles(const Scene& sc) {
     if (m < 0) m = sp.kind == 1 ? sc.splashMaterial : sc.sparkMaterial;
     if (m < 0 || m >= int(sc.materials.size())) continue;
     const int idx = std::clamp(int(sc.materials[size_t(m)].palEnd) - 1, 0, 255);
-    renderer_.drawStarWorld(sp.pos, sp.size, sp.angle, 0xff000000u | (sc.palette.rgba[size_t(idx)] & 0xffffffu));
+    renderer_->drawStarWorld(sp.pos, sp.size, sp.angle, 0xff000000u | (sc.palette.rgba[size_t(idx)] & 0xffffffu));
   }
   for (const Fireball& f : ps.fireballs) draw(PartFam::Expl, f.fading() ? 1 : 0, f.frame, f.pos, f.currentSize());
   for (const DebrisPiece& d : ps.pieces) {
@@ -1126,7 +1160,7 @@ void ViewerApp::drawParticles(const Scene& sc) {
     const double ca = std::cos(a), sa = std::sin(a), cb = std::cos(b), sb = std::sin(b), cc = std::cos(c), sc2 = std::sin(c);
     const double R[9] = {cb * cc, -cb * sc2, sb, ca * sc2 + sa * sb * cc, ca * cc - sa * sb * sc2, -sa * cb, sa * sc2 - ca * sb * cc, sa * cc + ca * sb * sc2, ca * cb};
     for (int i = 0; i < 9; ++i) xf.R[i] = float(R[i]);
-    renderer_.drawMesh(sc, m, xf);
+    renderer_->drawMesh(sc, m, xf);
   }
 }
 
@@ -1144,8 +1178,8 @@ void ViewerApp::drawWorldObjects() {
       const double m[3] = {(a[0] + p.pos[0]) * 0.5, (a[1] + p.pos[1]) * 0.5, (a[2] + p.pos[2]) * 0.5};
       auto rgb = [&](int idx) { return 0xff000000u | (sc.palette.rgba[size_t(idx)] & 0xffffffu); };
       const uint32_t head = p.kind == kBlaster ? 0xffffff00u : rgb(0x4F), tail = p.kind == kBlaster ? 0xffff0000u : rgb(0x40);
-      renderer_.drawLineWorld(m, p.pos, head);
-      renderer_.drawLineWorld(a, m, tail);
+      renderer_->drawLineWorld(m, p.pos, head);
+      renderer_->drawLineWorld(a, m, tail);
       continue;
     }
     const int mi = Scene::weaponMeshIndex(p.kind);
@@ -1153,7 +1187,7 @@ void ViewerApp::drawWorldObjects() {
     MeshTransform xf;
     for (int k = 0; k < 3; ++k) xf.pos[k] = p.pos[k];
     for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) xf.R[i * 3 + j] = float(p.m[j * 3 + i]);
-    renderer_.drawMesh(sc, sc.weaponMeshes[size_t(mi)], xf);
+    renderer_->drawMesh(sc, sc.weaponMeshes[size_t(mi)], xf);
   }
   if (!drones_.drones.empty() && !sc.droneMesh.polys.empty())  // the drones: DRONE.SHP, turned along their flight direction (the model faces +z)
     for (const Drone& d : drones_.drones) {
@@ -1167,34 +1201,35 @@ void ViewerApp::drawWorldObjects() {
       const double u[3] = {f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]};
       const double m[9] = {r[0], r[1], r[2], u[0], u[1], u[2], f[0], f[1], f[2]};
       for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) xf.R[i * 3 + j] = float(m[j * 3 + i]);
-      renderer_.drawMesh(sc, sc.droneMesh, xf);
+      renderer_->drawMesh(sc, sc.droneMesh, xf);
     }
   for (const Pickup& pk : combat_.pickups) {  // bonus object: BONUS<type>.SPR billboard (size = the 0x2620 collision cube)
     const Sprite& sp = bonusSprites_[size_t(std::clamp(pk.type, 0, 5))];
-    renderer_.drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, pk.pos, 2.0 * 0x2620, transparent(sp));
+    renderer_->drawSpriteWorld(sp, sp.palette ? *sp.palette : sc.palette, pk.pos, 2.0 * 0x2620, transparent(sp));
   }
   drawParticles(sc);
 }
 
 void ViewerApp::drawCombatOverlay() {
-  if (!driving_ || !scene_) return;
+  if (!driving_ || !scene_) { renderer_->finishScene(); return; }
   drawWorldObjects();
   const CombatState& c = combat_.combat[size_t(player_.ship)];
   if (!hudActive() && c.lockTarget >= 0) {  // lock marker (the HUD draws the original's TSIGHT sprite instead)
     const ShipState& t = grid_[size_t(c.lockTarget)];
     const double tp[3] = {t.x, t.y, t.z};
     float sx, sy, z;
-    if (renderer_.projectToScreen(tp, &sx, &sy, &z)) {
-      const int r = std::max(8, int(t.extent * 1.3 / z * (renderer_.height() * 0.5 / std::tan(cam_.fovY * 0.5))));
-      renderer_.drawRectScreen(int(sx) - r, int(sy) - r, int(sx) + r, int(sy) + r, 0xffff3030u);
+    if (renderer_->projectToScreen(tp, &sx, &sy, &z)) {
+      const int r = std::max(8, int(t.extent * 1.3 / z * (renderer_->height() * 0.5 / std::tan(cam_.fovY * 0.5))));
+      renderer_->drawRectScreen(int(sx) - r, int(sy) - r, int(sx) + r, int(sy) + r, 0xffff3030u);
     }
   }
+  renderer_->finishScene();  // the 3D picture is complete: back ends that render elsewhere deliver it into the framebuffer before the HUD is drawn over it
   drawHud();
   drawRearMonitor();
   if (introMode_) drawIntroOverlay();
   if (replayMode_ && hudAssets_.loaded) {
     HudCanvas c;
-    c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
+    c.fb = renderer_->framebuffer(); c.w = renderer_->width(); c.h = renderer_->height(); c.pal = &hudAssets_.palette;
     c.textCentered(hudAssets_.small.height > 0 ? hudAssets_.small : hudAssets_.time, "REPLAY   Esc: end   F1..F5: cameras", 0, 319, 12, 0xFF);
   }
 }
@@ -1202,10 +1237,10 @@ void ViewerApp::drawCombatOverlay() {
 // Piece light (0x39AE6..0x39AF8): the light of the piece, and for the refuel piece a fresh random value (14 bit) for every draw: the blue / white
 // flashes of the pit. The generator is 0x3667B: x = (x + 1) >> 1, xor 0xB400 when a bit fell out.
 void ViewerApp::updatePieceLights() {
-  renderer_.pieceLight.clear();
+  renderer_->pieceLight.clear();
   if (mode_ != AppMode::Track || !scene_) return;
   const Track& t = scene_->track_data;
-  renderer_.pieceLight.resize(t.pieces.size(), 1.0f);
+  renderer_->pieceLight.resize(t.pieces.size(), 1.0f);
   for (size_t i = 0; i < t.pieces.size(); ++i) {
     float light = float(t.pieces[i].light) / 16384.0f;
     if (int(i) == t.refuelPiece && std::getenv("SLIP_NOPITFLICKER") == nullptr) {
@@ -1216,7 +1251,7 @@ void ViewerApp::updatePieceLights() {
       lightLfsr_ = x;
       light = float(x & 0x3fff) / 16384.0f;
     }
-    renderer_.pieceLight[i] = std::clamp(light, 0.0f, 1.0f);
+    renderer_->pieceLight[i] = std::clamp(light, 0.0f, 1.0f);
   }
 }
 
@@ -1228,7 +1263,7 @@ void ViewerApp::openPause() {
 
 void ViewerApp::applyConfig() {
   applySettings();
-  renderer_.shadows = settings_.shadows;
+  renderer_->shadows = settings_.shadows;
   if (front_) front_->setEconomy(&weaponTable_, aiTables_.difficulty, 750);
   SavedConfig sc;
   sc.settings = settings_;
@@ -1242,7 +1277,7 @@ void ViewerApp::applySettings() {
   aiTables_.difficulty = settings_.difficulty;
   combat_.difficulty = settings_.difficulty;
   static const float kDetail[4] = {32.0f, 20.0f, 10.0f, 5.0f};  // scenery size thresholds of the Detail option (0x350C7)
-  renderer_.minScenerySize = kDetail[std::clamp(settings_.detail, 0, 3)];
+  renderer_->minScenerySize = kDetail[std::clamp(settings_.detail, 0, 3)];
 }
 
 void ViewerApp::menuKey(PauseMenu::Key k) {
@@ -1366,10 +1401,10 @@ void ViewerApp::drawHud() {
     const ShipState* tg = cs.lockTarget >= 0 ? &grid_[size_t(cs.lockTarget)] : nullptr;
     const double tp[3] = {tg ? tg->x : cs.lockDronePos[0], tg ? tg->y : cs.lockDronePos[1], tg ? tg->z : cs.lockDronePos[2]};
     float sx, sy, z;
-    if (renderer_.projectToScreen(tp, &sx, &sy, &z)) {
+    if (renderer_->projectToScreen(tp, &sx, &sy, &z)) {
       st.lockVisible = true;
-      st.lockX = sx * 320.0 / renderer_.width();
-      st.lockY = sy * 200.0 / renderer_.height();
+      st.lockX = sx * 320.0 / renderer_->width();
+      st.lockY = sy * 200.0 / renderer_->height();
     }
   }
   static const int forced = std::getenv("SLIP_PORTRAIT") ? std::atoi(std::getenv("SLIP_PORTRAIT")) : 0;  // test hook
@@ -1380,18 +1415,18 @@ void ViewerApp::drawHud() {
   }
   if (settings_.trackMap && hudAssets_.map.loaded) {  // 0x58B52: the map is drawn after the 3D view, before the console and the text
     HudCanvas mc;
-    mc.fb = renderer_.framebuffer(); mc.w = renderer_.width(); mc.h = renderer_.height(); mc.pal = &hudAssets_.palette;
+    mc.fb = renderer_->framebuffer(); mc.w = renderer_->width(); mc.h = renderer_->height(); mc.pal = &hudAssets_.palette;
     drawMap(mc);
   }
-  hud_.draw(renderer_.framebuffer(), renderer_.width(), renderer_.height(), st, hudAssets_);
+  hud_.draw(renderer_->framebuffer(), renderer_->width(), renderer_->height(), st, hudAssets_);
   if (netplay_) {
     HudCanvas c;
-    c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
+    c.fb = renderer_->framebuffer(); c.w = renderer_->width(); c.h = renderer_->height(); c.pal = &hudAssets_.palette;
     drawPlayerList(c);
   }
   if (pause_.isOpen()) {
     HudCanvas c;
-    c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
+    c.fb = renderer_->framebuffer(); c.w = renderer_->width(); c.h = renderer_->height(); c.pal = &hudAssets_.palette;
     pause_.draw(c, hudAssets_, settings_);
   }
 }
@@ -1405,7 +1440,7 @@ void ViewerApp::drawHud() {
 // Items are painted over each other; only inside an item is depth tested.
 void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
   const Scene& sc = *scene_;
-  const auto& win = renderer_.pieceWindows();
+  const auto& win = renderer_->pieceWindows();
   const bool havePortals = !win.empty();
   std::vector<int> order;
   sc.bspOrder(cam_.pos, &order);
@@ -1470,56 +1505,56 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
     MeshTransform sx;
     sx.pos[0] = s.x; sx.pos[1] = s.y; sx.pos[2] = s.z;
     shipRenderMatrix(s, sx.R);  // ART models face +z (smok/fan1 reference points are at -z)
-    renderer_.drawMesh(sc, sc.shipMeshes[size_t(i)], sx, nullptr, item);
+    renderer_->drawMesh(sc, sc.shipMeshes[size_t(i)], sx, nullptr, item);
   };
   auto drawDoor = [&](const Door& d, int item) {
     MeshTransform dx;
     for (int k = 0; k < 3; ++k) dx.pos[k] = d.pos[k];
-    renderer_.drawMesh(sc, d.mesh, dx, nullptr, item);
+    renderer_->drawMesh(sc, d.mesh, dx, nullptr, item);
   };
   auto drawScenery = [&](const Item& it) {
     if (it.kind == 1) {
       const auto& in = sc.track.instances[it.idx];
       const double c[3] = {sc.origin[0] + in.center.x, sc.origin[1] + in.center.y, sc.origin[2] + in.center.z};
-      if (!renderer_.sceneryBigEnough(c, in.radius)) return;
-      renderer_.drawMesh(sc, sc.track, xf, &sc.instPolys[it.idx], itemId++);
+      if (!renderer_->sceneryBigEnough(c, in.radius)) return;
+      renderer_->drawMesh(sc, sc.track, xf, &sc.instPolys[it.idx], itemId++);
     } else {
       const Billboard& bb = sc.billboards[it.idx];
-      if (!renderer_.visAllows(bb.vis)) return;
+      if (!renderer_->visAllows(bb.vis)) return;
       MeshTransform bx;
       for (int k = 0; k < 3; ++k) bx.pos[k] = sc.origin[size_t(k)] + double(k == 0 ? bb.pos.x : k == 1 ? bb.pos.y : bb.pos.z);
-      if (!renderer_.sceneryBigEnough(bx.pos, bb.radius)) return;
+      if (!renderer_->sceneryBigEnough(bx.pos, bb.radius)) return;
       double dx = bx.pos[0] - cam_.pos[0], dz = bx.pos[2] - cam_.pos[2];
       double len = std::sqrt(dx * dx + dz * dz);
       float a = len > 1e-3 ? float(dx / len) : 0.0f, b = len > 1e-3 ? float(dz / len) : 1.0f;
       const float R[9] = {b, 0, a, 0, 1, 0, -a, 0, b};
       for (int k = 0; k < 9; ++k) bx.R[k] = R[k];
-      renderer_.drawMesh(sc, bb.mesh, bx, nullptr, itemId++);
+      renderer_->drawMesh(sc, bb.mesh, bx, nullptr, itemId++);
     }
   };
 
-  const auto uni = renderer_.unionWindow();
+  const auto uni = renderer_->unionWindow();
   const bool twoPass = havePortals && !sc.portalOnly && uni.vis;
   if (twoPass) {
     // pass 2 of the frame: everything in the frustum, clipped to the union window of the reached pieces
-    std::vector<SoftwareRenderer::WinRect> saved = win;
+    std::vector<Renderer::WinRect> saved = win;
     for (int g : order) {
       for (const Item& it : byGroup[size_t(g)]) {
         if (it.kind == 0) {
           const auto& pb = sc.pieceBoxes[it.idx];
-          if (!renderer_.boxInFrustum(sc, pb.lo, pb.hi)) continue;
-          renderer_.setPieceWindow(it.idx, uni);
-          renderer_.class8Rule = true;
-          renderer_.drawMesh(sc, sc.track, xf, &sc.piecePolys[it.idx], itemId++);
-          renderer_.class8Rule = false;
+          if (!renderer_->boxInFrustum(sc, pb.lo, pb.hi)) continue;
+          renderer_->setPieceWindow(it.idx, uni);
+          renderer_->class8Rule = true;
+          renderer_->drawMesh(sc, sc.track, xf, &sc.piecePolys[it.idx], itemId++);
+          renderer_->class8Rule = false;
         } else {
-          renderer_.setSceneryWindow(&uni);
+          renderer_->setSceneryWindow(&uni);
           drawScenery(it);
-          renderer_.setSceneryWindow(nullptr);
+          renderer_->setSceneryWindow(nullptr);
         }
       }
     }
-    for (size_t i = 0; i < saved.size(); ++i) renderer_.setPieceWindow(i, saved[i]);
+    for (size_t i = 0; i < saved.size(); ++i) renderer_->setPieceWindow(i, saved[i]);
   }
 
   bool allowed = !havePortals || showAllScenery_;  // [0x33EEC]
@@ -1534,7 +1569,7 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
         const bool reached = !havePortals || (pb.graph ? win[it.idx].vis : allowed);
         if (!reached) continue;
         const int item = itemId++;
-        renderer_.drawMesh(sc, sc.track, xf, &sc.piecePolys[it.idx], item);
+        renderer_->drawMesh(sc, sc.track, xf, &sc.piecePolys[it.idx], item);
         for (int sh : shipsOnPiece[it.idx]) drawShip(sh, item);  // entities of a piece are drawn with it (0x39B9C)
         for (const Door& d : doors_.list) if (d.piece == int(it.idx)) drawDoor(d, item);
       } else if (allowed) {
@@ -1551,7 +1586,7 @@ void ViewerApp::renderTrackPainter(const MeshTransform& xf) {
 
 // Ships cast shadows onto up-facing track polygons of the piece they stand on and its neighbours (0x397B1, 0x3977A).
 void ViewerApp::buildShadowCasters() {
-  renderer_.shadowCasters.clear();
+  renderer_->shadowCasters.clear();
   if (!scene_) return;
   const Scene& sc = *scene_;
   for (int i = 0; i < 10; ++i) {
@@ -1569,7 +1604,7 @@ void ViewerApp::buildShadowCasters() {
       const double vol = double(b.hi[0] - b.lo[0]) * double(b.hi[1] - b.lo[1]) * double(b.hi[2] - b.lo[2]);
       if (vol < bestVol) { bestVol = vol; c.piece = int(k); }
     }
-    renderer_.shadowCasters.push_back(c);
+    renderer_->shadowCasters.push_back(c);
   }
 }
 
@@ -1577,18 +1612,18 @@ std::vector<std::string> ViewerApp::hudLines() const {
   char buf[200];
   std::vector<std::string> l;
   l.push_back(status_);
-  const auto& st = renderer_.stats();
+  const auto& st = renderer_->stats();
   std::snprintf(buf, sizeof buf, "%.0f fps  polys %u/%u  tris %u", fpsAvg_, st.polysDrawn, st.polysSubmitted, st.trisRastered);
   l.push_back(buf);
   if (mode_ == AppMode::Track) {
     std::snprintf(buf, sizeof buf, "CAM pos %.0f %.0f %.0f  yaw %.3f pitch %.3f  --cam %.0f,%.0f,%.0f,%.3f,%.3f", cam_.pos[0], cam_.pos[1], cam_.pos[2], cam_.yaw, cam_.pitch,
                   cam_.pos[0], cam_.pos[1], cam_.pos[2], cam_.yaw, cam_.pitch);
     l.push_back(buf);
-    std::snprintf(buf, sizeof buf, "visibility mask 0x%02X %s (F5 toggles)", renderer_.visMask & 0xFFFF, useVisMask_ ? "on" : "off");
+    std::snprintf(buf, sizeof buf, "visibility mask 0x%02X %s (F5 toggles)", renderer_->visMask & 0xFFFF, useVisMask_ ? "on" : "off");
     l.push_back(buf);
     std::snprintf(buf, sizeof buf, "draw order: %s (F6)  scenery: %s (F7)  culling: %s (Tab)",
                   painter_ ? "painter/BSP" : "z-buffer", showAllScenery_ ? "all" : "original cull",
-                  renderer_.cullBackfaces ? "on" : "off");
+                  renderer_->cullBackfaces ? "on" : "off");
     l.push_back(buf);
     {
       std::snprintf(buf, sizeof buf, "audio: %s | soundfont %s | music %s %s (M) | effects %s (N)", audio_.deviceOpen() ? "device" : "silent", audio_.soundfontPath().empty() ? "-" : audio_.soundfontPath().c_str(), audio_.currentMusic().empty() ? "-" : audio_.currentMusic().c_str(), audio_.musicOn() ? "on" : "off", audio_.sfxOn() ? "on" : "off");
@@ -1888,7 +1923,7 @@ void ViewerApp::netBackspace() {
 void ViewerApp::drawNetUi() {
   if (!hudAssets_.loaded) return;
   HudCanvas c;
-  c.fb = renderer_.framebuffer(); c.w = renderer_.width(); c.h = renderer_.height(); c.pal = &hudAssets_.palette;
+  c.fb = renderer_->framebuffer(); c.w = renderer_->width(); c.h = renderer_->height(); c.pal = &hudAssets_.palette;
   c.darken(0, 0, 319, 199, 60);
   const Font& f = hudAssets_.menu.height > 0 ? hudAssets_.menu : hudAssets_.time;
   const Font& sm = hudAssets_.small.height > 0 ? hudAssets_.small : f;

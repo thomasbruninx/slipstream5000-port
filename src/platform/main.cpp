@@ -28,6 +28,12 @@ static void usage() {
       "  --ship N            0..9\n"
       "  --ship-scale F      display scale for ship models (default 1 = original size)\n"
       "  --res WxH           internal render size (default 960x540)\n"
+      "  --renderer NAME     3D renderer: software (default) | opengl\n"
+      "  --shader NAME       post-processing shader of the opengl renderer: crt | smooth | sharpen | fxaa | <post_NAME.frag in the shader folder>\n"
+      "  --filter MODE       texture filtering of the opengl renderer: nearest (default, the original's look) | bilinear | smooth\n"
+      "  --lighting MODE     real-time lighting of the opengl renderer: off (default, the original's flat look) | lights | shadows\n"
+      "  --no-ao, --no-bloom ambient occlusion / bloom of the lit opengl picture off\n"
+      "  --aa N              multisample anti-aliasing of the opengl renderer: 0 (default) | 2 | 4 | 8\n"
       "  --screenshot FILE   render one frame to a PPM file and exit (no window)\n"
       "  --cam X,Y,Z,YAW,PITCH   camera (world units, radians)\n"
       "  --sim SEC           with --drive and --screenshot: hold full throttle for SEC seconds first\n"
@@ -54,7 +60,7 @@ static void usage() {
       "  --volume V          master volume 0..1 (default 1)   --music-volume V (0.8)   --sfx-volume V (1)\n");
 }
 
-static bool writePPM(const std::string& path, const SoftwareRenderer& r) {
+static bool writePPM(const std::string& path, const Renderer& r) {
   FILE* f = std::fopen(path.c_str(), "wb");
   if (!f) return false;
   std::fprintf(f, "P6\n%d %d\n255\n", r.width(), r.height());
@@ -164,6 +170,13 @@ int main(int argc, char** argv) {
     else if (a == "--net-run") { netRun = std::atof(next("--net-run")); opt.netHeadless = true; }
     else if (a == "--ship") opt.ship = std::atoi(next("--ship"));
     else if (a == "--ship-scale") opt.shipScale = float(std::atof(next("--ship-scale")));
+    else if (a == "--renderer") opt.renderer = next("--renderer");
+    else if (a == "--shader") opt.shader = next("--shader");
+    else if (a == "--filter") opt.filter = next("--filter");
+    else if (a == "--aa") opt.aa = std::atoi(next("--aa"));
+    else if (a == "--lighting") opt.lighting = next("--lighting");
+    else if (a == "--no-ao") opt.ao = false;
+    else if (a == "--no-bloom") opt.bloom = false;
     else if (a == "--res") { if (std::sscanf(next("--res"), "%dx%d", &opt.width, &opt.height) != 2) { usage(); return 2; } }
     else if (a == "--screenshot") screenshot = next("--screenshot");
     else if (a == "--sim") simSeconds = std::atof(next("--sim"));
