@@ -897,6 +897,7 @@ void ViewerApp::showResultsScreen(bool again) {
   r.bestLap = ai_[size_t(player_.ship)].bestLap;
   r.remaining = combat_.combat[size_t(player_.ship)].load;
   r.haveRemaining = true;
+  r.credits = combat_.combat[size_t(player_.ship)].credits;
   lastResult_ = r;
   if (std::getenv("SLIP_REPLAY_TEST")) std::fprintf(stderr, "RACE END   pos %.1f %.1f %.1f speed %.1f steps %zu rank %d\n", player_.x, player_.y, player_.z, player_.speed, replayRec_.size(), ai_[size_t(player_.ship)].rank);
   toggleDrive();

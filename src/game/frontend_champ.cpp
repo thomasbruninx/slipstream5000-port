@@ -39,6 +39,7 @@ void FrontEnd::champRaceFinished() {
   std::array<int, 10> place{};
   for (int s = 0; s < 10; ++s) place[size_t(s)] = result_.place[s];
   champ_.applyRace(place);
+  champ_.driver(champ_.humanShip()).money += result_.credits;  // the +50 cash bonuses picked up during the race (on top of the prize money)
   if (result_.haveRemaining) champ_.driver(champ_.humanShip()).load = result_.remaining;  // the rounds that were fired are gone: the garage shows what is left
   resSel_ = 1;
   go(champ_.lastRace() ? Screen::FinalPos : Screen::ChampPos);

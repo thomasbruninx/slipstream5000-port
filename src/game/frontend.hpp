@@ -30,6 +30,7 @@ struct RaceResult {  // handed to the results screen when a race ends
   double bestLap = 0;        // the player's fastest lap (0 = none)
   Loadout remaining;         // what the player's craft still carries (weapons, rounds left)
   bool haveRemaining = false;
+  int credits = 0;           // money the player picked up during the race (+50 per cash bonus)
   bool noVoice = false;      // the results are shown again after a replay: no new line
 };
 
