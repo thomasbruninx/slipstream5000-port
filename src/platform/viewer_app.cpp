@@ -1213,6 +1213,12 @@ void ViewerApp::menuKey(PauseMenu::Key k) {
   applySettings();
   if (act == PauseMenu::Action::QuitRace) { if (netplay_) netLeaveRace(); else { toggleDrive(); if (front_) returnToFront(); } }   // 0x591CE: leave the race
   else if (act == PauseMenu::Action::ExitGame) quit_ = true;
+  else if (act == PauseMenu::Action::ResetPlayer && scene_ && driving_) {  // the pause menu closed already: the race goes on from the track centre
+    if (resetToTrackCentre(*scene_, player_, ai_[size_t(player_.ship)])) {
+      player_.pairCooldown = 0;
+      if (netplay_) { /* the other peers follow the new pose with the next state message */ }
+    }
+  }
 }
 
 void ViewerApp::pauseMouse(double nx, double ny, int button) {

@@ -100,6 +100,9 @@ double startBonusForRank(int rank);
 // Debris handler support (0x3E8F2 / 0x3E9F5): aim point for wrecked ships, recovery (re-alignment to the track) once the
 // wreck has left its piece, hit something, touched another ship or timed out.
 void updateWrecks(RaceContext& ctx);
+// "Reset player" of the pause menu (a port addition): puts the ship on the path node of the piece it is in (the centre line of the track, horizontally and vertically), heading along
+// the track, at rest, no longer wrecked. Falls back to the nearest node when the ship is outside every piece. Returns false without a track.
+bool resetToTrackCentre(const Scene& scene, ShipState& s, AiState& a);
 
 // Controls the original would have produced for ship `index` (raw axes, no keyboard ramp). Also opens doors the ship is
 // standing on (TrackSlotFindDoor / 0x35564) and runs the branch decision.

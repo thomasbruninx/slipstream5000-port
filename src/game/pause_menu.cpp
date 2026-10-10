@@ -33,7 +33,7 @@ std::string PauseMenu::title() const {
 std::vector<std::string> PauseMenu::items(const GameSettings& s) const {
   auto pct = [](float v) { return std::to_string(int(std::lround(v * 100))) + "%"; };
   switch (page_) {
-    case Page::Main: return {optMain_[0], optMain_[1], optMain_[2], optMain_[3]};
+    case Page::Main: return {optMain_[0], optMain_[1], optReset_, optMain_[2], optMain_[3]};
     case Page::Config: return {optConfig_[0], optConfig_[1], optConfig_[2], optConfig_[4], optConfig_[5], optConfig_[3]};
     case Page::Sound: return {"Music  " + pct(s.music), "Effects  " + pct(s.sfx), optConfig_[3]};
     case Page::General: return {std::string("Speed  ") + (s.kph ? "kph" : "mph"), std::string("Track map  ") + (s.trackMap ? "on" : "off"), optConfig_[3]};
@@ -63,7 +63,8 @@ PauseMenu::Action PauseMenu::key(Key k, GameSettings* s) {
       if (k != Key::Select) return Action::None;
       if (sel_ == 0) { open_ = false; return Action::Resume; }
       if (sel_ == 1) { page_ = Page::Config; sel_ = 0; return Action::None; }
-      if (sel_ == 2) { open_ = false; return Action::QuitRace; }
+      if (sel_ == 2) { open_ = false; return Action::ResetPlayer; }
+      if (sel_ == 3) { open_ = false; return Action::QuitRace; }
       open_ = false;
       return Action::ExitGame;
     case Page::Config: {

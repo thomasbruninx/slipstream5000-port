@@ -369,6 +369,35 @@ void updateWrecks(RaceContext& ctx) {
   }
 }
 
+bool resetToTrackCentre(const Scene& scene, ShipState& s, AiState& a) {
+  const Track& t = scene.track_data;
+  if (t.nodes.empty()) return false;
+  int cur = pieceNodeAt(scene, s);
+  if (cur < 0) {
+    double best = 1e30;
+    for (size_t i = 0; i < t.nodes.size(); ++i) {
+      const double d = estv(np(t, int(i), 0) - s.x, np(t, int(i), 1) - s.y, np(t, int(i), 2) - s.z);
+      if (d < best) { best = d; cur = int(i); }
+    }
+  }
+  const int prev = t.nodes[size_t(cur)].prev >= 0 ? t.nodes[size_t(cur)].prev : cur;
+  int next = nextNode(t, cur, a.branch);
+  const Frame fr = (prev != cur) ? nodeFrame(t, prev, cur) : nodeFrame(t, cur, next >= 0 ? next : cur);
+  s.x = np(t, cur, 0); s.y = np(t, cur, 1); s.z = np(t, cur, 2);
+  for (int k = 0; k < 3; ++k) { s.m[k] = fr.r[k]; s.m[3 + k] = fr.u[k]; s.m[6 + k] = fr.f[k]; }
+  s.yaw = std::atan2(fr.f[0], fr.f[2]);
+  s.pitch = std::asin(std::clamp(fr.f[1], -1.0, 1.0));
+  s.speed = 0;
+  s.slide[0] = s.slide[1] = s.slide[2] = 0;
+  s.steerAxis = s.pitchAxis = 0;
+  s.roll = 0;
+  s.recentHit = 0;
+  s.wrecked = false; s.wreckRecover = false; s.wreckNode = -1;
+  s.boostTime = s.slowTime = 0;
+  a.node = cur;
+  return true;
+}
+
 void applyTrailingBoost(RaceContext& ctx, size_t humanIndex) {
   AiState& a = *ctx.state[humanIndex];
   // 0x51C70..0x51CA0: the human is exactly one place behind the best AI ship ([0x50438] + 1 == rank), the ship ahead is more than

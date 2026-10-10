@@ -30,7 +30,7 @@ struct GameSettings {
 
 class PauseMenu {
  public:
-  enum class Action { None, Resume, QuitRace, ExitGame };
+  enum class Action { None, Resume, QuitRace, ExitGame, ResetPlayer };
   enum class Key { Up, Down, Left, Right, Select, Back };
   void load(const GameData& data);
   void open() { page_ = Page::Main; sel_ = 0; open_ = true; }
@@ -48,6 +48,7 @@ class PauseMenu {
   std::vector<std::string> items(const GameSettings& s) const;
   std::string title() const;
   std::string optMain_[4] = {"Continue Race", "Configuration", "Quit Race", "Exit game"};
+  std::string optReset_ = "Reset Player";  // a port addition (not in PAUSED.ST0)
   std::string optConfig_[6] = {"General", "Controls", "Detail", "Continue", "Difficulty", "Sound"};
   std::string titleConfig_ = "Configuration";
   Page page_ = Page::Main;
