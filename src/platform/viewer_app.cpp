@@ -1008,6 +1008,12 @@ void ViewerApp::drawWorld() {
   renderer_.drawSky(*scene_, animSeconds_);
   renderer_.animTimer = uint32_t(animSeconds_ * 16384.0);
   renderer_.portalCulling = useVisMask_ && !std::getenv("SLIP_NOPORTAL");
+  {
+    renderer_.hideTunnelFaces = false;
+    const float cp[3] = {float(cam_.pos[0] - scene_->origin[0]), float(cam_.pos[1] - scene_->origin[1]), float(cam_.pos[2] - scene_->origin[2])};
+    for (size_t i = 0; i < scene_->pieceBoxes.size() && !renderer_.hideTunnelFaces; ++i)
+      if (scene_->pieceBoxes[i].roofed && scene_->pieceBoxes[i].graph && !scene_->pieceBoxes[i].empty && scene_->pieceContains(i, cp)) renderer_.hideTunnelFaces = true;
+  }
   renderer_.pieceHint = driving_ && !rearPass_ && (view_ == 0 || view_ == 1 || view_ == 2 || view_ == 4) ? ai_[size_t(player_.ship)].piece : -1;
   if (mode_ == AppMode::Track) renderer_.computePortalVisibility(*scene_); else renderer_.portalCulling = false;
   renderer_.visMask = (mode_ == AppMode::Track && useVisMask_) ? scene_->visMaskAt(cam_.pos[0], cam_.pos[1], cam_.pos[2]) : 0xFFFF;

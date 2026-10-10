@@ -54,6 +54,7 @@ struct MeshPoly {
   uint8_t detail = 0;     // panel-line template type (flag high byte 2..7) for flat polygons, else 0
   bool hidden = false;    // flat polygon that blocks the road corridor (portal/cap): not drawn (INFERRED)
   bool scenery = false;   // belongs to a TRD scenery instance (not road geometry)
+  bool tunnelFace = false; // face of a tall building that passes through a tunnel: not drawn while the camera is inside a tunnel (see Scene build)
   bool backdrop = false;  // scenery whose volume contains road: track surfaces always draw over it (see research-log)
   Vec3 normal;           // unit length, +y up (derived from the stored 2.14 normal)
 };
@@ -144,6 +145,7 @@ struct Scene {
     float lo[3], hi[3];
     uint16_t flags;
     bool empty;
+    bool roofed = false; // a ceiling polygon: the piece is a tunnel
     bool graph = false;  // takes part in the portal graph (has links or is linked to)
     int link[3];      // neighbour piece index reached through portal polygon linkPoly (-1 = none)
     int linkPoly[3];  // index into track.polys

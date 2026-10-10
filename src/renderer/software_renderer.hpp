@@ -66,6 +66,7 @@ class SoftwareRenderer {
   // class-8 records need class 8 in the camera mask only in the plain far-to-near pass (0x39A89); the portal-reached list (0x3A55C) and the scenery test (0x37931) check just the intersection,
   // so a tunnel entered from outside (class 0x0A seen from class 0x02) is drawn through its portal.
   bool class8Rule = false;
+  bool hideTunnelFaces = false;  // the camera is inside a tunnel: faces of towers that pass through tunnels (MeshPoly::tunnelFace) are not drawn
   bool visAllows(uint16_t vis) const;
   // Portal visibility (CONFIRMED structure, 0x39C58/0x39E67/0x3A065): starting from the piece containing the
   // camera, walk through portal polygons (TRC polygon flag bit 0) that face the camera; a neighbour is visited
@@ -139,6 +140,7 @@ class SoftwareRenderer {
   void drawShadowsOn(const Scene& scene, const MeshPoly& rp, int baseId, int sub, int colorIdx);
   std::vector<uint32_t> polyId_;   // id of the polygon whose base fill last wrote the pixel (detail polygons are painted over their own base without a depth test)
   uint32_t curPoly_ = 0, polyCounter_ = 0;
+  int dbgPiece_ = -1; size_t dbgPoly_ = 0; uint16_t dbgFlags_ = 0;  // SLIP_PICK output
   std::vector<int32_t> itemBuf_;   // painter's mode: id of the item that last wrote the pixel
   int curItem_ = -1;
   std::vector<uint8_t> backdrop_;  // per pixel: 0 track, 1 scenery, 2 backdrop scenery

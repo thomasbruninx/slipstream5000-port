@@ -71,6 +71,9 @@ static void copyDebug(const slip::ViewerApp& app) {
   std::string text;
   for (const auto& l : app.hudLines()) text += l + "\n";
   SDL_SetClipboardText(text.c_str());
+  // also written to a file (the clipboard can be unavailable): <user folder>/debug.txt
+  if (std::FILE* f = std::fopen((slip::userDataDir() + "/debug.txt").c_str(), "w")) { std::fwrite(text.data(), 1, text.size(), f); std::fclose(f); }
+  std::fprintf(stderr, "%s", text.c_str());
 }
 
 // --- controllers (SDL3 gamepad API) -----------------------------------------------------------------------------------
@@ -397,6 +400,8 @@ int main(int argc, char** argv) {
           else if (app.frontActive()) app.frontText(e.text.text);
           break;
         case SDL_EVENT_KEY_DOWN:
+          // Ctrl+Shift+C / Cmd+Shift+C copies the debug text (camera position, visibility mask...) wherever the game is, also during a race and in the menus
+          if (!e.key.repeat && (e.key.mod & SDL_KMOD_SHIFT) && (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) && e.key.key == SDLK_C) { copyDebug(app); break; }
           if (app.frontActive() && app.frontWantsKey()) {  // binding a race control
             if (e.key.key == SDLK_ESCAPE) app.frontKey(PauseMenu::Key::Back);
             else app.frontRawKey(int(e.key.scancode));

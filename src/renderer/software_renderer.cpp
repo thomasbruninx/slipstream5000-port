@@ -172,6 +172,7 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
       sx0_ = sceneryWin_->x0; sy0_ = sceneryWin_->y0; sx1_ = sceneryWin_->x1; sy1_ = sceneryWin_->y1;
     }
     static const bool noVis = std::getenv("SLIP_NOVIS") != nullptr;  // debug: ignore the visibility classes
+    if (p.tunnelFace && hideTunnelFaces) continue;
     if (!noVis && !visAllows(p.vis)) continue;
     if (p.instance >= 0 && !instOk[size_t(p.instance)]) continue;
     if (p.material >= 0 && size_t(p.material) < scene.materials.size() && scene.materials[size_t(p.material)].invisible) continue;
@@ -207,6 +208,7 @@ void SoftwareRenderer::drawMesh(const Scene& scene, const Mesh& mesh, const Mesh
     if (clipped.size() < 3) continue;
     stats_.polysDrawn++;
     curPoly_ = ++polyCounter_;
+    dbgPiece_ = p.piece; dbgPoly_ = only ? size_t((*only)[pi_]) : pi_; dbgFlags_ = p.pflags;
     const bool detailed = p.detail && mat && !p.hasUV && scene.panelDetails[p.detail].valid;
     if (std::getenv("SLIP_DETAILLOG") && mat && mat->name == "TrackRoof1") {
       float nr = 1e30f; for (uint16_t k = 0; k < p.count; ++k) nr = std::min(nr, tv[p.first + k].z);
@@ -294,7 +296,9 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
         const bool overOwnBase = forceIdx >= 0 && polyId_[o] == curPoly_;
         if (overOwnBase) {
         } else if (curItem_ >= 0) {
-          if (itemBuf_[o] == curItem_ && z < cur * (1.0f - 2e-5f)) continue;
+          // inside one item (a piece) the original draws polygons in list order with no depth test: decals (yellowbars over Light Wall A) lie within ~0.2 % of the wall they sit on, which a strict
+          // test turns into half-drawn signs; a later polygon wins unless it is clearly behind
+          if (itemBuf_[o] == curItem_ && z < cur * (1.0f - 1e-2f)) continue;
         } else {
           static const bool pureDepth = getenv("SLIP_PUREDEPTH") != nullptr;
           const uint8_t curLayer = backdrop_[o];
@@ -324,7 +328,7 @@ void SoftwareRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, c
         }
         { static const char* pk = getenv("SLIP_PICK"); static int pkx = -1, pky = -1; static bool init = false;
           if (pk && !init) { sscanf(pk, "%d,%d", &pkx, &pky); init = true; }
-          if (pk && x == pkx && y == pky) fprintf(stderr, "pick %d,%d mat=%s layer=%d iz=%g tex=%d\n", x, y, mat ? mat->name.c_str() : "-", int(layer), double(z), tex ? 1 : 0); }
+          if (pk && x == pkx && y == pky) fprintf(stderr, "pick %d,%d mat=%s layer=%d iz=%g tex=%d piece=%d poly=%zu pflags=%04x\n", x, y, mat ? mat->name.c_str() : "-", int(layer), double(z), tex ? 1 : 0, dbgPiece_, dbgPoly_, unsigned(dbgFlags_)); }
         depth_[o] = z;
         backdrop_[o] = layer;
         itemBuf_[o] = curItem_;

@@ -323,6 +323,7 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
   // through has the part inside these boxes cut away: buildings cannot occupy the drivable corridor.
   struct Box { Vec3 lo, hi; };
   std::vector<Box> roadBoxes;
+  std::vector<char> roadRoofed;  // parallel to roadBoxes
   std::map<uint32_t, int> pieceByTrd;
   for (size_t pi = 0; pi < t.pieces.size(); ++pi) { pieceByTrd[t.pieces[pi].trdOffset] = int(pi); s->entryItem[t.pieces[pi].trdOffset] = {0, pi}; }
   for (size_t pi = 0; pi < t.pieces.size(); ++pi) {
@@ -346,8 +347,14 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     bx.hi = bx.hi + Vec3{e, e, e};
     roadBoxes.push_back(bx);
     {
+      bool roofed = false;  // a ceiling polygon: the piece is a tunnel
+      for (const auto& poly : rec.polys) if (Builder::unitNormal(poly.nx, poly.ny, poly.nz).y < -0.9f && (poly.flags & 0x1) == 0) roofed = true;
+      roadRoofed.push_back(roofed ? 1 : 0);
+    }
+    {
       Scene::PieceBox pb{};
       pb.flags = rec.visFlags;
+      pb.roofed = roadRoofed.back() != 0;
       for (int k = 0; k < 3; ++k) {
         const double o = k == 0 ? double(pc.pos.x) - s->origin[0] : k == 1 ? double(pc.pos.y) - s->origin[1] : double(pc.pos.z) - s->origin[2];
         pb.bb[2 * k] = float(o + rec.bbox[2 * k] * 64.0);
@@ -452,6 +459,7 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
     s->track.instances.push_back({inst.group, base, float(inst.radius)});
     s->instPolys.emplace_back();
     s->entryItem[inst.entryOffset] = {1, size_t(instIndex)};
+    bool curTunnelFace = false;
     auto emit = [&](const SPoly& sp) {
       std::vector<std::array<uint16_t, 2>> uv;
       for (auto& q : sp.uv) uv.push_back({uint16_t(std::clamp(std::lround(q[0]), 0L, 65535L)), uint16_t(std::clamp(std::lround(q[1]), 0L, 65535L))});
@@ -461,6 +469,7 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
       s->track.polys.back().instance = instIndex;
       s->instPolys.back().push_back(uint32_t(s->track.polys.size() - 1));
       s->track.polys.back().backdrop = !cut.empty();
+      s->track.polys.back().tunnelFace = curTunnelFace;
     };
     // Subtract a box from a convex polygon: emit the parts outside each slab in turn.
     std::function<void(SPoly, size_t)> subtract = [&](SPoly sp, size_t bi) {
@@ -493,7 +502,35 @@ bool buildScene(const GameData& data, int trackIndex, Scene* out, std::string* e
         }
       // whatever remains in `cur` is inside the box: dropped
     };
-    for (auto& sp : sps) subtract(sp, 0);
+    // A face of a tall building that passes through the road (a tunnel under a tower: Chicago's chitwk box sits on the last tunnel) is not drawn: the original's walls of the tunnel mouth
+    // and the portal walk hide it, but in the port the bare quad hung in front of the tunnel exit; flagged here, skipped by the renderer while the camera is in a tunnel (INFERRED)
+    auto crossesRoad = [&](const SPoly& sp) {
+      Vec3 plo{1e30f, 1e30f, 1e30f}, phi{-1e30f, -1e30f, -1e30f};
+      for (const Vec3& v : sp.v) {
+        plo = {std::min(plo.x, v.x), std::min(plo.y, v.y), std::min(plo.z, v.z)};
+        phi = {std::max(phi.x, v.x), std::max(phi.y, v.y), std::max(phi.z, v.z)};
+      }
+      const Vec3& n = sp.n;
+      const float d0 = n.x * sp.v[0].x + n.y * sp.v[0].y + n.z * sp.v[0].z;
+      for (size_t bi2 = 0; bi2 < roadBoxes.size(); ++bi2) {
+        if (!roadRoofed[bi2]) continue;
+        const Box& bx = roadBoxes[bi2];
+        const float sx = 0.03f * (bx.hi.x - bx.lo.x), sy = 0.03f * (bx.hi.y - bx.lo.y), sz = 0.03f * (bx.hi.z - bx.lo.z);
+        const Vec3 lo{bx.lo.x + sx, bx.lo.y + sy, bx.lo.z + sz}, hi{bx.hi.x - sx, bx.hi.y - sy, bx.hi.z - sz};
+        if (!(lo.x < phi.x && hi.x > plo.x && lo.y < phi.y && hi.y > plo.y && lo.z < phi.z && hi.z > plo.z)) continue;
+        float dmin = 1e30f, dmax = -1e30f;
+        for (int k = 0; k < 8; ++k) {
+          const float d = n.x * ((k & 1) ? hi.x : lo.x) + n.y * ((k & 2) ? hi.y : lo.y) + n.z * ((k & 4) ? hi.z : lo.z) - d0;
+          dmin = std::min(dmin, d); dmax = std::max(dmax, d);
+        }
+        if (dmin < 0 && dmax > 0) return true;
+      }
+      return false;
+    };
+    for (auto& sp : sps) {
+      curTunnelFace = tall && cut.empty() && crossesRoad(sp);
+      subtract(sp, 0);
+    }
   }
 
   s->panelDetails = loadPanelDetails(data);
