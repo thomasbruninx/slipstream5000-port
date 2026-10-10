@@ -91,6 +91,7 @@ struct CombatState {
   double deathFx = 0;               // seconds until the destruction effect may play again
   int credits = 0;                  // record +4 (bonus type 4 adds 50)
   int shotsFired = 0, hitsDealt = 0;
+  int beamHitsTaken = 0;     // blaster / disrupter hits from the human: every second one makes the AI pilot say its "I'm hit" line
 };
 
 struct Projectile {
@@ -140,6 +141,9 @@ struct CombatContext {
   int humanShip = -1;                 // the listener ([0x543DD]): receives the pilot / announcer cues
   std::vector<bool> remote;           // multiplayer: ships simulated on another peer (no ship logic, never a victim here; hits arrive as events)
   double raceTime = 0;                // seconds since the start of the race (the tactical AI grows more aggressive with it)
+  std::vector<int> personality;       // AI character per ship: 0 weak, 1 normal, 2 tough (ship_ai.hpp)
+  std::vector<int> rank;              // race rank per ship (1 = leading)
+  std::vector<bool> wantBoost;        // the AI pilot wants its booster on (straights)
   std::vector<DroneTarget>* drones = nullptr;  // the drones of the race (hits are written back into them)
 };
 

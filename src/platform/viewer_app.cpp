@@ -3,6 +3,7 @@
 #include "game/settings_file.hpp"
 
 #include <algorithm>
+#include <random>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -226,6 +227,9 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
     cc.remote.push_back(netplay_ && netplay_->remote(i));
     cc.finished.push_back(held || !aiEnabled_ || ai_[size_t(i)].finished || raceStatus_.over);  // the AI holds its fire on the grid and after the finish
     cc.shipClass.push_back(i + 1);
+    cc.personality.push_back(ai_[size_t(i)].personality);
+    cc.rank.push_back(ai_[size_t(i)].rank);
+    cc.wantBoost.push_back(ai_[size_t(i)].wantBoost);
   }
   if (!held) {
     cc.controls[size_t(player_.ship)].fire = in.fire;
@@ -247,6 +251,20 @@ void ViewerApp::stepCombat(double step, const InputState& in, bool held) {
     }
   }
   combat_.step(cc, step);
+  if (std::getenv("SLIP_AILOG")) {  // test hook: every 20 s one line per ship
+    static double lastLog = 0;
+    if (std::getenv("SLIP_AILOG")[0] == '2') {
+      static double l2 = 0;
+      if (raceClock_ - l2 >= 1.0) { l2 = raceClock_; for (int i = 0; i < 10; ++i) if (i != player_.ship) std::fprintf(stderr, "b t=%.0f s%d p%d want %d on %d fuel %.2f sel %d booster %d\n", raceClock_, i, ai_[size_t(i)].personality, ai_[size_t(i)].wantBoost ? 1 : 0, grid_[size_t(i)].boosterOn ? 1 : 0, combat_.combat[size_t(i)].boosterFuel, combat_.combat[size_t(i)].selected, combat_.combat[size_t(i)].load.booster); }
+    }
+    if (raceClock_ - lastLog >= 20.0) {
+      lastLog = raceClock_;
+      for (int i = 0; i < 10; ++i) {
+        const ShipState& sh = i == player_.ship ? player_ : grid_[size_t(i)];
+        std::fprintf(stderr, "t=%.0f ship %d %s pers %d laps %d rank %d speed %.0f factor %.2f boost %d damage %.0f/%.0f wrecked %d\n", raceClock_, i, i == player_.ship ? "HUMAN" : "ai", ai_[size_t(i)].personality, ai_[size_t(i)].laps, ai_[size_t(i)].rank, sh.speed, sh.speedFactor, sh.boosterOn ? 1 : 0, sh.damageA, sh.damageB, sh.wrecked ? 1 : 0);
+      }
+    }
+  }
 }
 
 std::string ViewerApp::combatLine() const {
@@ -399,6 +417,18 @@ void ViewerApp::toggleDrive() {
       const int tier = aiTierForStartRank(gridSlot_[size_t(i)] + 1), trk = std::clamp(scene_->trackIndex, 1, 10);
       grid_[size_t(i)].speedFactor = aiTables_.fromExecutable ? aiTables_.tierFactor[aiTables_.difficulty][trk][tier] / 16384.0 : 1.0;
     }
+    if (!std::getenv("SLIP_CLASSIC_AI")) {  // port addition: 25 % weak, 50 % normal, 25 % tough pilots (random per race), each flying at a share of full speed
+      std::vector<int> pilots;
+      for (int i = 0; i < 10; ++i) if (i != player_.ship) pilots.push_back(i);
+      std::mt19937 rng{std::random_device{}()};
+      std::shuffle(pilots.begin(), pilots.end(), rng);
+      const size_t nWeak = (pilots.size() + 2) / 4, nTough = (pilots.size() + 2) / 4;  // 9 pilots: 2 weak, 2 tough, 5 normal
+      for (size_t k = 0; k < pilots.size(); ++k) {
+        const int i = pilots[k];
+        ai_[size_t(i)].personality = k < nWeak ? 0 : k < nWeak + nTough ? 2 : 1;
+        grid_[size_t(i)].speedFactor = aiPersonalitySpeed(ai_[size_t(i)].personality, std::uniform_real_distribution<double>(0.0, 1.0)(rng));
+      }
+    }
     player_.speedFactor = 1.0;
     if (const char* dm = std::getenv("SLIP_DAMAGE")) {  // test hook: start with this much damage on every ship
       for (int i = 0; i < 10; ++i) { grid_[size_t(i)].damageA = grid_[size_t(i)].damageB = std::atof(dm); }
@@ -511,7 +541,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
         sin.throttle = cur.throttle; sin.brake = cur.brake; sin.steer = cur.steer; sin.pitch = cur.pitch; sin.fire = cur.fire;
         // ships indexed by ship number; ai_[i].human marks the player
         RaceContext ctx;
-        ctx.scene = scene_.get(); ctx.tables = &aiTables_; ctx.race = &race_; ctx.doors = &doors_;
+        ctx.scene = scene_.get(); ctx.tables = &aiTables_; ctx.race = &race_; ctx.doors = &doors_; ctx.classicAi = combat_.classicAi;
         for (int i = 0; i < 10; ++i) {
           ctx.ships.push_back(i == player_.ship ? &player_ : &grid_[size_t(i)]);
           ctx.state.push_back(&ai_[size_t(i)]);
@@ -541,6 +571,14 @@ void ViewerApp::update(double dt, const InputState& in0) {
         doors_.step(step, all);  // door slots update before the ships move (0x3C00E)
         if (!settings_.damage && !netplay_) player_.damageA = player_.damageB = 0;  // configuration "Damage: Off" (RaceSlotDamage 0x52035: the human takes none)
         updateRace(ctx);
+        {  // port addition: an AI pilot who passes the human says one of its lines (at most one per 8 s)
+          static double lastTaunt = -100;
+          const AiState& me = ai_[size_t(player_.ship)];
+          if (voicesOn() && !netplay_ && !introMode_ && !combat_.classicAi && countdown_ <= 0 && me.rank > me.prevRank && me.rank > 1 && !me.finished && raceClock_ - lastTaunt > 8.0) {
+            for (int i = 0; i < 10; ++i)
+              if (i != player_.ship && ai_[size_t(i)].rank == me.rank - 1) { audio_.playCue((std::rand() & 0x80) ? cues::passLine2(i + 1) : cues::passLine1(i + 1)); lastTaunt = raceClock_; break; }
+          }
+        }
         if (netplay_) {
           Netplay::Bind nb;
           for (int i = 0; i < 10; ++i) nb.ai[size_t(i)] = &ai_[size_t(i)];

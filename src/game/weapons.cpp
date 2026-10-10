@@ -551,9 +551,18 @@ void CombatWorld::aiDecide(const CombatContext& ctx, int i, double dt, bool* fir
     const double dtTick = 1.0 / 30.0;
     c.holdoff = std::max(0.0, c.holdoff - dtTick);
     c.anger = std::max(0.0, c.anger - 0.012 * dtTick);  // calms down by about 0.012 per second
-    const double temper = 0.8 + 0.4 * std::fmod(double(i) * 0.618, 1.0);
-    const double progress = std::clamp((ctx.raceTime - 15.0) / 150.0, 0.0, 1.0);
-    const double aggr = std::clamp(temper * (0.12 + 0.55 * progress) + c.anger, 0.0, 1.0);
+    // character of the pilot: weak ones shoot little (mostly revenge), tough ones attack from early on and go for the leaders
+    const int pers = ctx.personality.size() > size_t(i) ? ctx.personality[size_t(i)] : 1;
+    const double temper = (pers == 0 ? 0.5 : pers == 2 ? 1.4 : 1.0) * (0.8 + 0.4 * std::fmod(double(i) * 0.618, 1.0));
+    const double progress = std::clamp((ctx.raceTime - (pers == 2 ? 8.0 : 15.0)) / 150.0, 0.0, 1.0);
+    const double aggr = std::clamp(temper * ((pers == 2 ? 0.2 : 0.12) + 0.55 * progress) + c.anger, 0.0, 1.0);
+    // the booster: on while the pilot wants it (straights) and the tank is not empty
+    if (!classicAi && c.load.booster >= 0 && ctx.ships[size_t(i)]) {
+      ShipState& me = *ctx.ships[size_t(i)];
+      const bool wantB = ctx.wantBoost.size() > size_t(i) && ctx.wantBoost[size_t(i)] && !done;
+      if (wantB && !me.boosterOn && c.boosterFuel > 0.2) { me.boosterOn = true; const double bp[3] = {me.x, me.y, me.z}; emitFx(12, i, bp); }
+      else if (!wantB && me.boosterOn) me.boosterOn = false;
+    }
     const bool revenge = c.anger > 0.25 && c.lockTarget >= 0 && c.lockTarget == c.angerTarget;
     double dist = 1e30;
     if (c.lockTarget >= 0 && ctx.ships[size_t(c.lockTarget)]) {
@@ -561,7 +570,12 @@ void CombatWorld::aiDecide(const CombatContext& ctx, int i, double dt, bool* fir
       const ShipState& o = *ctx.ships[size_t(c.lockTarget)];
       dist = std::sqrt((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) + (o.z - me.z) * (o.z - me.z));
     }
-    const bool heavyOk = (aggr >= 0.45 || revenge) && c.holdoff <= 0 && dist < 0.55 * kLockRange;
+    // tactics for the heavy weapons: a rival ahead in the race (or the leader) is worth a missile, a pilot with a grudge fires at the one who hurt it, nobody wastes ammunition
+    // at very short or very long range
+    const bool targetAhead = c.lockTarget >= 0 && ctx.rank.size() > size_t(c.lockTarget) && ctx.rank.size() > size_t(i) && ctx.rank[size_t(c.lockTarget)] < ctx.rank[size_t(i)];
+    const bool targetLeads = c.lockTarget >= 0 && ctx.rank.size() > size_t(c.lockTarget) && ctx.rank[size_t(c.lockTarget)] == 1;
+    const bool wantHeavy = revenge || (pers != 0 && ((targetAhead && aggr >= 0.3) || (targetLeads && aggr >= 0.4) || (pers == 2 && aggr >= 0.4) || aggr >= 0.6));
+    const bool heavyOk = wantHeavy && c.holdoff <= 0 && dist < 0.6 * kLockRange && dist > 0.08 * kLockRange;
     auto has = [&](int sel) { return sel == 0 || (sel == 1 && c.load.weaponA >= 0 && c.load.ammoA != 0) || (sel == 2 && c.load.weaponB >= 0 && c.load.ammoB != 0); };
     // which slot is wanted: the heavy ones only when allowed and a target is locked, otherwise the blaster
     int want = 0;
@@ -572,7 +586,7 @@ void CombatWorld::aiDecide(const CombatContext& ctx, int i, double dt, bool* fir
     if (c.selected != want) cycle = true;
     else if (c.lockTarget >= 0) {
       if (want == 0) {
-        const double p = (0.02 + 0.10 * aggr) * (revenge || aggr >= 0.35 ? 1.0 : 0.3);
+        const double p = (0.02 + 0.10 * aggr) * (revenge || aggr >= 0.35 ? 1.0 : 0.3) * (pers == 0 ? 0.4 : pers == 2 ? 1.5 : 1.0);
         if (aggr >= 0.15 && double(rng_.next() & 0xFFFF) / 65536.0 < p) fire = true;
       } else {
         fire = true;
@@ -580,7 +594,7 @@ void CombatWorld::aiDecide(const CombatContext& ctx, int i, double dt, bool* fir
       }
     }
     // defensive weapons (no lock-on cone: mines, smoke): used against a rival right behind when the pilot is angry enough
-    if (!fire && !cycle && aggr >= 0.35) {
+    if (!fire && !cycle && (pers == 0 ? c.anger > 0.25 : aggr >= (pers == 2 ? 0.25 : 0.35))) {
       const int sel = has(1) && !tableCone(c.load.weaponA) ? 1 : has(2) && !tableCone(c.load.weaponB) ? 2 : 0;
       if (sel && c.holdoff <= 0) {
         const ShipState& me = *ctx.ships[size_t(i)];
@@ -902,6 +916,8 @@ void CombatWorld::beamHit(const CombatContext& ctx, const Projectile& p, int vic
   if (particles.rand01() <= 0x7000 / 65536.0) shipDebris(ctx, victim, 3);  // 0x50693: 44 % of the beam hits break off 3 pieces
   emitFx(10, victim, vp);
   if (victim == ctx.humanShip) emitCue(ctx, victim, cues::underFire);
+  else if (p.owner == ctx.humanShip && ctx.humanShip >= 0 && ctx.shipClass.size() > size_t(victim) && ++combat[size_t(victim)].beamHitsTaken % 2 == 0)
+    emitCue(ctx, victim, cues::hitByHuman(ctx.shipClass[size_t(victim)]));  // port addition: the AI pilot complains about every second blaster hit
 }
 
 void CombatWorld::stepPickups(const CombatContext& ctx) {  // bonus object (0x42BD5): touching it consumes it

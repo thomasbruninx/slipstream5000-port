@@ -70,6 +70,7 @@ Things that are not (or not exactly) in the original, mostly on request:
 * **Multiplayer** over a network (the original had a two-player mode only); menu entries *Singleplayer* / *Multiplayer* (Host Game, Search LAN, Direct IP).
 * **Top-3 best laps with name entry** per track, race **replay** (also in the championship), results screen on Esc / Enter after the finish while the ship keeps flying on its own.
 * **Drones** ("little airbuses") that can be shot for bonus pickups, with lock-on and a bonus from any kill.
+* **AI characters**: every race 25 % of the opponents are weak (about 80-86 % of full speed, shoot little), 50 % normal (93-97 %) and 25 % tough (full speed, aggressive, go after the leaders); they use the booster on straights and speak more (an "I'm hit" line after every second blaster hit, a taunt when they pass you). `SLIP_CLASSIC_AI=1` restores the original AI.
 * **Tactical AI weapons**: opponents start calm, grow more aggressive with race time and when they are hit, keep their heavy weapons for revenge and good shots (original behaviour: `SLIP_CLASSIC_AI=1`).
 * **Start places:** practice starts last, a single race starts from a random place 4 to 8, in the championship the first race starts last and every later race from the reversed place of the previous one (won = start last, 2nd = 9th, ... last = pole).
 * Start speed bonus off by default, random first championship grid, weapons are not refilled for free between championship races.

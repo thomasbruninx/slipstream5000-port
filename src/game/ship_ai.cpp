@@ -30,6 +30,14 @@ AiTables loadAiTables(const GameData& data) {
   return t;
 }
 
+double aiPersonalitySpeed(int personality, double u) {
+  switch (personality) {
+    case 0: return 0.80 + 0.06 * u;    // weak: 80..86 % of full speed
+    case 2: return 0.99 + 0.04 * u;    // tough: full speed (with the booster a little more)
+    default: return 0.93 + 0.04 * u;   // normal: 93..97 %
+  }
+}
+
 int aiTierForStartRank(int rank) {
   static const int kTier[11] = {0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3};  // 0x586DB, indexed by start position 1..10
   return kTier[std::clamp(rank, 1, 10)];
@@ -583,7 +591,11 @@ ShipInput aiControl(RaceContext& ctx, size_t index, double dt) {
     else if (followDist >= 0x9880) lim += 0x138d;
     tgt = std::min(tgt, lim);
   }
-  if (!ai.human) tgt = std::min(tgt, 214500.0);  // AI ships (record +0xD != 0) are capped at 0x345E4 (0x51A0D)
+  if (!ai.human && ctx.classicAi) tgt = std::min(tgt, 214500.0);  // AI ships (record +0xD != 0) are capped at 0x345E4 (0x51A0D); the port lets them use the craft's full speed (see aiPersonalitySpeed)
+  // booster (the tank only refills in the pit): on the straights, never right at the start, by character (weak pilots never; the others when they are not leading, tough ones also
+  // when leading on the final lap)
+  ai.wantBoost = !ai.human && !ctx.classicAi && ai.personality != 0 && followSlot < 0 && tgt > 330000.0 && ai.raceTime > 8.0 && !s.wrecked &&
+                 (ai.rank > 1 || (ai.personality == 2 && ai.laps >= ctx.totalLaps));
   out.throttle = tgt >= speed ? 1.0f : 0.0f;
   return out;
 }

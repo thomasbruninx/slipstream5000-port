@@ -23,6 +23,8 @@ AiTables loadAiTables(const GameData& data);
 int readConfiguredDifficulty(const GameData& data);
 // Tier of a ship that starts in grid position `rank` (1..10): table at 0x586DB = {0,0,1,1,1,2,2,3,3,3}.
 int aiTierForStartRank(int rank);
+// Speed factor (relative to a human craft's full speed) of an AI pilot of the given personality; `u` is a random number in 0..1 that spreads the pilots of one kind.
+double aiPersonalitySpeed(int personality, double u);
 
 struct AiState {
   int node = -1;        // current target node (index into Track::nodes)
@@ -46,6 +48,10 @@ struct AiState {
   int startRank = 1;
   int rank = 1;
   bool human = false;
+  // Port addition (the original ranks its AI only by start position tiers, speed capped at 0x345E4): every AI pilot has a character for the whole race, 0 weak (about 25 %: lags behind,
+  // shoots little), 1 normal (50 %: races and competes), 2 tough (25 %: flies at full speed, uses the booster, aggressive). `SLIP_CLASSIC_AI=1` restores the original behaviour.
+  int personality = 1;
+  bool wantBoost = false;  // set by aiControl on straights; the combat step turns the booster on / off accordingly
   unsigned rng = 12345;
 };
 
@@ -80,6 +86,7 @@ struct RaceContext {
   std::vector<const ShipParams*> params;
   // multiplayer: ships simulated on another peer keep the race record they send (laps, finish); empty slots are not part of the race
   std::vector<bool> remote, absent;
+  bool classicAi = false;        // the original AI speed rules (tier factors from the table, target speed capped at 0x345E4)
   bool multiplayer = false;      // the race ends 5 s after the second finisher (humans included) instead of the second AI finisher
   bool authoritativeEnd = true;  // false on peers that wait for the host's race-over message
 };
