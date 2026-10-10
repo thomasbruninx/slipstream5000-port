@@ -40,9 +40,10 @@ std::array<int, 10> Championship::grid() const {
     const ChampDriver& d = d_[size_t(s)];
     g[size_t(s)] = race_ == 1 || d.place == 0 ? grid1_[size_t(s)] : 10 - d.place;  // rank = 11 - place, slot = rank - 1
   }
-  // Port change: the human starts last in the first race and from the place he finished in the previous one (the nine AI drivers keep their relative order in the other slots).
+  // Port change: the human starts last in the first race, later races reversed from his last finishing place (1st -> starts 10th, 2nd -> 9th ... 10th -> 1st), as the original reverses
+  // the whole grid; the nine AI drivers keep their relative order in the other slots.
   const int hs = std::clamp(human_, 0, 9);
-  const int slot = race_ == 1 || d_[size_t(hs)].place == 0 ? 9 : std::clamp(d_[size_t(hs)].place, 1, 10) - 1;
+  const int slot = race_ == 1 || d_[size_t(hs)].place == 0 ? 9 : 10 - std::clamp(d_[size_t(hs)].place, 1, 10);
   return gridWithHuman(g, hs, slot);
 }
 

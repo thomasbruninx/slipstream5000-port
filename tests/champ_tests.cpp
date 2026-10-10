@@ -36,7 +36,7 @@ int main() {
   c.nextRace();
   g = c.grid();
   CHECK(c.track() == 1);
-  CHECK(g[3] == 6);  // the human (ship 3) finished 7th, so he starts 7th (slot 6); the AI ships fill the other slots
+  CHECK(g[3] == 3);  // the human (ship 3) finished 7th, so he starts 4th (slot 3, reversed grid); the AI ships fill the other slots
   {
     std::array<bool, 10> seen{};
     for (int s = 0; s < 10; ++s) seen[size_t(g[size_t(s)])] = true;
