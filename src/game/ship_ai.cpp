@@ -291,7 +291,18 @@ void updateRace(RaceContext& ctx) {
         }
       }
     }
-    a.progress = ctx.race->lapDist[size_t(node)] - estv(np(t, node, 0) - s.x, np(t, node, 1) - s.y, np(t, node, 2) - s.z);
+    {
+      const double dist = estv(np(t, node, 0) - s.x, np(t, node, 1) - s.y, np(t, node, 2) - s.z);
+      a.progress = ctx.race->lapDist[size_t(node)] - dist;
+      // The lap line node (node 0) has distance 0 along the lap, but a ship that is still approaching it is at the END of the lap: with the plain formula the whole last stretch
+      // before the line would count as the start of the lap (rank last, until the ship crossed the line and the lap counter caught up).
+      const int pv = t.nodes[size_t(node)].prev;
+      if (node == 0 && pv >= 0) {
+        const double dir[3] = {np(t, 0, 0) - np(t, pv, 0), np(t, 0, 1) - np(t, pv, 1), np(t, 0, 2) - np(t, pv, 2)};
+        const double side = (s.x - np(t, 0, 0)) * dir[0] + (s.y - np(t, 0, 1)) * dir[1] + (s.z - np(t, 0, 2)) * dir[2];
+        a.progress = side < 0 ? ctx.race->lapLength - dist : dist;
+      }
+    }
     remain[i] = ctx.race->lapLength - a.progress;  // 0x3BD0D: distance to the line along the route
     a.lap = std::max(0, a.laps - 1);
   }
