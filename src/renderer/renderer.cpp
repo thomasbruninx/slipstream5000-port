@@ -150,6 +150,8 @@ void Renderer::drawMesh(const Scene& scene, const Mesh& mesh, const MeshTransfor
     if (clipped.size() < 3) continue;
     stats_.polysDrawn++;
     curPoly_ = ++polyCounter_;
+    fillSeq_ = 0;
+    dbgTagPiece_ = p.piece; dbgTagPoly_ = only ? int((*only)[pi_]) : int(pi_);
     dbgPiece_ = p.piece; dbgPoly_ = only ? size_t((*only)[pi_]) : pi_; dbgFlags_ = p.pflags;
     const bool detailed = p.detail && mat && !p.hasUV && scene.panelDetails[p.detail].valid;
     if (std::getenv("SLIP_DETAILLOG") && mat && mat->name == "TrackRoof1") {
@@ -413,6 +415,7 @@ std::vector<Renderer::VV> Renderer::detailPoints(const PanelDetail& d, const std
 }
 
 void Renderer::fillIdxPoly(const Scene& scene, const SurfaceMaterial* mat, const std::vector<VV>& pts, const std::vector<uint16_t>& idx, int colorIdx) {
+  ++fillSeq_;
   std::vector<VV> poly, cl;
   for (uint16_t i : idx) poly.push_back(pts[i % pts.size()]);
   if (std::getenv("SLIP_DETAILLOG")) { std::fprintf(stderr, "  lamp col %d:", colorIdx); for (const VV& v : poly) std::fprintf(stderr, " (%.0f %.0f z=%.0f)", double(v.x), double(v.y), double(v.z)); std::fprintf(stderr, "\n"); }
@@ -494,6 +497,7 @@ void Renderer::drawShadowsOn(const Scene& scene, const MeshPoly& rp, int baseId,
 }
 
 void Renderer::drawRoadFloor(const Scene& scene, const MeshPoly& p, const std::vector<VV>& tv, const SurfaceMaterial* mat) {
+  if (std::getenv("SLIP_GLTRI")) std::fprintf(stderr, "ROADFLOOR piece %d count %d nBase %d\n", int(p.piece), int(p.count), scene.panelDetails[p.detail].nBase);
   // type 0x90 (0x4147E): two lane polygons (80 % ramp colour and one step darker) and three SDRoadLine polygons
   const PanelDetail& d = scene.panelDetails[p.detail];
   auto ramp80 = [](const SurfaceMaterial& m) { return int(m.palStart) + (((int(m.palEnd) - int(m.palStart)) * 0x3333) >> 14); };

@@ -120,11 +120,14 @@ class GlRenderer : public Renderer {
   std::vector<std::array<float, 4>> rects_;
   std::unordered_map<std::string, gl::GLuint> sprites_;
   // scene batch
+  bool guardDone_ = false;
   std::vector<SceneVertex> tris_;
+  std::vector<SceneVertex> lines_;   // thin decal lines: drawn without writing the depth copy used by overlays and ambient occlusion (their flat quads would shade the floor)
   bool batchOpen_ = false;
   int batchScissor_[4] = {0, 0, 0, 0};
   int batchItem_ = -2, clearedItem_ = -2;
   uint32_t itemFirstPoly_ = 0;
+  mutable uint32_t seq_ = 0, itemFirstSeq_ = 0;   // draw order within an item: every primitive gets a hair nearer depth than the one before (coplanar lane lines over lanes over floors)
   bool depthCopyValid_ = false;
   bool globalDepth_ = true;   // the depth buffer holds the depth of everything drawn (false after painter items cleared it per item)
   void restoreGlobalDepth();
@@ -138,7 +141,7 @@ class GlRenderer : public Renderer {
   void uploadStaticCasters(const Scene& scene);
   bool lightsReady_ = false, shadowOn_ = false;
   int lightN_ = 0;
-  static constexpr int kMaxLights = 48;
+  static constexpr int kMaxLights = 64;
   float lightPos_[kMaxLights * 3] = {}, lightCol_[kMaxLights * 3] = {}, lightRad_[kMaxLights] = {};
   float sunCam_[3] = {0, 1, 0}, upCam_[3] = {0, 1, 0};
   float shX_[6] = {}, shY_[6] = {}, shZ_[6] = {}, shOff_[6] = {}, shParams_[6] = {1, 1, 1, 1, 1, 1};

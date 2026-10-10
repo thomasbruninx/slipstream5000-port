@@ -134,7 +134,7 @@ bool GlRenderer::init(const GlOptions& opt, std::string* error) {
     if (!buildProgram(&ssao_, glsl::kFullscreenVert, glsl::kSsaoFrag, "ssao", &err) || !buildProgram(&bloomX_, glsl::kFullscreenVert, glsl::kBloomExtractFrag, "bloom", &err) ||
         !buildProgram(&blur_, glsl::kFullscreenVert, glsl::kBlurFrag, "blur", &err) || !buildProgram(&comp_, glsl::kFullscreenVert, glsl::kCompositeFrag, "composite", &err))
       return fail(err);
-    loc(ssao_, {"uScene", "uDepth", "uSize", "uNear", "uFocal", "uRadius", "uStrength"});
+    loc(ssao_, {"uScene", "uDepth", "uSize", "uCenter", "uNear", "uFocal", "uRadius", "uStrength"});
     loc(bloomX_, {"uScene", "uSize", "uThreshold"});
     loc(blur_, {"uSrc", "uDir", "uRect"});
     loc(comp_, {"uScene", "uBloom", "uSize", "uRect", "uBloomAmount"});
@@ -408,13 +408,14 @@ float GlRenderer::depthScale(uint8_t layer, int forceIdx) const {
   float s = 1.0f;
   if (curItem_ >= 0) {
     // painter's mode: a later polygon of the same item wins unless it is clearly behind (the software test allows 1 %): later polygons get a slightly nearer depth
-    s += 0.0005f * float(std::min<uint32_t>(curPoly_ - itemFirstPoly_, 20));
+    s += 1e-5f * float(std::min<uint32_t>(++seq_ - itemFirstSeq_, 1000));
   } else {
     s = layer == 1 ? 1.0f / 1.3f : layer == 2 ? 0.001f : 1.0f;  // z-buffer mode: scenery must be clearly nearer than road to cover it, backdrop never covers road
     // coplanar polygons (the software test lets the later one win within 0.002 %): later polygons are a hair nearer
     s *= 1.0f + std::min(1e-7f * float(curPoly_), 2e-4f);
   }
-  if (forceIdx >= 0) s *= 1.02f;  // lamps, lane colours, shadows: painted over their own polygon
+  // lamps, lane colours, lane lines: painted over their own polygon, each fill clearly nearer than the one before (the depth of a big near-plane triangle is only good to about 1e-4)
+  if (forceIdx >= 0) s *= 1.04f + 0.004f * float(std::min(fillSeq_, 12));  // lamps, lane colours, shadows: painted over their own polygon
   return s;
 }
 
@@ -424,13 +425,13 @@ void GlRenderer::openBatch() {
   if (batchOpen_) return;
   static const bool noRestore = std::getenv("SLIP_GLNORESTORE") != nullptr;  // debug: the old behaviour (ships see only the last item's depth)
   if (curItem_ < 0 && !globalDepth_ && !noRestore) restoreGlobalDepth();
-  if (curItem_ != batchItem_) itemFirstPoly_ = curPoly_;
+  if (curItem_ != batchItem_) { itemFirstPoly_ = curPoly_; itemFirstSeq_ = seq_; }
   batchScissor_[0] = sx0_; batchScissor_[1] = sy0_; batchScissor_[2] = sx1_; batchScissor_[3] = sy1_;
   batchItem_ = curItem_;
   batchOpen_ = true;
   if (curItem_ >= 0 && curItem_ != clearedItem_) {  // a new painter item: nothing it draws is tested against earlier items
     gl_.BindFramebuffer(gl::FRAMEBUFFER, renderFbo());
-    setScissor(sx0_, sy0_, sx1_, sy1_);
+    if (std::getenv("SLIP_GLCLEARALL")) setScissor(vp_.x0, vp_.y0, vp_.x1, vp_.y1); else setScissor(sx0_, sy0_, sx1_, sy1_);
     gl_.DepthMask(gl::TRUE_);
     gl_.ClearDepth(0.0);
     gl_.Clear(gl::DEPTH_BUFFER_BIT);
@@ -442,7 +443,7 @@ void GlRenderer::openBatch() {
 void GlRenderer::flush() {
   if (!batchOpen_) return;
   batchOpen_ = false;
-  if (tris_.empty()) return;
+  if (tris_.empty() && lines_.empty()) return;
   const gl::GLenum bufs[2] = {gl::COLOR_ATTACHMENT0, gl::COLOR_ATTACHMENT1};
   gl_.BindFramebuffer(gl::FRAMEBUFFER, renderFbo());
   gl_.DrawBuffers(2, bufs);
@@ -531,8 +532,16 @@ void GlRenderer::flush() {
   gl_.BindVertexArray(vao_);
   gl_.BindBuffer(gl::ARRAY_BUFFER, vbo_);
   gl_.BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(tris_.size() * sizeof(SceneVertex)), tris_.data(), gl::STREAM_DRAW);
-  gl_.DrawArrays(gl::TRIANGLES, 0, gl::GLsizei(tris_.size()));
+  if (!tris_.empty()) gl_.DrawArrays(gl::TRIANGLES, 0, gl::GLsizei(tris_.size()));
   tris_.clear();
+  if (!lines_.empty()) {
+    const gl::GLenum b0 = gl::COLOR_ATTACHMENT0;
+    gl_.DrawBuffers(1, &b0);
+    gl_.BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(lines_.size() * sizeof(SceneVertex)), lines_.data(), gl::STREAM_DRAW);
+    gl_.DrawArrays(gl::TRIANGLES, 0, gl::GLsizei(lines_.size()));
+    gl_.DrawBuffers(2, bufs);
+    lines_.clear();
+  }
   depthCopyValid_ = false;
 }
 
@@ -588,7 +597,9 @@ void GlRenderer::prepareLighting(const Scene& sc) {
   lightN_ = int(std::min<size_t>(cands.size(), size_t(kMaxLights)));
   for (int i = 0; i < lightN_; ++i) {
     cam(cands[size_t(i)].pos, &lightPos_[i * 3]);
-    for (int k = 0; k < 3; ++k) lightCol_[i * 3 + k] = cands[size_t(i)].col[k] * 1.1f;
+    // the weakest lights fade out instead of popping when the choice of lights changes as the camera moves (the floor and its lines would flicker)
+    const float fade = i < kMaxLights - 16 ? 1.0f : float(kMaxLights - i) / 16.0f;
+    for (int k = 0; k < 3; ++k) lightCol_[i * 3 + k] = cands[size_t(i)].col[k] * 1.1f * fade;
     lightRad_[i] = cands[size_t(i)].rad;
   }
   shadowOn_ = false;
@@ -736,7 +747,7 @@ void GlRenderer::onBeginFrame(uint32_t sky, uint32_t ground) {
   const float W = float(tw_), H = float(th_);
   uProj_[0] = 2.0f * focal_ / W; uProj_[1] = 2.0f * cx_ / W - 1.0f; uProj_[2] = 2.0f * focal_ / H; uProj_[3] = (H - 2.0f * cy_) / H;
   nearD_ = cam_.nearPlane * 0.5f;
-  tris_.clear();
+  tris_.clear(); lines_.clear(); seq_ = itemFirstSeq_ = 0;
   batchOpen_ = false; batchItem_ = -2; clearedItem_ = -2; shadowMode_ = false; depthCopyValid_ = false; sceneActive_ = true; globalDepth_ = true; lightsReady_ = false;
   // backdrop
   const gl::GLenum b0 = gl::COLOR_ATTACHMENT0, bufs[2] = {gl::COLOR_ATTACHMENT0, gl::COLOR_ATTACHMENT1};
@@ -816,10 +827,43 @@ void GlRenderer::rasterTri(const Scene& scene, const VV& a, const VV& b, const V
     auto ch = [&](uint32_t v) { return std::min(255u, uint32_t(float(v) * light)); };
     flat = (ch((p >> 16) & 255) << 16) | (ch((p >> 8) & 255) << 8) | ch(p & 255);
   }
+  if (std::getenv("SLIP_GLTRI") && forceIdx >= 0) std::fprintf(stderr, "tri idx %d piece %d poly %d focal %.1f c %.1f %.1f scr (%.0f %.0f) (%.0f %.0f) (%.0f %.0f) scis %d,%d-%d,%d z %.0f %.0f %.0f xy (%.0f %.0f) (%.0f %.0f) (%.0f %.0f)\n", forceIdx, dbgTagPiece_, dbgTagPoly_, double(focal_), double(cx_), double(cy_), double(cx_ + a.x / a.z * focal_), double(cy_ - a.y / a.z * focal_), double(cx_ + b.x / b.z * focal_), double(cy_ - b.y / b.z * focal_), double(cx_ + c.x / c.z * focal_), double(cy_ - c.y / c.z * focal_), sx0_, sy0_, sx1_, sy1_, double(a.z), double(b.z), double(c.z), double(a.x), double(a.y), double(b.x), double(b.y), double(c.x), double(c.y));
+  // Guard-band clip: a long thin polygon (a lane line from the near plane far into the distance) has screen coordinates of millions of pixels, where the GPU's edge arithmetic drops pixels.
+  // Clip it to a few screens around the view in camera space first (the software renderer does the same in screen space).
+  {
+    const float mx = float(w_) * 1.5f, my = float(h_) * 1.5f;
+    const float L[4][3] = {{focal_, 0, cx_ + mx}, {-focal_, 0, mx + float(w_) - cx_}, {0, focal_, (float(h_) - cy_) + my}, {0, -focal_, my + cy_}};  // plane: A x + B y + C z >= 0
+    bool inside = true;
+    for (const VV* q : {&a, &b, &c})
+      if (!guardDone_)
+      for (const auto& pl : L) if (pl[0] * q->x + pl[1] * q->y + pl[2] * q->z < 0) inside = false;
+    if (!inside) {
+      std::vector<VV> poly = {a, b, c}, out;
+      for (const auto& pl : L) {
+        out.clear();
+        for (size_t i = 0; i < poly.size(); ++i) {
+          const VV &p0 = poly[i], &p1 = poly[(i + 1) % poly.size()];
+          const float d0 = pl[0] * p0.x + pl[1] * p0.y + pl[2] * p0.z, d1 = pl[0] * p1.x + pl[1] * p1.y + pl[2] * p1.z;
+          if (d0 >= 0) out.push_back(p0);
+          if ((d0 >= 0) != (d1 >= 0)) { const float t = d0 / (d0 - d1); out.push_back({p0.x + (p1.x - p0.x) * t, p0.y + (p1.y - p0.y) * t, p0.z + (p1.z - p0.z) * t, p0.u + (p1.u - p0.u) * t, p0.v + (p1.v - p0.v) * t}); }
+        }
+        poly.swap(out);
+        if (poly.size() < 3) return;
+      }
+      if (std::getenv("SLIP_GLTRI") && forceIdx >= 0) { std::fprintf(stderr, "  guard clip -> %zu verts:", poly.size()); for (auto& q : poly) std::fprintf(stderr, " (%.0f %.0f)", double(cx_ + q.x / q.z * focal_), double(cy_ - q.y / q.z * focal_)); std::fprintf(stderr, "\n"); }
+      guardDone_ = true;
+      for (size_t k = 1; k + 1 < poly.size(); ++k) rasterTri(scene, poly[0], poly[k], poly[k + 1], mat, useTexture, light, upLight, layer, forceIdx);
+      guardDone_ = false;
+      return;
+    }
+  }
   SceneVertex v[3];
   const VV* src[3] = {&a, &b, &c};
   uint8_t r, g, bl;
   unpack(flat, &r, &g, &bl);
+  if (std::getenv("SLIP_GLRED") && forceIdx == std::atoi(std::getenv("SLIP_GLRED"))) { r = 255; g = 0; bl = 0; }
+  if (const char* skip = std::getenv("SLIP_GLSKIP13")) { static int n13 = 0; if (forceIdx == 13) { int k = n13++; std::string l = std::string(skip) + ","; size_t st = 0, c; while ((c = l.find(',', st)) != std::string::npos) { if (k == std::atoi(l.substr(st, c - st).c_str())) return; st = c + 1; } } }
+  if (const char* only = std::getenv("SLIP_GLONLY")) { bool ok = false; std::string l = std::string(only) + ","; size_t st = 0, c; while ((c = l.find(',', st)) != std::string::npos) { if (forceIdx == std::atoi(l.substr(st, c - st).c_str())) ok = true; st = c + 1; } if (!ok) return; }
   openBatch();
   if (shadowMode_) {  // ship shadow: clip the triangle to the receiver polygon, then fill it
     std::vector<VV> poly = {a, b, c}, out;
@@ -894,8 +938,7 @@ void GlRenderer::emitSceneLine(const P3& a, const P3& b, uint32_t color, float d
     return SceneVertex{p.x + (dx * along + nx * side) * k, p.y - (dy * along + ny * side) * k, p.z, 0, 0, r, g, bl, 255, 0, 0, 0, 0, ds, 0, 0, 0, 0, 0};
   };
   const SceneVertex q0 = corner(a, -hw, hw), q1 = corner(a, -hw, -hw), q2 = corner(b, hw, -hw), q3 = corner(b, hw, hw);
-  emitTriangle(q0, q1, q2);
-  emitTriangle(q0, q2, q3);
+  for (const SceneVertex* v : {&q0, &q1, &q2, &q0, &q2, &q3}) lines_.push_back(*v);
 }
 
 void GlRenderer::drawLine3D(P3 a, P3 b, uint32_t col) {
@@ -905,7 +948,7 @@ void GlRenderer::drawLine3D(P3 a, P3 b, uint32_t col) {
   if (a.z < n) { const float t = (n - a.z) / (b.z - a.z); a = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, n}; }
   else if (b.z < n) { const float t = (n - b.z) / (a.z - b.z); b = {b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t, n}; }
   openBatch();
-  emitSceneLine(a, b, col, depthScale(0, 0) * 1.02f);
+  emitSceneLine(a, b, col, depthScale(0, 0) * 1.10f);
 }
 
 void GlRenderer::drawOverlay(gl::GLenum mode, const std::vector<OverlayVertex>& v, gl::GLuint tex, bool depthTest, bool fullScissor) {
@@ -1074,10 +1117,11 @@ void GlRenderer::runPost(int x0, int y0, int x1, int y1) {
       bind(0, srcTex); gl_.Uniform1i(ssao_.loc[0], 0);
       bind(1, copyTex_); gl_.Uniform1i(ssao_.loc[1], 1);
       gl_.Uniform2f(ssao_.loc[2], float(tw_), float(th_));
-      gl_.Uniform1f(ssao_.loc[3], nearD_);
-      gl_.Uniform1f(ssao_.loc[4], focal_);
-      gl_.Uniform1f(ssao_.loc[5], 26000.0f);
-      gl_.Uniform1f(ssao_.loc[6], 0.65f);
+      gl_.Uniform2f(ssao_.loc[3], cx_, cy_);
+      gl_.Uniform1f(ssao_.loc[4], nearD_);
+      gl_.Uniform1f(ssao_.loc[5], focal_);
+      gl_.Uniform1f(ssao_.loc[6], 26000.0f);
+      gl_.Uniform1f(ssao_.loc[7], 0.7f);
       gl_.DrawArrays(gl::TRIANGLES, 0, 3);
       swap();
     }

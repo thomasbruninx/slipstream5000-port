@@ -185,6 +185,8 @@ class Renderer {
   // properties of the polygon being drawn for back ends with real-time lighting: camera-space unit normal (stored normal, may be 0), inside a tunnel, emits light (lamps)
   float curN_[3] = {0, 1, 0};
   bool curIndoor_ = false, curEmissive_ = false;
+  int fillSeq_ = 0;   // number of detail fills (lanes, lines, lamps) already drawn over the current polygon: back ends order them by it
+  int dbgTagPiece_ = -1, dbgTagPoly_ = -1;
   bool curWater_ = false;  // the polygon is a water surface
   float curSpec_ = 0.1f;   // specular strength of the polygon (ships and doors are metal, water shines, walls hardly)
   Camera cam_;

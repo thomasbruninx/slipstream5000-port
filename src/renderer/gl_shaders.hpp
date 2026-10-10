@@ -52,9 +52,9 @@ uniform vec3 uSunDir;       // camera space, towards the sun
 uniform vec3 uSunColor;
 uniform vec3 uUpCam;        // world up in camera space
 uniform int uLightN;
-uniform vec3 uLightPos[48]; // camera space
-uniform vec3 uLightCol[48];
-uniform float uLightRad[48];
+uniform vec3 uLightPos[64]; // camera space
+uniform vec3 uLightCol[64];
+uniform float uLightRad[64];
 uniform int uShadowOn;
 uniform sampler2D uShadow0;
 uniform sampler2D uShadow1;
@@ -422,37 +422,52 @@ void main() {
 )";
 
 // ---- built-in post passes of the lighting pipeline (not user replaceable) ----
-// ssao.frag: depth-based ambient occlusion: a pixel is darkened by neighbours that are clearly nearer to the camera within a world-space radius (contact shadows in corners and under overhangs).
+// ssao.frag: depth-based ambient occlusion. The surface normal is rebuilt from the depth, and a neighbour only occludes when it lies clearly in front of the tangent plane of the pixel, so
+// flat floors and walls (also at grazing angles) do not shade themselves; corners, undersides and contact areas do.
 inline constexpr const char* kSsaoFrag = R"(#version 330 core
 uniform sampler2D uScene;
 uniform sampler2D uDepth;   // reverse depth near / z (0 = nothing drawn)
 uniform vec2 uSize;
+uniform vec2 uCenter;       // projection centre, pixels, y down
 uniform float uNear;
 uniform float uFocal;
 uniform float uRadius;      // world units
 uniform float uStrength;
 layout(location = 0) out vec4 oColor;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+float depthAt(ivec2 p) { return texelFetch(uDepth, clamp(p, ivec2(0), ivec2(uSize) - 1), 0).r; }
+vec3 posAt(ivec2 p, float d) {
+  float z = uNear / d;
+  return vec3((float(p.x) + 0.5 - uCenter.x) * z / uFocal, (float(p.y) + 0.5 - (uSize.y - uCenter.y)) * z / uFocal, z);
+}
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
   vec4 c = texelFetch(uScene, p, 0);
-  float d0 = texelFetch(uDepth, p, 0).r;
-  if (d0 <= 0.0) { oColor = c; return; }
-  float z0 = uNear / d0;
-  float rpx = clamp(uRadius * uFocal / z0, 2.0, 48.0);
+  float d0 = depthAt(p);
+  if (d0 <= 1e-9) { oColor = c; return; }
+  vec3 P = posAt(p, d0);
+  // normal from the smaller depth step on each axis (keeps edges clean)
+  float dr = depthAt(p + ivec2(1, 0)), dl = depthAt(p - ivec2(1, 0)), du = depthAt(p + ivec2(0, 1)), dd = depthAt(p - ivec2(0, 1));
+  vec3 ex = (abs(1.0 / max(dr, 1e-9) - 1.0 / d0) < abs(1.0 / max(dl, 1e-9) - 1.0 / d0) && dr > 1e-9) ? posAt(p + ivec2(1, 0), dr) - P : (dl > 1e-9 ? P - posAt(p - ivec2(1, 0), dl) : vec3(1, 0, 0));
+  vec3 ey = (abs(1.0 / max(du, 1e-9) - 1.0 / d0) < abs(1.0 / max(dd, 1e-9) - 1.0 / d0) && du > 1e-9) ? posAt(p + ivec2(0, 1), du) - P : (dd > 1e-9 ? P - posAt(p - ivec2(0, 1), dd) : vec3(0, 1, 0));
+  vec3 N = normalize(cross(ex, ey));
+  if (dot(N, P) > 0.0) N = -N;
+  float rpx = clamp(uRadius * uFocal / P.z, 2.0, 48.0);
   float ang = hash(gl_FragCoord.xy) * 6.2831853;
   float occ = 0.0;
   for (int i = 0; i < 16; ++i) {
     float t = (float(i) + 0.5) / 16.0;
     float a = ang + float(i) * 2.399963;
-    vec2 o = vec2(cos(a), sin(a)) * rpx * sqrt(t);
-    float ds = texelFetch(uDepth, clamp(p + ivec2(o), ivec2(0), ivec2(uSize) - 1), 0).r;
-    if (ds <= 0.0) continue;
-    float dz = z0 - uNear / ds;                       // > 0: the neighbour is nearer to the camera than this pixel
-    float lim = uRadius * 1.2;
-    if (dz > uRadius * 0.04 && dz < lim) occ += 1.0 - dz / lim;
+    ivec2 q = p + ivec2(vec2(cos(a), sin(a)) * rpx * sqrt(t));
+    float ds = depthAt(q);
+    if (ds <= 1e-9) continue;
+    vec3 v = posAt(q, ds) - P;
+    float dist = length(v);
+    if (dist < 1.0 || dist > uRadius * 1.3) continue;
+    float h = dot(N, v);                               // height of the neighbour above the tangent plane (thin decals and lane lines lie within the bias)
+    occ += max(h / uRadius - 0.15, 0.0) * (1.0 - dist / (uRadius * 1.3));
   }
-  float ao = 1.0 - uStrength * clamp(occ / 16.0 * 2.0, 0.0, 1.0);
+  float ao = 1.0 - uStrength * clamp(occ / 16.0 * 4.0, 0.0, 1.0);
   oColor = vec4(c.rgb * ao, c.a);
 }
 )";
