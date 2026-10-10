@@ -71,6 +71,7 @@ Things that are not (or not exactly) in the original, mostly on request:
 * **Top-3 best laps with name entry** per track, race **replay** (also in the championship), results screen on Esc / Enter after the finish while the ship keeps flying on its own.
 * **Drones** ("little airbuses") that can be shot for bonus pickups, with lock-on and a bonus from any kill.
 * **Tactical AI weapons**: opponents start calm, grow more aggressive with race time and when they are hit, keep their heavy weapons for revenge and good shots (original behaviour: `SLIP_CLASSIC_AI=1`).
+* **Start places:** practice starts last, a single race starts from a random place 4 to 8, in the championship the first race starts last and every later race from the place finished in the previous one.
 * Start speed bonus off by default, random first championship grid, weapons are not refilled for free between championship races.
 * **Reset Player** in the pause menu: puts your craft back on the centre line of the track (horizontally and vertically), heading along the track and at rest, for when you are stuck.
 * Rear monitor with the console (the original's second monitor) and the weapons monitor (the missile's view).

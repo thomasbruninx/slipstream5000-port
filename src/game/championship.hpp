@@ -26,6 +26,9 @@ struct ChampDriver {
   bool loader = false;  // the garage upgrade "Loader" (record flag +0x46 bit 2): later weapon purchases hold twice the rounds
 };
 
+// Grid with the human ship `human` in start slot `slot` (0 = pole); the other ships fill the remaining slots in the order they have in `base`.
+std::array<int, 10> gridWithHuman(const std::array<int, 10>& base, int human, int slot);
+
 class Championship {
  public:
   // The human flies `humanShip`; the nine other ships are the AI drivers. The roster order (used for ties, 0x56217: later entries win) is the human first, then the

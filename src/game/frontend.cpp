@@ -1,3 +1,4 @@
+#include <random>
 #include "game/frontend.hpp"
 
 #include <algorithm>
@@ -369,7 +370,12 @@ void FrontEnd::activate(int id) {
     else { mode_ = id - 1; hoverShip_ = setup_.ship; go(Screen::Team); hoverShip_ = setup_.ship; }
   } else if (screen_ == Screen::Tracks) {
     setup_.track = id + 1;
-    if (mode_ == 0) { setup_.loadout = Loadout{}; race_ = true; }  // practice has no garage
+    if (mode_ == 0) {  // practice has no garage; the player starts last on the grid
+      setup_.loadout = Loadout{};
+      setup_.grid = gridWithHuman({0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, setup_.ship, 9);
+      setup_.championship = false;
+      race_ = true;
+    }
     else go(Screen::Garage);
   }
 }
@@ -769,7 +775,10 @@ void FrontEnd::garageChoose(int i, bool fromMouse) {
           d.money = cash_; d.load = setup_.loadout; d.loader = loader_;
           setup_.grid = champ_.grid();
           setup_.championship = true;
-        } else { setup_.grid = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}; setup_.championship = false; }
+        } else {  // single race: a random start place, never 1, 2, 3, 9 or 10
+          setup_.grid = gridWithHuman({0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, setup_.ship, 3 + int(std::random_device{}() % 5));
+          setup_.championship = false;
+        }
         race_ = true;
       }
       break;

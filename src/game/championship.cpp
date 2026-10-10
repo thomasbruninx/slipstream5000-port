@@ -40,6 +40,22 @@ std::array<int, 10> Championship::grid() const {
     const ChampDriver& d = d_[size_t(s)];
     g[size_t(s)] = race_ == 1 || d.place == 0 ? grid1_[size_t(s)] : 10 - d.place;  // rank = 11 - place, slot = rank - 1
   }
+  // Port change: the human starts last in the first race and from the place he finished in the previous one (the nine AI drivers keep their relative order in the other slots).
+  const int hs = std::clamp(human_, 0, 9);
+  const int slot = race_ == 1 || d_[size_t(hs)].place == 0 ? 9 : std::clamp(d_[size_t(hs)].place, 1, 10) - 1;
+  return gridWithHuman(g, hs, slot);
+}
+
+std::array<int, 10> gridWithHuman(const std::array<int, 10>& base, int human, int slot) {
+  std::vector<int> others;  // ship indices ordered by their slot in `base`
+  for (int s = 0; s < 10; ++s) if (s != human) others.push_back(s);
+  std::stable_sort(others.begin(), others.end(), [&](int a, int b) { return base[size_t(a)] < base[size_t(b)]; });
+  std::array<int, 10> g{};
+  size_t k = 0;
+  for (int pos = 0; pos < 10; ++pos) {
+    if (pos == slot) g[size_t(human)] = pos;
+    else g[size_t(others[k++])] = pos;
+  }
   return g;
 }
 

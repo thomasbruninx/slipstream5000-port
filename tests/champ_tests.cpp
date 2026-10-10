@@ -14,6 +14,7 @@ int main() {
   CHECK(c.raceNumber() == 1 && c.track() == 6 && c.raceCount() == 8 && !c.lastRace());
   CHECK(c.driver(3).human && c.driver(3).money == 750 && c.driver(3).points == 0);
   auto g = c.grid();
+  CHECK(g[3] == 9);  // the human starts last in the first race
   {  // race 1: a random permutation of the ten slots
     std::array<bool, 10> seen{};
     for (int s = 0; s < 10; ++s) { CHECK(g[size_t(s)] >= 0 && g[size_t(s)] < 10); seen[size_t(g[size_t(s)])] = true; }
@@ -22,7 +23,7 @@ int main() {
     c2.start(3, 1, 7);
     CHECK(c2.grid() == g);  // the same seed gives the same grid
     c2.start(3, 1, 8);
-    CHECK(c2.grid() != g);
+    CHECK(c2.grid() != g && c2.grid()[3] == 9);
   }
   // race 1: ship s finishes in place 10 - s (ship 9 wins)
   std::array<int, 10> place{};
@@ -35,7 +36,12 @@ int main() {
   c.nextRace();
   g = c.grid();
   CHECK(c.track() == 1);
-  CHECK(g[9] == 9 && g[0] == 0);  // ship s finished in place 10 - s, so it starts in slot s
+  CHECK(g[3] == 6);  // the human (ship 3) finished 7th, so he starts 7th (slot 6); the AI ships fill the other slots
+  {
+    std::array<bool, 10> seen{};
+    for (int s = 0; s < 10; ++s) seen[size_t(g[size_t(s)])] = true;
+    for (bool b : seen) CHECK(b);
+  }
   // ties: ships 3..0 all have 0 points; the later roster entry ranks higher (roster = human 3 first, then 0,1,2,4,...): ship 2 before ship 1 before 0 before the human
   CHECK(c.driver(2).rank < c.driver(1).rank && c.driver(1).rank < c.driver(0).rank && c.driver(0).rank < c.driver(3).rank);
   // save / load round trip
