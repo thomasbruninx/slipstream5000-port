@@ -56,14 +56,15 @@ class Renderer {
   virtual void drawStarWorld(const double w[3], double radius, double angle, uint32_t color) = 0;
   virtual void drawRectScreen(int x0, int y0, int x1, int y1, uint32_t color) = 0;
   // Particles. A back end with an effects shader draws them softer and lit; the default is the plain sprite / star. life01: 0 young .. 1 gone; seed: a per-particle random number 0..1.
-  enum class FxKind { Smoke, Fire, Explosion };
+  enum class FxKind { Smoke, Fire, Explosion, Mist };   // Mist: the white spray of a water splash
   virtual void drawFxSprite(FxKind, const Sprite& spr, const Palette& pal, const double world[3], double worldWidth, int transparent, float life01, float seed) {
     (void)life01; (void)seed;
     drawSpriteWorld(spr, pal, world, worldWidth, transparent);
   }
   // A wall spark / water droplet: `vel` is its velocity in world units per second (the streak points along it).
-  virtual void drawSparkWorld(const double w[3], const double vel[3], double radius, double angle, uint32_t color, float life01) {
-    (void)vel; (void)life01;
+  // kind: 0 wall spark, 1 water droplet, 2 chip of the surface.
+  virtual void drawSparkWorld(const double w[3], const double vel[3], double radius, double angle, uint32_t color, float life01, int kind = 0) {
+    (void)vel; (void)life01; (void)kind;
     drawStarWorld(w, radius, angle, color);
   }
   // ---- front end ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -126,6 +127,10 @@ class Renderer {
   std::vector<PointLight> frameLights;  // world coordinates
   void addLight(const double pos[3], float r, float g, float b, float radius) { frameLights.push_back({{pos[0], pos[1], pos[2]}, {r, g, b}, radius}); }
   int lightingMode = 0;
+  // Ripples on water (a back end with a water shader animates them): rings spreading from a point where a craft skims or hits the water. world = world coordinates, age in seconds.
+  struct Ripple { double pos[3]; float age; float strength; };
+  std::vector<Ripple> ripples;
+  virtual bool hasEffects() const { return false; }   // the back end draws water, particles and sparks with effect shaders
   bool shadows = true;
   bool wireframe = false;
   bool cullBackfaces = false;  // uses the stored face normals (INFERRED that the original culls too)

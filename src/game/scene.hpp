@@ -198,12 +198,13 @@ struct Scene {
   void groupOrder(int group, const double cam[3], std::vector<ItemRef>* out) const;
   // Groups far-to-near relative to the world-space camera position (BSP walk, 0x37601).
   void bspOrder(const double cam[3], std::vector<int>* groups) const;
-  bool floorHeight(double x, double z, double yHint, double margin, double* y) const;
+  bool floorHeight(double x, double z, double yHint, double margin, double* y, bool* water = nullptr) const;  // water: the surface found is a WATE* material
   void buildFloorIndex();
 
  private:
   struct FloorTri {
     float a[3], b[3], c[3];
+    bool water = false;   // a WATE* material
   };
   std::vector<FloorTri> floorTris_;
   std::unordered_map<int64_t, std::vector<uint32_t>> floorGrid_;

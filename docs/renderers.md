@@ -64,6 +64,8 @@ Water, smoke, fire and collision sparks get their own shaders (OpenGL renderer; 
 |---|---|
 | **Water** (London, Arizona, Cave, Amazon, Norway, New York: the `Water*` materials) | animated wave normals (four moving wave trains, flattened with distance so it does not shimmer), the texture is refracted by the waves, fresnel reflection of the track's sky colours, sun glitter (bloom picks it up with `--lighting`) |
 | **Sea** (Hawaii, New York: the flat ground below the horizon) | a procedural water plane with the same waves, fresnel reflection of the sky ramp and sun glitter |
+| **Ripples** | a craft skimming low over water (all ships) leaves a wake of expanding rings, a water hit makes a large ring; the rings bend the reflection and refraction and get a foam crest. Up to 8 rings near the camera, on the water polygons and on the sea |
+| **Splash** | on a water hit: the splash sound of the original (`WATERHIT.SMP`, effect 8, already played by the game), a white spray of soft puffs, and the sparks become **water droplets** (translucent lenses with a glint, instead of glowing spark streaks) |
 | **Smoke** (missile trails, smoke screens, damage smoke) | soft particles: faded where they touch geometry, dissolving with a noise erosion as they age, shaded like a ball (sun + ambient) instead of the flat sprite |
 | **Fire / explosions** | additive, hot-core colouring with noise flicker; overexposed cores bloom with `--lighting` |
 | **Sparks** (wall scrapes, water droplets, debris chips) | motion-aligned glowing streaks plus a small glow instead of a plus-shaped star |

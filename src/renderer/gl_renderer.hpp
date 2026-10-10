@@ -42,7 +42,8 @@ class GlRenderer : public Renderer {
   void drawStarWorld(const double w[3], double radius, double angle, uint32_t color) override;
   void drawRectScreen(int x0, int y0, int x1, int y1, uint32_t color) override;
   void drawFxSprite(FxKind kind, const Sprite& spr, const Palette& pal, const double world[3], double worldWidth, int transparent, float life01, float seed) override;
-  void drawSparkWorld(const double w[3], const double vel[3], double radius, double angle, uint32_t color, float life01) override;
+  void drawSparkWorld(const double w[3], const double vel[3], double radius, double angle, uint32_t color, float life01, int kind = 0) override;
+  bool hasEffects() const override { return fxOn_; }
   const std::string& glInfo() const { return info_; }
 
  protected:

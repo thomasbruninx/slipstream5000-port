@@ -38,6 +38,9 @@ uniform int uFilter;        // 0 nearest (the original's look), 1 bilinear, 2 sm
 uniform vec2 uAtlasSize;
 uniform int uLighting;
 uniform int uFx;            // effects on (water shader)
+uniform int uRipN;
+uniform vec4 uRippleC[8];   // camera-space centre, age
+uniform float uRippleS[8];  // strength
 uniform float uTime;
 uniform vec3 uSkyHorizon;
 uniform vec3 uSkyZenith;
@@ -125,6 +128,17 @@ vec3 skyColor(vec3 R) {
   float t = clamp(dot(R, uUpCam), 0.0, 1.0);
   return mix(uSkyHorizon, uSkyZenith, sqrt(t));
 }
+// ripple rings: o = offset from the ring's centre, age in seconds; returns the slope vector (in the plane of the offset) and the foam amount in .w
+vec4 ripple(vec3 o, float age, float str) {
+  float d = length(o);
+  float k = 6.2831853 / 9000.0;
+  float f = d - 55000.0 * age;
+  float env = exp(-f * f / (2.0 * 16000.0 * 16000.0)) * exp(-age * 0.9) * str * (1.0 - smoothstep(1.8, 2.6, age)) * smoothstep(0.0, 4000.0, d);
+  vec3 dir = o / max(d, 1.0);
+  float c = cos(k * f);
+  return vec4(dir * (env * c), env * smoothstep(0.5, 1.0, c) * 0.5);
+}
+
 vec3 waterShade(vec3 base, vec3 N, vec3 P, vec2 g) {
   vec3 V = -normalize(P);
   vec3 dp1 = dFdx(P), dp2 = dFdy(P);
@@ -134,7 +148,10 @@ vec3 waterShade(vec3 base, vec3 N, vec3 P, vec2 g) {
   vec3 B = cross(N, T);
   float dist = length(P);
   float amp = 0.10 / (1.0 + dist * 2.0e-6);              // waves flatten with distance (no shimmering)
-  vec3 Nw = normalize(N - (T * g.x + B * g.y) * amp);
+  vec3 rg = vec3(0.0);
+  float foam = 0.0;
+  for (int i = 0; i < uRipN; ++i) { vec4 r = ripple(P - uRippleC[i].xyz, uRippleC[i].w, uRippleS[i]); rg += r.xyz; foam += r.w; }
+  vec3 Nw = normalize(N - (T * g.x + B * g.y) * amp - rg * 0.55);
   float ndv = clamp(dot(Nw, V), 0.0, 1.0);
   float fres = 0.03 + 0.97 * pow(1.0 - ndv, 5.0);
   vec3 R = reflect(-V, Nw);
@@ -143,6 +160,7 @@ vec3 waterShade(vec3 base, vec3 N, vec3 P, vec2 g) {
   vec3 c = mix(body, refl, clamp(fres * 0.9, 0.0, 0.85));
   float glint = pow(max(dot(R, uSunDir), 0.0), 220.0) * 3.0 + pow(max(dot(R, uSunDir), 0.0), 24.0) * 0.15;
   c += uSunColor * glint * (uSunColor.g > 0.05 ? 1.0 : 0.0);
+  c = mix(c, vec3(0.92, 0.97, 1.0), clamp(foam, 0.0, 0.6));
   return c;
 }
 
@@ -249,6 +267,20 @@ uniform float uTime;
 uniform vec3 uCamXZ;        // camera world position (x, y, z) in scene units
 uniform vec3 uSunDirW;
 uniform vec3 uSunCol;
+uniform int uRipN;
+uniform vec4 uRippleW[8];   // centre relative to the camera (world axes), age
+uniform float uRippleS[8];
+// ripple rings: o = offset from the ring's centre, age in seconds; returns the slope vector (in the plane of the offset) and the foam amount in .w
+vec4 ripple(vec3 o, float age, float str) {
+  float d = length(o);
+  float k = 6.2831853 / 9000.0;
+  float f = d - 55000.0 * age;
+  float env = exp(-f * f / (2.0 * 16000.0 * 16000.0)) * exp(-age * 0.9) * str * (1.0 - smoothstep(1.8, 2.6, age)) * smoothstep(0.0, 4000.0, d);
+  vec3 dir = o / max(d, 1.0);
+  float c = cos(k * f);
+  return vec4(dir * (env * c), env * smoothstep(0.5, 1.0, c) * 0.5);
+}
+
 layout(location = 0) out vec4 oColor;
 void main() {
   float dx = gl_FragCoord.x - uCenter.x;
@@ -266,13 +298,17 @@ void main() {
       g += vec2(-0.5, 0.85) * cos(dot(w, vec2(-0.5, 0.85)) * 9.5 - uTime * 1.3) * 0.40;
       g += vec2(0.2, -0.95) * cos(dot(w, vec2(0.2, -0.95)) * 16.0 + uTime * 1.9) * 0.28;
       float flat_ = clamp(1.0 - t * 1.5e-6, 0.15, 1.0);
-      vec3 n = normalize(vec3(-g.x * 0.12 * flat_, 1.0, -g.y * 0.12 * flat_));
+      vec3 rg = vec3(0.0);
+      float foam = 0.0;
+      for (int i = 0; i < uRipN; ++i) { vec4 r = ripple(vec3(d.x * t - uRippleW[i].x, 0.0, d.z * t - uRippleW[i].z), uRippleW[i].w, uRippleS[i]); rg += r.xyz; foam += r.w; }
+      vec3 n = normalize(vec3(-g.x * 0.12 * flat_ - rg.x * 0.5, 1.0, -g.y * 0.12 * flat_ - rg.z * 0.5));
       vec3 V = -d;
       float fres = 0.03 + 0.97 * pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 5.0);
       vec3 R = reflect(d, n);
       vec3 sky = mix(uRampN > 0 ? uRamp[uRampN - 1] : uSky, uRampN > 0 ? uRamp[0] : uSky, sqrt(clamp(R.y, 0.0, 1.0)));
       c = mix(uGround * (0.85 + 0.2 * g.x * g.y), sky, clamp(fres * 0.9, 0.0, 0.8));
       c += uSunCol * pow(max(dot(R, uSunDirW), 0.0), 180.0) * 2.5 * (uSunCol.g > 0.05 ? 1.0 : 0.0);
+      c = mix(c, vec3(0.92, 0.97, 1.0), clamp(foam, 0.0, 0.6));
     }
   }
   else if (uRampN > 0) {
@@ -512,21 +548,22 @@ void main() {
   float s = texelFetch(uDepth, ivec2(gl_FragCoord.xy), 0).r;
   if (s > 1e-9) soft = clamp((min(uNear / s, 1.0e9) - uNear / max(vD, 1e-9)) / uSoft * 0.5 + 0.5, 0.0, 1.0);
   if (soft <= 0.0) discard;
-  if (uMode <= 1) {
+  if (uMode <= 1 || uMode == 4) {
     vec4 t = texture(uTex, vUv);
     if (t.a < 0.5) discard;
     float lum = dot(t.rgb, vec3(0.3, 0.59, 0.11));
     vec2 p = vUv * 2.0 - 1.0;
     float r = length(p);
     float n = noise(vUv * 5.0 + uSeed * 17.0) * 0.6 + noise(vUv * 11.0 + uSeed * 5.0) * 0.4;
-    if (uMode == 0) {
+    if (uMode == 0 || uMode == 4) {
       float body = clamp(lum * 1.35 + 0.1, 0.0, 1.0) * (1.0 - smoothstep(0.6, 1.0, r));
       float erode = smoothstep(uLife - 0.3, uLife + 0.05, n);
       float alpha = body * erode * 0.85 * (1.0 - 0.45 * uLife) * soft;
       vec3 nn = vec3(p, sqrt(max(1.0 - r * r, 0.0)));
       float diff = max(dot(nn, uSunDir), 0.0);
       vec3 col = t.rgb * (max(uAmb, vec3(0.8)) + uSunColor * diff * 0.5) * (0.8 + 0.3 * n);
-      oColor = vec4(col, min(alpha * 1.6, 0.95));
+      if (uMode == 4) col = mix(col, vec3(0.9, 0.96, 1.0) * (max(uAmb, vec3(0.8)) + uSunColor * 0.3), 0.75);
+      oColor = uMode == 4 ? vec4(col * 0.95, min(alpha * 0.55, 0.42)) : vec4(col, min(alpha * 1.6, 0.95));
     } else {
       float heat = clamp(lum * 1.2, 0.0, 1.0);
       float fade = (1.0 - uLife) * (1.0 - uLife);
@@ -535,6 +572,13 @@ void main() {
       vec3 col = (t.rgb * 0.85 + hot * heat * 0.45) * (0.8 + 0.4 * n) * (0.25 + 1.15 * fade);
       oColor = vec4(col * edge * soft, 1.0);
     }
+  } else if (uMode == 5) {   // water droplet: a lens of water, bright rim, white glint, translucent
+    vec2 p = vUv * 2.0 - 1.0;
+    float body = 1.0 - smoothstep(0.55, 1.0, length(p * vec2(0.8, 1.15)));
+    float along = 1.0 - vUv.x;
+    float glint = pow(max(1.0 - length(p - vec2(-0.2, -0.3)) * 2.2, 0.0), 2.0);
+    vec3 col = mix(vCol.rgb * 1.1, vec3(0.9, 0.96, 1.0), 0.45) * (0.85 + 0.5 * glint) + vec3(glint) * 0.9;
+    oColor = vec4(col, body * (0.35 + 0.5 * along) * (1.0 - uLife * 0.7) * soft);
   } else if (uMode == 2) {
     float across = 1.0 - abs(vUv.y * 2.0 - 1.0);
     float along = (1.0 - vUv.x);

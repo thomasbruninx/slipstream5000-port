@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "game/ship_sim.hpp"
 #include "game/ship_collide.hpp"
 
@@ -314,6 +316,7 @@ void moveShip(ShipState& s, double dt, const Scene& scene, const ShipSimConfig& 
       ++s.hits;
       tr *= 1.0 - h.dist / l;
       s.hitWater = h.material >= 0 && size_t(h.material) < scene.materials.size() && scene.materials[size_t(h.material)].upperName.rfind("WATE", 0) == 0;
+      if (std::getenv("SLIP_HITLOG")) std::fprintf(stderr, "hit material %s water %d\n", h.material >= 0 && size_t(h.material) < scene.materials.size() ? scene.materials[size_t(h.material)].name.c_str() : "-", int(s.hitWater));
       if (s.nWallFx < 4) {  // RaceSlotControl 0x50A64: RaceBang 0x4FD93 / 0x4FF2E at the contact point
         ShipState::WallFx& w = s.wallFx[s.nWallFx++];
         for (int i = 0; i < 3; ++i) w.n[i] = h.n[i];

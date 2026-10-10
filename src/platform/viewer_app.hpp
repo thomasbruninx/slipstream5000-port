@@ -250,6 +250,13 @@ class ViewerApp {
   int ambientForPlayer() const;
   void playTrackMusic();
   void drainSounds(const double listener[3]);
+  // water effects of the OpenGL renderer: ripples where a craft skims or hits the water, the white spray of a splash
+  struct Mist { double pos[3]; double age; };
+  std::vector<Renderer::Ripple> ripples_;
+  std::vector<Mist> mists_;
+  double wakeTimer_[10] = {};
+  void waterImpact(const ShipState& s);
+  void updateWaterFx(double dt);
   // combat: weapons, pickups, voice cues (docs/simulation.md "Weapons and pickups")
   WeaponTable weaponTable_;
   std::array<ShipRefPoints, 10> refPoints_{};

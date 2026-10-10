@@ -129,7 +129,7 @@ bool GlRenderer::init(const GlOptions& opt, std::string* error) {
   if (!buildProgram(&overlay_, glsl::kOverlayVert, shaderSource("overlay.frag", glsl::kOverlayFrag), "overlay", &err)) return fail(err);
   auto loc = [&](Program& p, std::initializer_list<const char*> names) { int i = 0; for (const char* n : names) p.loc[i++] = gl_.GetUniformLocation(p.id, n); };
   loc(scene_, {"uProj", "uNear", "uAtlas", "uFilter", "uAtlasSize", "uLighting", "uSkyAmbient", "uGroundAmbient", "uExposure", "uIndoor", "uSunDir", "uSunColor", "uUpCam", "uLightN", "uLightPos[0]",
-               "uLightCol[0]", "uLightRad[0]", "uShadowOn", "uShadow0", "uShadow1", "uShadowX[0]", "uShadowY[0]", "uShadowZ[0]", "uShadowOff[0]", "uShadowParams[0]", "uFx", "uTime", "uSkyHorizon", "uSkyZenith"});
+               "uLightCol[0]", "uLightRad[0]", "uShadowOn", "uShadow0", "uShadow1", "uShadowX[0]", "uShadowY[0]", "uShadowZ[0]", "uShadowOff[0]", "uShadowParams[0]", "uFx", "uTime", "uSkyHorizon", "uSkyZenith", "uRipN", "uRippleC[0]", "uRippleS[0]"});
   if (hdr_) {
     if (!buildProgram(&ssao_, glsl::kFullscreenVert, glsl::kSsaoFrag, "ssao", &err) || !buildProgram(&bloomX_, glsl::kFullscreenVert, glsl::kBloomExtractFrag, "bloom", &err) ||
         !buildProgram(&blur_, glsl::kFullscreenVert, glsl::kBlurFrag, "blur", &err) || !buildProgram(&comp_, glsl::kFullscreenVert, glsl::kCompositeFrag, "composite", &err))
@@ -143,7 +143,7 @@ bool GlRenderer::init(const GlOptions& opt, std::string* error) {
     if (!buildProgram(&shadowProg_, glsl::kShadowVert, glsl::kShadowFrag, "shadow map", &err)) { std::fprintf(stderr, "opengl: %s (shadows off)\n", err.c_str()); lightingMode = 1; }
     else loc(shadowProg_, {"uOrigin", "uAxX", "uAxY", "uAxZ", "uParams"});
   }
-  loc(sky_, {"uFrame", "uCenter", "uFocal", "uRight", "uUp", "uFwd", "uSky", "uGround", "uBand", "uRampN", "uRamp[0]", "uWaterGround", "uTime", "uCamXZ", "uSunDirW", "uSunCol"});
+  loc(sky_, {"uFrame", "uCenter", "uFocal", "uRight", "uUp", "uFwd", "uSky", "uGround", "uBand", "uRampN", "uRamp[0]", "uWaterGround", "uTime", "uCamXZ", "uSunDirW", "uSunCol", "uRipN", "uRippleW[0]", "uRippleS[0]"});
   loc(overlay_, {"uSize", "uTex", "uDepth", "uUseTex", "uUseDepth"});
   if (fxOn_) {
     if (!buildProgram(&fxProg_, glsl::kOverlayVert, glsl::kFxFrag, "fx", &err)) { std::fprintf(stderr, "opengl: %s (effects off)\n", err.c_str()); fxOn_ = false; }
@@ -477,6 +477,20 @@ void GlRenderer::flush() {
     gl_.Uniform3fv(scene_.loc[10], 1, sunCam_);
     gl_.Uniform3fv(scene_.loc[11], 1, atlasScene_->env.sunColor);
     gl_.Uniform3fv(scene_.loc[12], 1, upCam_);
+    float rc[32], rs[8];
+    int rn = 0;
+    for (const Ripple& r : ripples) {
+      if (rn >= 8) break;
+      const double d[3] = {r.pos[0] - cam_.pos[0], r.pos[1] - cam_.pos[1], r.pos[2] - cam_.pos[2]};
+      rc[rn * 4] = float(d[0] * right_[0] + d[1] * right_[1] + d[2] * right_[2]);
+      rc[rn * 4 + 1] = float(d[0] * up_[0] + d[1] * up_[1] + d[2] * up_[2]);
+      rc[rn * 4 + 2] = float(d[0] * fwd_[0] + d[1] * fwd_[1] + d[2] * fwd_[2]);
+      rc[rn * 4 + 3] = r.age;
+      rs[rn] = r.strength;
+      ++rn;
+    }
+    gl_.Uniform1i(scene_.loc[29], rn);
+    if (rn > 0) { gl_.Uniform4fv(scene_.loc[30], rn, rc); gl_.Uniform1fv(scene_.loc[31], rn, rs); }
   }
   if (lightingMode > 0 && atlasScene_) {
     const LightingEnv& e = atlasScene_->env;
@@ -761,6 +775,16 @@ void GlRenderer::onBeginFrame(uint32_t sky, uint32_t ground) {
       gl_.Uniform3fv(sky_.loc[13], 1, cam3);
       gl_.Uniform3fv(sky_.loc[14], 1, atlasScene_->env.sunDir);
       gl_.Uniform3fv(sky_.loc[15], 1, atlasScene_->env.sunColor);
+      float rw[32], rs[8];
+      int rn = 0;
+      for (const Ripple& r : ripples) {
+        if (rn >= 8) break;
+        rw[rn * 4] = float(r.pos[0] - cam_.pos[0]); rw[rn * 4 + 1] = float(r.pos[1] - cam_.pos[1]); rw[rn * 4 + 2] = float(r.pos[2] - cam_.pos[2]); rw[rn * 4 + 3] = r.age;
+        rs[rn] = r.strength;
+        ++rn;
+      }
+      gl_.Uniform1i(sky_.loc[16], rn);
+      if (rn > 0) { gl_.Uniform4fv(sky_.loc[17], rn, rw); gl_.Uniform1fv(sky_.loc[18], rn, rs); }
     }
   }
   gl_.BindVertexArray(emptyVao_);
@@ -1148,10 +1172,10 @@ void GlRenderer::drawFxSprite(FxKind kind, const Sprite& spr, const Palette& pal
   const float x0 = sx - pw * 0.5f, x1 = sx + pw * 0.5f, y0 = sy - ph * 0.5f, y1 = sy + ph * 0.5f;
   auto V = [&](float x, float y, float u, float v) { return OverlayVertex{x, y, d, u, v, 255, 255, 255, 255}; };
   const OverlayVertex a = V(x0, y0, 0, 0), b = V(x1, y0, 1, 0), c = V(x1, y1, 1, 1), e = V(x0, y1, 0, 1);
-  drawFx(kind == FxKind::Smoke ? 0 : 1, tex, {a, b, c, a, c, e}, kind != FxKind::Smoke, life01, seed, 0.5f * float(worldWidth));
+  drawFx(kind == FxKind::Smoke ? 0 : kind == FxKind::Mist ? 4 : 1, tex, {a, b, c, a, c, e}, kind == FxKind::Fire || kind == FxKind::Explosion, life01, seed, 0.5f * float(worldWidth));
 }
 
-void GlRenderer::drawSparkWorld(const double w[3], const double vel[3], double radius, double angle, uint32_t color, float life01) {
+void GlRenderer::drawSparkWorld(const double w[3], const double vel[3], double radius, double angle, uint32_t color, float life01, int kind) {
   if (!fxOn_) { drawStarWorld(w, radius, angle, color); return; }
   float sx, sy, z;
   if (!projectToScreen(w, &sx, &sy, &z)) return;
@@ -1171,6 +1195,12 @@ void GlRenderer::drawSparkWorld(const double w[3], const double vel[3], double r
   const float nx = -dy, ny = dx;
   // streak: head (u = 0) to tail (u = 1), v across
   const OverlayVertex a = V(sx + nx * hw, sy + ny * hw, 0, 1), bq = V(sx - nx * hw, sy - ny * hw, 0, 0), c = V(sx + dx * len - nx * hw, sy + dy * len - ny * hw, 1, 0), e = V(sx + dx * len + nx * hw, sy + dy * len + ny * hw, 1, 1);
+  if (kind == 1) {  // a water droplet: a translucent lens with a glint (alpha blended), a little larger than a spark
+    const float k = 1.7f;
+    const OverlayVertex da = V(sx + nx * hw * k, sy + ny * hw * k, 0, 1), db = V(sx - nx * hw * k, sy - ny * hw * k, 0, 0), dc = V(sx + dx * len - nx * hw * 0.5f, sy + dy * len - ny * hw * 0.5f, 1, 0), dd = V(sx + dx * len + nx * hw * 0.5f, sy + dy * len + ny * hw * 0.5f, 1, 1);
+    drawFx(5, 0, {da, db, dc, da, dc, dd}, false, life01, 0, 4000.0f);
+    return;
+  }
   drawFx(2, 0, {a, bq, c, a, c, e}, true, life01, 0, 4000.0f);
   const float gr = 3.2f * scale;  // small glow at the head
   const OverlayVertex g0 = V(sx - gr, sy - gr, 0, 0), g1 = V(sx + gr, sy - gr, 1, 0), g2 = V(sx + gr, sy + gr, 1, 1), g3 = V(sx - gr, sy + gr, 0, 1);

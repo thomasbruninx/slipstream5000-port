@@ -840,6 +840,7 @@ void Scene::buildFloorIndex() {
     if (p.normal.y < 0.5f) continue;  // only up-facing surfaces count as ground
     for (uint16_t k = 1; k + 1 < p.count; ++k) {
       FloorTri t;
+      t.water = p.material >= 0 && size_t(p.material) < materials.size() && materials[size_t(p.material)].upperName.rfind("WATE", 0) == 0;
       const Vec3 &a = track.verts[p.first], &b = track.verts[p.first + k], &c = track.verts[p.first + k + 1];
       t.a[0] = a.x; t.a[1] = a.y; t.a[2] = a.z;
       t.b[0] = b.x; t.b[1] = b.y; t.b[2] = b.z;
@@ -855,12 +856,12 @@ void Scene::buildFloorIndex() {
   }
 }
 
-bool Scene::floorHeight(double wx, double wz, double yHint, double margin, double* y) const {
+bool Scene::floorHeight(double wx, double wz, double yHint, double margin, double* y, bool* water) const {
   double x = wx - origin[0], z = wz - origin[2], hint = yHint - origin[1];
   int cx = int(std::floor(x / kCell)), cz = int(std::floor(z / kCell));
   auto it = floorGrid_.find((int64_t(cx) << 32) ^ int64_t(uint32_t(cz)));
   if (it == floorGrid_.end()) return false;
-  bool found = false;
+  bool found = false, bestWater = false;
   double best = -1e30;
   for (uint32_t id : it->second) {
     const FloorTri& t = floorTris_[id];
@@ -871,9 +872,9 @@ bool Scene::floorHeight(double wx, double wz, double yHint, double margin, doubl
     double l3 = 1.0 - l1 - l2;
     if (l1 < -1e-4 || l2 < -1e-4 || l3 < -1e-4) continue;
     double h = l1 * t.a[1] + l2 * t.b[1] + l3 * t.c[1];
-    if (h <= hint + margin && h > best) { best = h; found = true; }
+    if (h <= hint + margin && h > best) { best = h; found = true; bestWater = t.water; }
   }
-  if (found) *y = best + origin[1];
+  if (found) { *y = best + origin[1]; if (water) *water = bestWater; }
   return found;
 }
 

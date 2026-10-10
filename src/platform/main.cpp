@@ -277,7 +277,8 @@ int main(int argc, char** argv) {
     InputState drive;
     drive.throttle = 1;
     drive.fire = std::getenv("SLIP_FIRE") != nullptr;  // test hook: hold the trigger during --sim
-    if (const char* st = std::getenv("SLIP_STEER")) drive.steer = float(std::atof(st));  // test hook: steer during --sim
+    if (const char* st = std::getenv("SLIP_STEER")) drive.steer = float(std::atof(st));
+    if (const char* pt = std::getenv("SLIP_PITCH")) drive.pitch = float(std::atof(pt));  // test hook: pitch during --sim  // test hook: steer during --sim
     const char* chk = std::getenv("SLIP_CHECKPORTAL");  // debug: every 0.05 s compare the frame with the portal-culled one against a full draw, write the bad ones to <chk>_<t>_a/b.ppm
     int step = 0;
     for (double t = 0; t < simSeconds; t += 1.0 / 60.0) {

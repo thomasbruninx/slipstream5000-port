@@ -299,6 +299,45 @@ std::string ViewerApp::combatLine() const {
   return out;
 }
 
+void ViewerApp::waterImpact(const ShipState& s) {
+  if (!renderer_->hasEffects() || !scene_) return;
+  double fy = s.y;
+  bool w = false;
+  if (!scene_->floorHeight(s.x, s.z, s.y + 30000, 60000, &fy, &w) || !w) fy = s.y;
+  ripples_.push_back({{s.x, fy, s.z}, 0.0f, 1.5f});
+  mists_.push_back({{s.x, fy, s.z}, 0.0});
+}
+
+void ViewerApp::updateWaterFx(double dt) {
+  if (!renderer_->hasEffects() || !scene_) { ripples_.clear(); mists_.clear(); return; }
+  for (auto& r : ripples_) r.age += float(dt);
+  for (auto& m : mists_) m.age += dt;
+  ripples_.erase(std::remove_if(ripples_.begin(), ripples_.end(), [](const Renderer::Ripple& r) { return r.age > 2.7f; }), ripples_.end());
+  mists_.erase(std::remove_if(mists_.begin(), mists_.end(), [](const Mist& m) { return m.age > 1.0; }), mists_.end());
+  if (std::getenv("SLIP_WATERDEMO") && raceClock_ > 0.3 && raceClock_ < 0.3 + dt * 1.5) {  // test hook: put the player's craft over the first water polygon and splash
+    for (const MeshPoly& p : scene_->track.polys) {
+      if (p.material < 0 || scene_->materials[size_t(p.material)].upperName.rfind("WATE", 0) != 0 || p.count < 3) continue;
+      double c[3] = {0, 0, 0};
+      for (uint16_t k = 0; k < p.count; ++k) { const Vec3& v = scene_->track.verts[p.first + k]; c[0] += v.x; c[1] += v.y; c[2] += v.z; }
+      player_.x = scene_->origin[0] + c[0] / p.count; player_.y = scene_->origin[1] + c[1] / p.count + 20000; player_.z = scene_->origin[2] + c[2] / p.count;
+      waterImpact(player_);
+      break;
+    }
+  }
+  if (!driving_) return;
+  for (int i = 0; i < 10; ++i) {  // a craft skimming just above the water leaves a wake of rings
+    const ShipState& s = i == player_.ship ? player_ : grid_[size_t(i)];
+    wakeTimer_[i] -= dt;
+    if (wakeTimer_[i] > 0 || s.wrecked || !shipShown(i) || s.speed < 40000) continue;
+    double fy = 0;
+    bool w = false;
+    if (!scene_->floorHeight(s.x, s.z, s.y + 20000, 60000, &fy, &w) || !w || s.y - fy > 48000) continue;
+    wakeTimer_[i] = 0.14;
+    const float str = float(std::clamp(0.25 + s.speed / 700000.0, 0.25, 0.6)) * float(std::clamp(1.0 - (s.y - fy) / 60000.0, 0.3, 1.0));
+    if (ripples_.size() < 40) ripples_.push_back({{s.x, fy, s.z}, 0.0f, str});
+  }
+}
+
 void ViewerApp::drainSounds(const double listener[3]) {
   static const bool log = std::getenv("SLIP_COMBAT_LOG") != nullptr;  // test hook: print every effect / cue
   for (const CombatEvent& e : combat_.events) {
@@ -333,7 +372,7 @@ void ViewerApp::drainSounds(const double listener[3]) {
     s.nWallFx = 0;
     for (; s.sfxWallLight > 0; --s.sfxWallLight) audio_.playFxAt(Fx::Scrape1, pos, listener, own);
     for (; s.sfxWallHard > 0; --s.sfxWallHard) audio_.playFxAt(Fx::Scrape2, pos, listener, own);
-    for (; s.sfxWater > 0; --s.sfxWater) audio_.playFxAt(Fx::WaterHit, pos, listener, own);
+    for (; s.sfxWater > 0; --s.sfxWater) { audio_.playFxAt(Fx::WaterHit, pos, listener, own); waterImpact(s); }   // the splash sound of the original (WATERHIT.SMP, effect 8)
     for (; s.sfxContact > 0; --s.sfxContact) audio_.playFxAt(Fx::Explosion, pos, listener, own);
     for (; s.sfxWreck > 0; --s.sfxWreck) audio_.playFxAt(Fx::Crash, pos, listener, own);
   }
@@ -648,6 +687,7 @@ void ViewerApp::update(double dt, const InputState& in0) {
       {
         const double listener[3] = {player_.x, player_.y, player_.z};
         drainSounds(listener);
+        updateWaterFx(dt);
         audio_.engineSet(engineVoice_, player_.wrecked ? 0.0 : player_.speed);
         audio_.updateAmbient(dt, ambientForPlayer());
         // laps, finish and race end (RaceUpdate 0x5A4EC events)
@@ -1062,6 +1102,16 @@ void ViewerApp::drawWorld() {
   renderer_->cullBackfaces = cullOverride_ >= 0 ? cullOverride_ != 0 : (mode_ == AppMode::Track && (painter_ || driving_));
   renderer_->shadows = !std::getenv("SLIP_NOSHADOW");
   renderer_->drawSky(*scene_, animSeconds_);
+  renderer_->ripples.clear();
+  if (renderer_->hasEffects() && !ripples_.empty()) {  // the 8 rings nearest to the camera
+    std::vector<Renderer::Ripple> v = ripples_;
+    std::sort(v.begin(), v.end(), [&](const Renderer::Ripple& a, const Renderer::Ripple& b) {
+      auto d2 = [&](const Renderer::Ripple& r) { return (r.pos[0] - cam_.pos[0]) * (r.pos[0] - cam_.pos[0]) + (r.pos[2] - cam_.pos[2]) * (r.pos[2] - cam_.pos[2]); };
+      return d2(a) < d2(b);
+    });
+    if (v.size() > 8) v.resize(8);
+    renderer_->ripples = v;
+  }
   if (driving_ && renderer_->lightingMode > 0) {  // dynamic lights (renderers with real-time lighting): projectiles, explosions, burning boosters
     for (const Projectile& p : combat_.projectiles) {
       if (!p.alive) continue;
@@ -1152,7 +1202,18 @@ void ViewerApp::drawParticles(const Scene& sc) {
     if (m < 0) m = sp.kind == 1 ? sc.splashMaterial : sc.sparkMaterial;
     if (m < 0 || m >= int(sc.materials.size())) continue;
     const int idx = std::clamp(int(sc.materials[size_t(m)].palEnd) - 1, 0, 255);
-    renderer_->drawSparkWorld(sp.pos, sp.vel, sp.size, sp.angle, 0xff000000u | (sc.palette.rgba[size_t(idx)] & 0xffffffu), float(std::clamp(sp.age / std::max(sp.life, 1e-3), 0.0, 1.0)));
+    renderer_->drawSparkWorld(sp.pos, sp.vel, sp.size, sp.angle, 0xff000000u | (sc.palette.rgba[size_t(idx)] & 0xffffffu), float(std::clamp(sp.age / std::max(sp.life, 1e-3), 0.0, 1.0)), sp.kind);
+  }
+  for (const Mist& m : mists_) {  // the white spray of a splash: a few soft puffs rising and spreading
+    const auto& v = partSprites_[int(PartFam::SmkGry)][0];
+    if (v.empty()) break;
+    for (int k = 0; k < 5; ++k) {
+      const double a = k * 1.2566 + m.pos[0] * 0.001, up = (4000.0 + 20000.0 * m.age) * (0.5 + 0.25 * k), out = 9000.0 * m.age * (1.0 + 0.3 * k);
+      const double p[3] = {m.pos[0] + std::cos(a) * out, m.pos[1] + up, m.pos[2] + std::sin(a) * out};
+      const Sprite& sp = v[size_t(k % int(v.size()))];
+      if (sp.w == 0) continue;
+      renderer_->drawFxSprite(Renderer::FxKind::Mist, sp, sp.palette ? *sp.palette : sc.palette, p, 2.0 * (6000.0 + 16000.0 * m.age) * (1.0 + 0.15 * k), transparent(sp), float(m.age), float(k) * 0.23f);
+    }
   }
   for (const Fireball& f : ps.fireballs) draw(PartFam::Expl, f.fading() ? 1 : 0, f.frame, f.pos, f.currentSize(), float(std::clamp(f.age / std::max(f.total, 1e-3), 0.0, 1.0)));
   for (const DebrisPiece& d : ps.pieces) {
